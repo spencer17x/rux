@@ -1,0 +1,60 @@
+appId: com.rux.workbench
+productName: Rux
+copyright: Copyright © 2026 Rux
+afterPack: build/after-pack.mjs
+
+directories:
+  output: release
+
+files:
+  - out/**/*
+  - package.json
+
+extraResources:
+  - from: out/runtime-host
+    to: runtime-host
+  - from: ../tui/target/release/rux-tui
+    to: bin/rux-tui
+
+asar: true
+asarUnpack:
+  - node_modules/node-pty/**/*
+
+npmRebuild: true
+
+electronFuses:
+  # Required by the packaged Claude permission helper and TUI Runtime host.
+  runAsNode: true
+  enableCookieEncryption: true
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  enableEmbeddedAsarIntegrityValidation: true
+  onlyLoadAppFromAsar: true
+  # Renderer assets are still loaded with BrowserWindow.loadFile().
+  grantFileProtocolExtraPrivileges: true
+  resetAdHocDarwinSignature: true
+
+mac:
+  category: public.app-category.developer-tools
+  icon: build/icon.png
+  extendInfo:
+    NSAudioCaptureUsageDescription: null
+    NSBluetoothAlwaysUsageDescription: null
+    NSBluetoothPeripheralUsageDescription: null
+    NSCameraUsageDescription: null
+    NSMicrophoneUsageDescription: null
+  target:
+    - dmg
+    - zip
+
+win:
+  target:
+    - nsis
+
+linux:
+  category: Development
+  target:
+    - AppImage
+    - deb
+
+artifactName: ${productName}-${version}-${os}-${arch}.${ext}

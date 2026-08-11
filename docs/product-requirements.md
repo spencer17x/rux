@@ -2,10 +2,17 @@
 
 | 字段 | 内容 |
 | --- | --- |
-| 状态 | Draft v0.1 |
-| 日期 | 2026-08-10 |
-| 阶段 | 产品探索 |
-| 范围 | 仅讨论产品需求，不包含技术架构与实现决策 |
+| 状态 | Delivery Draft v0.2 |
+| 日期 | 2026-08-11 |
+| 阶段 | 从交互原型进入可交付产品 |
+| 范围 | Desktop 主客户端、共享 Runtime、TUI、Agent 底座与自定义 Agent、可信审查与发布门槛 |
+
+### 文档使用规则
+
+- 本文档定义目标产品与需求，不代表其已经实现。
+- 当前实现事实以代码、[`release-evidence-2026-08-10.md`](./release-evidence-2026-08-10.md) 与 [`ux-audit-2026-08-11/full-functional-closure-audit.md`](./ux-audit-2026-08-11/full-functional-closure-audit.md) 为准；旧的 `design-audit` 只保留为历史快照。
+- 分期顺序、可验收标准和发布证据定义在 [`delivery-roadmap-and-acceptance.md`](./delivery-roadmap-and-acceptance.md)。
+- 任何功能只有同时具备真实数据、有效动作、错误反馈、持久化或明确不持久化语义及验收证据时，才能标记为完成。
 
 ## 1. 产品概述
 
@@ -306,13 +313,37 @@ Run 完成后，用户看到简洁结果：
 
 Task、Run History、Context Decisions、Artifacts 和 Checkpoints 持续保留，后续工作无需手动重建 Session。
 
+### 9.10 Desktop 核心任务流
+
+Desktop 的主流程必须在一个聚焦任务界面内闭环：
+
+1. 从浅色项目侧边栏打开 Workspace 或恢复历史 Task；
+2. 在底部 Composer 输入目标，选择 Agent、Model、Context 和 Permission Policy；
+3. 在单一任务 Transcript 中观察真实 Run Events，并对 Permission Request 做出决策；
+4. 按需打开 Changes、Context 或 Run Inspector，不将它们固定为 IDE 式常驻多栏；
+5. 查看真实 Diff 与 Verification Evidence，然后 Accept、Reject 或 Restore；
+6. 退出并重新打开应用后，恢复相同 Task、Run、审查位置与未决 Permission，但不自动恢复 Terminal Process。
+
+Codex App 是 Desktop 的交互密度、信息层级和任务心智参考，不是对其品牌、素材或专有实现的复制。
+
+### 9.11 选择与创建 Agent
+
+用户可以在启动 Run 前选择 Claude Code、Codex 或已验证的自定义 Agent。自定义 Agent 创建流程必须：
+
+1. 选择一个已支持的 Runtime/Adapter 底座；
+2. 设置名称、说明、默认 Model、Instructions、Skills、Tools、Context Policy 与 Permission Defaults；
+3. 只引用凭据来源，不在 Agent Definition 中存储 Token；
+4. 在保存或启动前执行结构、底座可用性、鉴权、模型和能力声明校验；
+5. 在无效时精确说明阻塞字段与修复方式，禁止用无效定义启动 Run；
+6. 编辑或删除 Agent 不得改写历史 Run；历史页保留当时使用的不可变配置快照。
+
 ## 10. 功能需求
 
 优先级定义：
 
-- **P0**：验证核心产品假设必须具备；
-- **P1**：核心流程成立后应重点补充；
-- **P2**：后续扩展或高级能力。
+- **P0**：Desktop 对外发布阻断项；
+- **P1**：完整 Desktop + TUI v1 交付目标；
+- **P2**：发布后扩展或高级能力。
 
 ### 10.1 Workspace
 
@@ -358,16 +389,19 @@ Task、Run History、Context Decisions、Artifacts 和 Checkpoints 持续保留�
 
 #### P0
 
-- 提供完整的原生 RUX Agent 体验。
-- 至少支持一个外部 Coding Agent，以验证 Workbench 假设。
+- Claude Code 和 Codex 都必须具备真实执行 Adapter，不得用“已登录”代替“可执行”。
+- 原生 RUX Agent 在模型、工具和安全边界接通前必须明确标记为演示，不可作为可交付 Agent 计数。
 - 每次 Run 均可手动选择 Agent。
 - 清楚区分 Agent Selection 与 Model Selection。
 - 用用户语言解释相关能力差异。
 - 明确展示不支持的能力和体验差异。
+- 选择器只将安装、鉴权和能力校验通过的 Agent 标为可执行；不可用时应提供可操作的修复指引。
+- 每个 Run 持久化 Agent ID、Adapter、Model、能力快照和版本。
 
 #### P1
 
-- 支持更多外部 Coding Agents。
+- 提供真实的原生 RUX Agent，或在产品中移除其可执行入口。
+- 支持更多外部 Coding Agents，但不得为适配数量牺牲共享安全与事件语义。
 - 根据 Task 特征推荐 Agent，同时保留透明选择权。
 - 支持 Workspace 级偏好及 Run 级覆盖。
 - 在数据可靠时展示可比较的高层使用信息。
@@ -523,18 +557,90 @@ Desktop 应让复杂监督与多任务管理明显优于纯终端体验。
 
 #### 产品要求
 
-首个版本不要求 TUI 与 Desktop 完全功能对等，但它们必须共享一致的产品概念与 Task History。
+首个 Desktop 内测不要求 TUI 与 Desktop 完全功能对等，但二者必须消费同一版本化 Runtime 协议、Event Store 和 Agent Definitions，不得各自实现一套执行核心。
 
-## 11. MVP 范围
+Grok Build 作为 TUI 的交互参考，重点吸收以下原则：
 
-MVP 必须验证：统一 Workbench 是否明显优于分别使用多个 Coding Agent。
+- 键盘优先、单一聚焦区和可发现的快捷键；
+- 持续可见的 Active Task、Agent、Run State、Permission 和 Context 摘要；
+- 流式 Activity/Assistant 输出，可在 Diff、Run Log、Context 与 Terminal 间快速切换；
+- Permission 和破坏性动作使用阻塞式、边界明确的确认面板；
+- 在 SSH/远程环境、小屏幕和窗口 resize 下保持完整操作路径；
+- 不复制第三方品牌、素材或专有源码。
 
-### 11.1 MVP 必须包含
+### 10.10 自定义 Agent
+
+#### P0
+
+- 创建、查看、编辑、复制和删除个人或 Workspace Agent Definition。
+- Definition 至少包含名称、说明、Adapter 底座、默认 Model、Instructions、Context Policy、Skills、Tools 和 Permission Defaults。
+- 保存前执行 Schema 校验；启动前执行 Adapter、Executable、Authentication、Model 和 Capability 校验。
+- 将 Agent 标记为 Draft、Ready 或 Unavailable，并给出字段级错误与恢复指引。
+- Ready 的自定义 Agent 与内置 Agent 一起出现在 Run 选择器中，并能完成真实 Run。
+- Definition 中不保存明文 Token、OAuth 输出或凭据文件内容；只保存受支持的凭据来源引用。
+- Run 保存不可变 Agent Definition Snapshot，以保证后续编辑或删除不会篡改历史。
+
+#### P1
+
+- 导入、导出与预览不包含凭据的 Agent Definition。
+- 提供基于 Claude Code、Codex 和通用进程 Adapter 的安全模板。
+- 在保存前展示最终合并的 Instructions、Tools、Context 和 Permission Summary。
+- 记录配置变更历史，并允许回滚至先前的有效定义。
+
+#### P2
+
+- 支持团队级批准、签名、版本化和分发。
+- 支持 Agent Template Marketplace，但安装前必须预览能力、权限和依赖。
+
+### 10.11 持久化、恢复与数据语义
+
+#### P0
+
+- 持久化 Workspace、Session、Task、Message、Run、Activity、Artifact、Verification、Permission Decision、Checkpoint、Agent Snapshot 和外部 Session ID。
+- 任务与 Run Event 使用有序、幂等的事件语义，重放不会重复应用变更或 Permission Decision。
+- 应用正常退出、强制退出或 Runtime 崩溃后，重开能恢复上次可确定状态，并将无法证明仍在执行的 Run 标记为 Interrupted，不伪造 Completed。
+- 只在外部 Agent 支持且存在有效 Session ID 时提供原会话 Resume；否则明确说明将开启新 Run。
+- 数据库变更必须可迁移、可回滚且有自动化测试，升级不得静默丢失用户历史。
+- Terminal Process 不自动跨启动恢复；历史中仅保留非敏感元数据与用户明确保存的输出。
+
+#### P1
+
+- 提供数据导出、备份、完整性检查与受控清理。
+- 支持从已完成 Run 或 Checkpoint 创建新分支 Task，不改写原历史。
+
+### 10.12 可交付性、测试与发布
+
+#### P0
+
+- 所有 Runtime/Protocol/Renderer 行为变更通过 Typecheck、Unit、Integration 与关键 Desktop E2E。
+- 打包应用必须完成真实桌面尺寸验收；浏览器预览不能代替 Desktop 证据。
+- 生产包不得包含硬编码 Showcase 结果、可点击无动作的核心入口，或没有证据支持的“已通过”文案。
+- macOS 对外分发包使用 Developer ID Application 签名、Hardened Runtime、Apple Notarization 与 Stapling，并在无开发环境的干净机器上通过 Gatekeeper 验证。
+- 发布产物包含版本号、构建号、变更说明、已知问题、checksum 和回滚方案。
+- 发布前必须有可追溯的 Requirement–Test–Evidence 矩阵，每个 P0 条目都有当前版本证据。
+
+#### P1
+
+- 支持签名更新渠道、版本回滚和数据迁移兼容性检查。
+- 发布候选版进行长 Run、大 Diff、崩溃恢复、离线错误、低磁盘空间和外部 CLI 升级回归。
+
+#### P2
+
+- Windows/Linux 打包、签名、自动更新与渠道化发布。
+
+## 11. 交付范围
+
+产品可以先以内部 Alpha 验证统一 Workbench，但“打包成功”、“能启动一个 Run”或“视觉像 Codex App”都不等于可交付。
+
+本项目的完整 v1 目标包含可信 Desktop 主客户端与复用同一 Runtime 的 Grok Build 风格 TUI。Desktop 可以先进入受控内测，但总体目标在 TUI、Agent 选择和自定义 Agent 验收前不得标记为全部完成。
+
+### 11.1 Desktop 可交付版必须包含
 
 - 持续存在的项目 Workspaces；
 - Sessions、Tasks 与 Runs；
-- 原生 RUX Agent 加至少一个外部 Coding Agent；
+- 可真实执行的 Claude Code 与 Codex Adapter；
 - 手动 Agent Selection；
+- 自定义 Agent 的创建、编辑、校验、选择与历史快照；
 - 可查看和调整的 Run Context；
 - 可见的 Skills 与 Tools；
 - Observable Activity Timeline；
@@ -543,9 +649,18 @@ MVP 必须验证：统一 Workbench 是否明显优于分别使用多个 Coding 
 - Checkpoints 与 Restore；
 - Verification Results；
 - 持久化 History 与 Outcome Summary；
-- 一个打磨完整的主客户端体验。
+- 一个交互层级接近 Codex App、无核心无效入口的 Desktop 主客户端；
+- 签名、公证、干净机 Gatekeeper 验证与可追溯发布证据。
 
-### 11.2 MVP 明确不要求
+### 11.2 完整 v1 还必须包含
+
+- Grok Build 风格、键盘优先的 TUI 主任务流；
+- Desktop/TUI 共用版本化 Runtime Protocol、Agent Definitions 和持久化 Task/Run History；
+- TUI 中对 Run、Permission、Changes、Context、Stop 和 Outcome 的完整键盘路径；
+- 同一 Workspace 在 Desktop 和 TUI 中打开时，对已持久化状态得到一致解释；
+- 一组 Desktop/TUI 交叉验收用例，证明它们没有分裂成两套 Runtime。
+
+### 11.3 v1 明确不要求
 
 - 覆盖大量 Agents 和 Models；
 - 自动 Agent 或 Model Routing；
@@ -554,7 +669,7 @@ MVP 必须验证：统一 Workbench 是否明显优于分别使用多个 Coding 
 - Replay、Benchmark 或正式 Eval；
 - Team Administration 与 Enterprise Governance；
 - Marketplace；
-- TUI 与 Desktop 完全对等；
+- TUI 与 Desktop 的所有视觉和管理功能完全对等；
 - 接近完整 IDE 的内置代码编辑能力。
 
 ## 12. 非目标
@@ -618,7 +733,7 @@ Run 进行到任何时刻，用户都应该能回答：
 
 ### 15.1 多 Agent 需求可能被高估
 
-用户可能更愿意使用一个足够优秀的 Agent。MVP 必须验证真实跨 Agent 使用，而不能预设“支持更多 Agent”天然有价值。
+用户可能更愿意使用一个足够优秀的 Agent。早期版本必须验证真实跨 Agent 使用，而不能预设“支持更多 Agent”天然有价值。
 
 ### 15.2 结构化可能增加摩擦
 
@@ -648,7 +763,7 @@ Sessions 和 Tasks 有利于复杂工作，却可能拖慢小需求。RUX 必须
 4. 哪两个 Agent 足以验证初期 Workbench 假设？
 5. 哪些 Context 信息必须默认展示，哪些应放入 Inspector？
 6. 哪类 Permission Requests 能真正建立信任，而不是造成打扰？
-7. 以 TUI 为主的 MVP 能否充分展示 Context、Trace 和 Diff 价值？
+7. TUI 的键盘优先主流程能否保留 Desktop 中 Context、Trace 和 Diff 的核心价值？
 8. Desktop 在什么阶段会成为核心体验的必要组成部分？
 9. Agent Handoff 必须保留哪些信息，才能真正做到无缝继续？
 10. 用户最看重的是速度、质量、可见性、安全性，还是减少协调成本？
@@ -664,7 +779,7 @@ Sessions 和 Tasks 有利于复杂工作，却可能拖慢小需求。RUX 必须
 - 对比 RUX 流程与多个独立终端 Agent 的使用体验；
 - 验证用户是否会在真实任务中执行 Agent Handoff。
 
-探索阶段的结果应当是收窄 MVP，而不是继续扩大功能清单。
+探索结果应当收窄交付顺序和交互复杂度，不得降低真实性、持久化、安全和可恢复门槛。
 
 ## 18. 当前产品决策摘要
 
@@ -676,5 +791,44 @@ Sessions 和 Tasks 有利于复杂工作，却可能拖慢小需求。RUX 必须
 - **核心执行记录：** Run
 - **核心差异：** Unified Agents、Controllable Context、Observable Execution、Safe Recovery
 - **产品关系：** Workbench 为主，原生 Agent 为核心能力之一
-- **当前约束：** 先验证产品需求，不提前确定架构与实现
+- **Desktop 参考：** Codex App 的聚焦任务、浅色侧边栏、底部 Composer 与按需 Inspector
+- **TUI 参考：** Grok Build 的键盘优先、聚焦执行和高密度反馈
+- **强制底座：** Desktop 与 TUI 复用同一 Runtime Protocol、Event Store 与 Agent Definition
+- **首批真实 Agents：** Claude Code 与 Codex；RUX Agent 在接入真实模型前不计入
+- **可交付前提：** 真实结果、持久化、可逆 Changes、可审计 Context/Permission、自定义 Agent、自动化证据及签名公证
 
+## 19. 当前实现基线（2026-08-10）
+
+以当前代码、自动化测试、打包应用和 Desktop/TUI 交叉回归为准，产品已从交互原型进入可运行内测阶段。下表不是路线图的自动完成判定；公开发布仍受 Permission、Run-owned evidence、并发冲突 UX/压测、迁移、签名/公证等门槛阻塞。逐项证据见 [`delivery-roadmap-and-acceptance.md`](./delivery-roadmap-and-acceptance.md) 与 [`release-evidence-2026-08-10.md`](./release-evidence-2026-08-10.md)。
+
+| 范围 | 当前事实 | 交付判定 |
+| --- | --- | --- |
+| Desktop 外壳 | Codex App 取向侧边栏、单 Task Transcript、Composer、按需 Changes/Context/Run、空 Workspace 与独立项目选择器已连通 | 内测主路径闭环；键盘/无障碍与完整 Task 生命周期仍部分 |
+| Workspace | 原生 Picker、最近项目、受控切换和“项目标题只展开、Task 才切换”已在打包应用验收 | 基础闭环；缺完整 traversal/process 自动化矩阵 |
+| Terminal | 真实 PTY 创建、输入、resize 和销毁已连通 | 单终端闭环，多终端未实现 |
+| Authentication | Claude Code 与 Codex CLI 状态同步、非敏感 Renderer payload 和官方 OAuth 委托已接线并有 fake CLI 测试 | 边界闭环；常规回归不自动触发真实重授权 |
+| Claude Code | 真实 CLI Adapter、stream-json 归一化、取消与 session metadata 已接线 | 可运行；错误/retry/权限/resume 全矩阵仍部分 |
+| Codex | 真实 `exec --json` Adapter、标准化事件、取消与 session resume 已实现，并通过受控实机 Run/续聊 | 可运行；完整 fake CLI 生命周期矩阵仍部分 |
+| RUX Agent | Demo Adapter 仅在开发环境显式启用，生产 Desktop/Standalone Host 不暴露 | 生产无假 Agent；不是对外 Agent 底座 |
+| Task / Run | SQLite 持久化 Task/Message/Run/ordered Events，启动 hydrate；遗留 running 归一 stopped/interrupted；重命名、置顶、归档/恢复与最后 Task 保护已在打包应用验收 | 基础生命周期与重启恢复闭环；手动重排、完整状态集与自动 Renderer E2E 仍未完成 |
+| Changes / Context | 活动 Workspace 的真实 Git Changes/Diff/Restore preview/Accept 与 Context Snapshot 已接线 | Workspace 级审查可用；Run-owned attribution、Verification 与 Context 注入证据未闭环 |
+| Permission / Checkpoint / Handoff | 主要是视觉入口或静态展示 | 未闭环 |
+| 自定义 Agent | Editor + 创建/编辑/复制/删除 + 严格校验 + 持久化；组合 Claude/Codex 底座可真实执行；Run 保存并展示不可变完整 Profile Snapshot | 核心可用；Personal/Workspace scope、能力执行验证和完整 packaged click E2E 仍部分 |
+| TUI | Rust Ratatui 客户端、真实 JSONL Runtime、Agent/Model/Permission/Profile、Context/Git review、session resume 和共享 Task Store 已连接；陈旧双客户端快照会在事务内合并历史 | 顺序跨客户端闭环；阻塞权限、同字段冲突/tombstone、真并发压测、SSH/load/reconnect 未闭环 |
+| 测试 | 统一 `npm test` 覆盖 Typecheck、Auth、Store、Custom Agent、Adapters、Runtime Host、Git、Sites 与 TUI，共 53 个测试；另有隔离 state 的 Task 生命周期打包应用截图审计 | 核心服务覆盖显著提升；Renderer/Permission/Migration/PTY/Packaged E2E CI 仍不足 |
+| 分发 | macOS arm64 `.app` 内含原生 TUI 与 Runtime Host；包内自动连接已实机验证 | 只有 ad-hoc 签名，未公证，未达到公开发布门槛 |
+
+## 20. 需求优先级与完成规则
+
+- **P0 — 发布阻断：** 缺失会破坏主任务闭环、用户信任、数据安全或可安装性。任何 P0 未验收都不得对外发布 Desktop。
+- **P1 — 完整 v1 目标：** 不阻止 Desktop 受控内测，但本项目的 Desktop + TUI + 可扩展 Agent 总目标在这些条目未完成前不能标记为达成。
+- **P2 — 发布后扩展：** 路由、并行、团队治理、Marketplace 与更多平台，不得挤占 P0/P1 的可信闭环工作。
+
+“完成”必须同时满足：
+
+1. 代码和用户界面存在真实路径，不是展示数据或无效按钮；
+2. 正常、空、错误、取消、重启和无可用 Agent 等状态有明确语义；
+3. 关键结果能回溯到真实 Event、Git State、Command Exit Code 或 Permission Decision；
+4. 自动化测试覆盖需求本身，而非仅覆盖附近模块；
+5. 打包应用的完整点击/键盘路径已验收并留存当前版本证据；
+6. 文档和 Release Notes 对真实、部分、未实现的边界表述一致。
