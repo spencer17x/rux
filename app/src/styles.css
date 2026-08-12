@@ -6266,12 +6266,379 @@ select:focus-visible {
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
 }
 
-.codex-settings-dialog {
-  width: min(100%, 620px);
+.rux-settings-surface {
+  position: fixed;
+  z-index: 180;
+  inset: 0;
+  overflow: hidden;
+  color: #292b2e;
+  background: #fff;
 }
 
-.codex-settings-body {
-  padding: 16px 18px 18px;
+.rux-settings-window {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  grid-template-columns: 240px minmax(0, 1fr);
+  outline: 0;
+}
+
+.rux-settings-sidebar {
+  display: flex;
+  min-width: 0;
+  overflow: hidden;
+  flex-direction: column;
+  border-right: 1px solid #dfe1e3;
+  background: #e7e9eb;
+}
+
+.rux-settings-sidebar-top {
+  padding: 52px 9px 0;
+  -webkit-app-region: drag;
+}
+
+.rux-settings-back,
+.rux-settings-all,
+.rux-settings-search,
+.rux-settings-nav button {
+  -webkit-app-region: no-drag;
+}
+
+.rux-settings-back {
+  display: flex;
+  height: 30px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 7px;
+  color: #8a8d90;
+  background: transparent;
+  font-size: 13px;
+  font-weight: 550;
+}
+
+.rux-settings-back:hover {
+  color: #404347;
+  background: rgb(255 255 255 / 0.45);
+}
+
+.rux-settings-all {
+  display: flex;
+  height: 40px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  color: #303338;
+  font-size: 13px;
+}
+
+.rux-settings-all strong {
+  font-weight: 620;
+}
+
+.rux-settings-all svg:last-child {
+  margin-left: 1px;
+  color: #666a6e;
+}
+
+.rux-settings-search {
+  display: flex;
+  height: 32px;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0 13px;
+  padding: 0 11px;
+  border: 1px solid rgb(208 210 213 / 0.75);
+  border-radius: 17px;
+  color: #85898d;
+  background: #fff;
+}
+
+.rux-settings-search:focus-within {
+  border-color: #9fc9ef;
+  box-shadow: 0 0 0 2px rgb(52 143 232 / 0.12);
+}
+
+.rux-settings-search input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  color: #303338;
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+}
+
+.rux-settings-search input::placeholder {
+  color: #96999d;
+}
+
+.rux-settings-nav {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 8px 20px;
+  scrollbar-width: thin;
+}
+
+.rux-settings-nav-group + .rux-settings-nav-group {
+  margin-top: 17px;
+}
+
+.rux-settings-nav-group p {
+  margin: 0 0 5px;
+  padding: 0 8px;
+  color: #96999d;
+  font-size: 11px;
+  font-weight: 510;
+}
+
+.rux-settings-nav button {
+  display: grid;
+  width: 100%;
+  min-height: 30px;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 8px;
+  color: #3d4044;
+  background: transparent;
+  text-align: left;
+  font-size: 12px;
+}
+
+.rux-settings-nav button:hover:not(:disabled) {
+  background: rgb(211 214 217 / 0.8);
+}
+
+.rux-settings-nav button.is-active {
+  color: #25282c;
+  background: #d5d8db;
+  font-weight: 600;
+}
+
+.rux-settings-nav button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.rux-settings-nav button > svg:last-child:not(:first-child) {
+  color: #8c9094;
+}
+
+.rux-settings-main {
+  min-width: 0;
+  overflow-y: auto;
+  background: #fff;
+  scrollbar-width: thin;
+}
+
+.rux-settings-content {
+  width: min(768px, calc(100% - 64px));
+  margin: 0 auto;
+  padding: 66px 0 80px;
+}
+
+.rux-settings-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 42px;
+  margin-bottom: 35px;
+}
+
+.rux-settings-title-row h1 {
+  margin: 0;
+  color: #202327;
+  font-size: 22px;
+  font-weight: 650;
+  letter-spacing: -0.025em;
+}
+
+.rux-settings-close {
+  display: none;
+}
+
+.rux-settings-section {
+  scroll-margin-top: 38px;
+}
+
+.rux-settings-section + .rux-settings-section {
+  margin-top: 50px;
+}
+
+.rux-settings-section > h2 {
+  margin: 0 0 16px;
+  color: #2b2e32;
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.rux-settings-card {
+  overflow: hidden;
+  border: 1px solid #e2e3e5;
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 1px 1px rgb(25 27 30 / 0.02);
+}
+
+.rux-permission-card > button {
+  display: grid;
+  width: 100%;
+  min-height: 72px;
+  grid-template-columns: minmax(0, 1fr) 36px;
+  align-items: center;
+  gap: 20px;
+  padding: 13px 16px;
+  border: 0;
+  color: inherit;
+  background: #fff;
+  text-align: left;
+}
+
+.rux-permission-card > button:hover {
+  background: #fafafa;
+}
+
+.rux-permission-card > button + button,
+.rux-general-card > * + * {
+  border-top: 1px solid #ededee;
+}
+
+.rux-permission-card button > span,
+.rux-general-card label > span,
+.rux-settings-action-row > span,
+.rux-settings-boundary > span {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.rux-settings-card strong {
+  color: #2d3034;
+  font-size: 12px;
+  font-weight: 620;
+  line-height: 1.35;
+}
+
+.rux-settings-card small {
+  color: #7f8286;
+  font-size: 10.5px;
+  line-height: 1.45;
+}
+
+.rux-permission-card i {
+  display: inline-flex;
+  width: 29px;
+  height: 18px;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 2px;
+  border-radius: 10px;
+  color: transparent;
+  background: #d7d9db;
+  transition: background 140ms ease;
+}
+
+.rux-permission-card i::before {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.15);
+  content: "";
+  transform: translateX(-11px);
+  transition: transform 140ms ease;
+}
+
+.rux-permission-card i svg {
+  display: none;
+}
+
+.rux-permission-card i.is-selected {
+  background: #2c97ed;
+}
+
+.rux-permission-card i.is-selected::before {
+  transform: translateX(0);
+}
+
+.rux-general-card > label,
+.rux-settings-action-row,
+.rux-settings-boundary {
+  display: grid;
+  min-height: 65px;
+  grid-template-columns: minmax(0, 1fr) minmax(165px, 220px);
+  align-items: center;
+  gap: 22px;
+  padding: 11px 16px;
+}
+
+.rux-general-card select {
+  width: 100%;
+  height: 32px;
+  padding: 0 28px 0 10px;
+  border: 1px solid #dedfe1;
+  border-radius: 9px;
+  color: #303338;
+  background: #fff;
+  font-size: 11px;
+}
+
+.rux-general-card select:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.rux-settings-action-row > button {
+  justify-self: end;
+}
+
+.rux-settings-boundary {
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 9px;
+  color: #597060;
+  background: #f8faf9;
+}
+
+.rux-settings-boundary > svg {
+  color: #5f806a;
+}
+
+.rux-settings-boundary small {
+  color: #718078;
+}
+
+.rux-settings-section > .settings-login-required {
+  margin-bottom: 12px;
+}
+
+.rux-settings-section > .account-error {
+  margin: 0 0 12px;
+}
+
+.rux-settings-empty {
+  display: flex;
+  min-height: 260px;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 6px;
+  color: #96999d;
+}
+
+.rux-settings-empty strong {
+  color: #565a5e;
+  font-size: 13px;
+}
+
+.rux-settings-empty span {
+  font-size: 11px;
 }
 
 .settings-login-required {
@@ -6481,13 +6848,45 @@ select:focus-visible {
     flex-direction: column;
   }
 
-  .codex-settings-form > label,
   .settings-login-required {
     grid-template-columns: 1fr;
   }
 
   .settings-login-required > svg {
     display: none;
+  }
+
+  .rux-settings-window {
+    grid-template-columns: 1fr;
+  }
+
+  .rux-settings-sidebar {
+    display: none;
+  }
+
+  .rux-settings-content {
+    width: calc(100% - 28px);
+    padding: 18px 0 44px;
+  }
+
+  .rux-settings-title-row {
+    margin-bottom: 22px;
+  }
+
+  .rux-settings-close {
+    display: inline-flex;
+  }
+
+  .rux-general-card > label,
+  .rux-settings-action-row {
+    grid-template-columns: 1fr;
+    gap: 9px;
+    padding-top: 14px;
+    padding-bottom: 14px;
+  }
+
+  .rux-settings-action-row > button {
+    justify-self: start;
   }
 }
 

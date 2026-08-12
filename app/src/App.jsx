@@ -55,11 +55,9 @@ import {
   Pin,
   Play,
   Plus,
-  Rabbit,
   RotateCcw,
   RefreshCw,
   Search,
-  Send,
   Share2,
   Settings,
   ShieldCheck,
@@ -672,8 +670,6 @@ function Sidebar({
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [productMenuOpen, setProductMenuOpen] = useState(false);
-  const [petVisible, setPetVisible] = useState(false);
-  const [inviteCopied, setInviteCopied] = useState(false);
   const accountMenuRef = useRef(null);
   const productMenuRef = useRef(null);
   const productTriggerRef = useRef(null);
@@ -993,10 +989,6 @@ function Sidebar({
             </button>
             <div className="account-popover-separator" />
             <button type="button" role="menuitem" onClick={() => { setAccountMenuOpen(false); onOpenAccounts(); }}><LogIn size={17} /><span>{accountConnected ? "管理 Rux 登录" : "登录 Rux"}</span><ChevronRight size={15} /></button>
-            <button type="button" role="menuitemcheckbox" aria-checked={petVisible} onClick={() => setPetVisible((visible) => !visible)}><Rabbit size={17} /><span>{petVisible ? "隐藏宠物" : "显示宠物"}</span></button>
-            <button type="button" role="menuitem" onClick={() => {
-              void navigator.clipboard?.writeText("Rux 工作台邀请").then(() => setInviteCopied(true)).catch(() => setInviteCopied(false));
-            }}><Send size={17} /><span>{inviteCopied ? "邀请已复制" : "邀请好友"}</span></button>
             <button type="button" role="menuitem" onClick={() => { setAccountMenuOpen(false); onOpenSettings(); }}><Settings size={17} /><span>Rux 设置</span><kbd>⌘,</kbd></button>
           </div>
         ) : null}
@@ -2900,9 +2892,13 @@ function AccountsDialog({ open, state, codexAdapter, loginProvider, error, notic
 
 function CodexSettingsDialog({ open, connected, catalog, settings, onClose, onReload, onSave, onOpenAccounts }) {
   const [draft, setDraft] = useState(settings);
+  const [query, setQuery] = useState("");
   const dialogRef = useDialogFocus(open, onClose);
   useEffect(() => {
-    if (open) setDraft(settings);
+    if (open) {
+      setDraft(settings);
+      setQuery("");
+    }
   }, [open, settings]);
   if (!open) return null;
 
@@ -2911,54 +2907,115 @@ function CodexSettingsDialog({ open, connected, catalog, settings, onClose, onRe
   const reasoningOptions = codexReasoningOptions(models, selectedModel);
   const selectedReasoningSupported = !draft.reasoningEffort
     || reasoningOptions.some((option) => option.reasoningEffort === draft.reasoningEffort);
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  const matchesQuery = (...terms) => !normalizedQuery
+    || terms.some((term) => String(term).toLocaleLowerCase().includes(normalizedQuery));
+  const showPermissions = matchesQuery("权限", "只读", "工作区", "确认", "写入");
+  const showGeneral = matchesQuery("常规", "模型", "推理", "登录", "Agent", "刷新");
+  const applyDraft = (nextDraft) => {
+    setDraft(nextDraft);
+    onSave(nextDraft);
+  };
+  const choosePermission = (permissionMode) => applyDraft({ ...draft, permissionMode });
 
   return (
-    <div className="dialog-backdrop account-dialog-backdrop" role="presentation" onMouseDown={(event) => {
-      if (event.target === event.currentTarget) onClose();
-    }}>
-      <section ref={dialogRef} tabIndex={-1} className="account-dialog codex-settings-dialog" role="dialog" aria-modal="true" aria-labelledby="codex-settings-title">
-        <header className="account-dialog-header">
-          <div><span className="account-dialog-icon"><Settings size={18} /></span><span><h2 id="codex-settings-title">Rux 设置</h2><p>用于当前任务和之后创建的 Rux 任务</p></span></div>
-          <button type="button" className="icon-button" onClick={onClose} aria-label="关闭 Rux 设置"><X size={17} /></button>
-        </header>
-        <div className="account-dialog-body codex-settings-body">
-          {!connected ? (
-            <div className="settings-login-required" role="status">
-              <Bot size={18} />
-              <span><strong>先登录 Rux</strong><small>登录完成后，Rux 才会向本机 Agent 服务请求可用模型和推理强度。</small></span>
-              <button type="button" className="primary-button" onClick={onOpenAccounts}>账户与登录</button>
+    <div className="rux-settings-surface" role="presentation">
+      <section ref={dialogRef} tabIndex={-1} className="rux-settings-window" role="dialog" aria-modal="true" aria-labelledby="codex-settings-title">
+        <aside className="rux-settings-sidebar" aria-label="设置导航">
+          <div className="rux-settings-sidebar-top">
+            <button type="button" className="rux-settings-back" onClick={onClose} aria-label="返回 Rux">
+              <ArrowLeft size={17} />
+              <span>返回应用</span>
+            </button>
+            <div className="rux-settings-all"><ListFilter size={16} /><strong>所有设置</strong><ChevronDown size={14} /></div>
+            <label className="rux-settings-search">
+              <Search size={16} />
+              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索设置…" aria-label="搜索设置" />
+            </label>
+          </div>
+
+          <nav className="rux-settings-nav">
+            <div className="rux-settings-nav-group">
+              <p>个人</p>
+              <button type="button" className="is-active"><Settings size={16} /><span>常规</span></button>
+              <button type="button" onClick={onOpenAccounts}><UserRound size={16} /><span>账户与登录</span><ArrowRight size={13} /></button>
             </div>
-          ) : null}
-          {catalog.error ? <div className="account-error" role="alert"><CircleAlert size={15} /><span>{catalog.error}</span><button type="button" className="secondary-button" onClick={onReload}>重试</button></div> : null}
-          <form className="codex-settings-form" onSubmit={(event) => { event.preventDefault(); onSave(draft); }}>
-            <label>
-              <span><strong>模型</strong><small>列表来自当前本机 Rux Agent 服务</small></span>
-              <select data-dialog-initial-focus value={selectedModel} onChange={(event) => setDraft((value) => ({ ...value, model: event.target.value, reasoningEffort: "" }))} disabled={catalog.loading}>
-                <option value="Codex default">Rux 默认</option>
-                {models.map((model) => <option key={model.id} value={model.model}>{ruxModelLabel(model.displayName || model.model)}{model.isDefault ? "（默认）" : ""}</option>)}
-              </select>
-            </label>
-            <label>
-              <span><strong>推理强度</strong><small>只显示所选模型支持的值</small></span>
-              <select value={draft.reasoningEffort || ""} onChange={(event) => setDraft((value) => ({ ...value, reasoningEffort: event.target.value }))} disabled={catalog.loading || !connected}>
-                <option value="">模型默认</option>
-                {!selectedReasoningSupported ? <option value={draft.reasoningEffort}>{reasoningEffortLabel(draft.reasoningEffort)}（当前）</option> : null}
-                {reasoningOptions.map((option) => <option key={option.reasoningEffort} value={option.reasoningEffort}>{reasoningEffortLabel(option.reasoningEffort)} · {option.description}</option>)}
-              </select>
-            </label>
-            <label>
-              <span><strong>默认权限</strong><small>Rux 仍会按所选策略请求具体操作授权</small></span>
-              <select value={draft.permissionMode || "acceptEdits"} onChange={(event) => setDraft((value) => ({ ...value, permissionMode: event.target.value }))}>
-                {permissionOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
-              </select>
-            </label>
-            <div className="codex-settings-truth"><ShieldCheck size={15} /><p><strong>权限边界</strong><span>只读模式不写入；按需确认由 Rux 原生审批驱动；不询问仍限制在当前工作区，不会获得系统完全访问。</span></p></div>
-            <footer>
-              <button type="button" className="secondary-button" onClick={onReload} disabled={!connected || catalog.loading}>{catalog.loading ? <LoaderCircle size={14} className="status-running" /> : <RefreshCw size={14} />}刷新模型</button>
-              <button type="submit" className="primary-button" disabled={catalog.loading}><Check size={14} />保存设置</button>
-            </footer>
-          </form>
-        </div>
+            <div className="rux-settings-nav-group">
+              <p>编码</p>
+              <button type="button" onClick={() => document.getElementById("rux-agent-settings")?.scrollIntoView({ behavior: "smooth", block: "start" })}><Bot size={16} /><span>Rux Agent</span></button>
+              <button type="button" disabled title="即将推出"><GitBranch size={16} /><span>Git</span></button>
+            </div>
+          </nav>
+        </aside>
+
+        <main className="rux-settings-main">
+          <div className="rux-settings-content">
+            <header className="rux-settings-title-row">
+              <h1 id="codex-settings-title">常规</h1>
+              <button type="button" className="icon-button rux-settings-close" onClick={onClose} aria-label="关闭 Rux 设置"><X size={17} /></button>
+            </header>
+
+            {!showPermissions && !showGeneral ? (
+              <div className="rux-settings-empty"><Search size={20} /><strong>没有匹配的设置</strong><span>请尝试搜索“权限”“模型”或“推理”。</span></div>
+            ) : null}
+
+            {showPermissions ? (
+              <section className="rux-settings-section" aria-labelledby="rux-permission-settings">
+                <h2 id="rux-permission-settings">权限</h2>
+                <div className="rux-settings-card rux-permission-card" role="radiogroup" aria-label="默认权限">
+                  <button type="button" role="radio" aria-checked={(draft.permissionMode || "acceptEdits") === "plan"} onClick={() => choosePermission("plan")}>
+                    <span><strong>只读规划</strong><small>Rux 可以读取当前工作区并制定方案，不会编辑文件或运行写操作。</small></span>
+                    <i className={(draft.permissionMode || "acceptEdits") === "plan" ? "is-selected" : ""} aria-hidden="true"><Check size={13} /></i>
+                  </button>
+                  <button type="button" role="radio" aria-checked={(draft.permissionMode || "acceptEdits") === "acceptEdits"} onClick={() => choosePermission("acceptEdits")}>
+                    <span><strong>工作区访问</strong><small>Rux 可以读取和编辑工作区文件；需要额外访问时会请求你的确认。</small></span>
+                    <i className={(draft.permissionMode || "acceptEdits") === "acceptEdits" ? "is-selected" : ""} aria-hidden="true"><Check size={13} /></i>
+                  </button>
+                  <button type="button" role="radio" aria-checked={(draft.permissionMode || "acceptEdits") === "dontAsk"} onClick={() => choosePermission("dontAsk")}>
+                    <span><strong>工作区访问，不询问</strong><small>Rux 可以在当前工作区内直接编辑；仍不会获得系统完整访问权限。</small></span>
+                    <i className={(draft.permissionMode || "acceptEdits") === "dontAsk" ? "is-selected" : ""} aria-hidden="true"><Check size={13} /></i>
+                  </button>
+                </div>
+              </section>
+            ) : null}
+
+            {showGeneral ? (
+              <section className="rux-settings-section" id="rux-agent-settings" aria-labelledby="rux-general-settings">
+                <h2 id="rux-general-settings">常规</h2>
+                {!connected ? (
+                  <div className="settings-login-required" role="status">
+                    <Bot size={18} />
+                    <span><strong>先登录 Rux</strong><small>登录后即可读取可用模型和推理强度，并开始对话与编码。</small></span>
+                    <button type="button" className="primary-button" onClick={onOpenAccounts}>账户与登录</button>
+                  </div>
+                ) : null}
+                {catalog.error ? <div className="account-error" role="alert"><CircleAlert size={15} /><span>{catalog.error}</span><button type="button" className="secondary-button" onClick={onReload}>重试</button></div> : null}
+                <div className="rux-settings-card rux-general-card">
+                  <label>
+                    <span><strong>默认模型</strong><small>用于当前任务和之后创建的 Rux 任务</small></span>
+                    <select value={selectedModel} onChange={(event) => applyDraft({ ...draft, model: event.target.value, reasoningEffort: "" })} disabled={catalog.loading}>
+                      <option value="Codex default">Rux 默认</option>
+                      {models.map((model) => <option key={model.id} value={model.model}>{ruxModelLabel(model.displayName || model.model)}{model.isDefault ? "（默认）" : ""}</option>)}
+                    </select>
+                  </label>
+                  <label>
+                    <span><strong>推理强度</strong><small>只显示所选模型支持的值</small></span>
+                    <select value={draft.reasoningEffort || ""} onChange={(event) => applyDraft({ ...draft, reasoningEffort: event.target.value })} disabled={catalog.loading || !connected}>
+                      <option value="">模型默认</option>
+                      {!selectedReasoningSupported ? <option value={draft.reasoningEffort}>{reasoningEffortLabel(draft.reasoningEffort)}（当前）</option> : null}
+                      {reasoningOptions.map((option) => <option key={option.reasoningEffort} value={option.reasoningEffort}>{reasoningEffortLabel(option.reasoningEffort)} · {option.description}</option>)}
+                    </select>
+                  </label>
+                  <div className="rux-settings-action-row">
+                    <span><strong>模型目录</strong><small>从本机 Rux Agent 服务获取最新模型列表</small></span>
+                    <button type="button" className="secondary-button" onClick={onReload} disabled={!connected || catalog.loading}>{catalog.loading ? <LoaderCircle size={14} className="status-running" /> : <RefreshCw size={14} />}刷新模型</button>
+                  </div>
+                  <div className="rux-settings-boundary"><ShieldCheck size={15} /><span><strong>权限边界</strong><small>设置会自动保存。Rux 的所有写入仍限制在当前工作区内。</small></span></div>
+                </div>
+              </section>
+            ) : null}
+          </div>
+        </main>
       </section>
     </div>
   );

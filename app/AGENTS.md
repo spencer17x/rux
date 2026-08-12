@@ -10,6 +10,10 @@ Keep sidebar task history compact and single-line. The default showcase task sho
 
 Keep the sidebar footer actions explicit and separate. The `当前项目` row owns the native workspace picker, while the bottom-most full-width account row exposes explicit Rux login and Rux settings without running a status sync. In the Projects list, clicking a project heading only expands or collapses its tasks; switching happens when a task inside that project is opened. Keep `打开项目…` as a separate labelled action. Do not hide account access behind an icon-only control or overload the account row with project switching.
 
+Keep the account menu focused on authentication and Rux settings. Do not add social invitation actions or decorative pet controls.
+
+Render Rux settings as a full-height two-pane surface that follows the accepted Codex settings reference: a 240 px pale navigation rail with a labelled return action and search, plus a centered white settings canvas with section headings and rounded grouped rows. Keep every enabled setting wired to a real Rux behavior, keep unavailable categories visibly disabled, and never add the Pet category from the reference.
+
 When implementing from a selected generated mock, treat that image as the source of truth for layout, component anatomy, density, spacing, color, typography, visible content, and hierarchy.
 
 For the accepted Codex desktop reference captured on 2026-08-11, preserve these desktop anchors unless the user supplies a newer reference: a 1433 × 812 logical viewport, 240 px sidebar, 46 px top bar, 736 px centered transcript/composer rail, 99 px bottom composer with a 16 px bottom inset, and a 300 px environment card floating 16 px from the right edge. Keep the reference completed-task content visibly settled, with the environment and account surfaces layered over the transcript instead of permanently shrinking it.
