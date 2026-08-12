@@ -493,6 +493,7 @@ export class CodexAppServerAdapter {
         reasoningEffort: params.reasoningEffort,
         profileId: params.profileId,
         agentRevisionId: params.agentRevisionId,
+        ...(params.sessionId ? { resumeSessionId: params.sessionId } : {}),
       });
       this.emit({
         type: "run.metadata",
@@ -1270,6 +1271,7 @@ export class CodexAppServerAdapter {
         type: "run.failed",
         runId,
         error: redactSensitiveText(error ?? "Rux service run failed", 16_000).text,
+        ...(run.params.sessionId ? { resumeSessionId: run.params.sessionId } : {}),
       });
     }
   }

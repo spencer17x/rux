@@ -86,6 +86,8 @@ console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false
   const resumedMetadata = events.find((event) => event.type === "run.metadata" && event.runId === "resumed-run");
   assert.equal(freshMetadata.sessionId, "fresh-session-id");
   assert.equal(resumedMetadata.sessionId, "existing-session-id");
+  const resumedStarted = events.find((event) => event.type === "run.started" && event.runId === "resumed-run");
+  assert.equal(resumedStarted.resumeSessionId, "existing-session-id");
 });
 
 test("fails and terminates Claude when one JSONL line exceeds the bounded buffer", async (t) => {

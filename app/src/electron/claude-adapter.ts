@@ -279,6 +279,7 @@ export class ClaudeCodeAdapter {
       model: params.model,
       profileId: params.profileId,
       agentRevisionId: params.agentRevisionId,
+      ...(params.sessionId ? { resumeSessionId: params.sessionId } : {}),
     });
 
     child.stdout?.setEncoding("utf8");
@@ -290,7 +291,7 @@ export class ClaudeCodeAdapter {
       record.permissionBroker = undefined;
       if (record.emittedTerminalEvent || record.cancelled) return;
       record.emittedTerminalEvent = true;
-      this.emit({ type: "run.failed", runId: params.runId, error: error.message });
+      this.emit({ type: "run.failed", runId: params.runId, error: error.message, ...(record.sessionId ? { resumeSessionId: record.sessionId } : {}) });
     });
     child.on("close", (code, signal) => {
       this.flushBuffers(params.runId, record);
@@ -315,6 +316,7 @@ export class ClaudeCodeAdapter {
             type: "run.failed",
             runId: params.runId,
             error: `Claude Code exited with ${code ?? signal ?? "an unknown status"}`,
+            ...(record.sessionId ? { resumeSessionId: record.sessionId } : {}),
           });
         }
       }
@@ -543,7 +545,12 @@ export class ClaudeCodeAdapter {
     record.emittedTerminalEvent = true;
     const failed = event.is_error === true || stringValue(event.subtype) !== "success";
     if (failed) {
-      this.emit({ type: "run.failed", runId, error: resultError(event) });
+      this.emit({
+        type: "run.failed",
+        runId,
+        error: resultError(event),
+        ...(record.sessionId ? { resumeSessionId: record.sessionId } : {}),
+      });
       return;
     }
 

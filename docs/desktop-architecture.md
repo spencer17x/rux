@@ -57,7 +57,9 @@ Workspace snapshots are version 2. Every Task contains:
 
 Every Run repeats the actual Revision, Connection, and model state and may persist the exact `AgentRevision` snapshot. Built-in Agents use deterministic ids such as `builtin:codex@1`. New custom-Agent Runs must supply the Profile Store's exact `latestRevisionId`; Runtime resolves that Revision rather than silently reading the latest mutable Definition.
 
-Session resume is compatible only when adapter, Profile, Agent Revision, and Provider Connection all match. An existing Task cannot silently switch Agent after it has messages or Runs; a new Task is required.
+Codex Thread 与 Claude Session 统一保存为非敏感 `NativeSessionLink`，包含 Engine、Connection 引用、Agent Revision、Workspace 与原生 Session 标识。Renderer 只会选取 Engine、Connection、Revision、Workspace 全部匹配的最新 Link 恢复同一 Task；Runtime 事件回写本次尝试恢复的标识，Task Store 再校验 Link 与 Run/Task 的绑定关系。
+
+恢复失败会作为 Run 的 `resumeFrom` 与 `resumeFailure` 证据持久化。界面不会降级为新 Session，而是明确展示失败原因，让用户重试原 Session 或创建不携带消息、Run、Context 与 Session Link 的新 Task。Run 检查面板同时显示实际 Engine、Revision、Connection、模型状态、权限模式和 Native Session。
 
 Renderer compares a custom Task's fixed `agentRevisionId` with its live Definition's `latestRevisionId`. A mismatch produces a non-blocking notice; the action creates a blank Task fixed to the latest Revision and deliberately copies no messages, Runs, selected Context, or native Session id. P1 Context Handoff will own any later, explicit transfer of work. If a Definition is deleted, it disappears from new-task selection while a synthetic historical choice keeps the existing Task bound to its retained Revision for review and compatible continuation.
 
@@ -85,6 +87,8 @@ Before save/load, Task Store validation rejects:
 - Protocol v3, Agent Profile Store v2, Task Store v2, Desktop Runtime, stdio Runtime, Renderer fallback, and Rust TUI share the Revision/Connection contract.
 - `账户与登录` is an explicit Agent/Provider connection surface for Rux and Claude Code. Opening the app or panel performs no CLI inspection; missing CLIs link to official installation guidance, while API Key, Base URL, cloud Provider, OAuth storage, refresh, and logout remain CLI-owned.
 - Codex model discovery uses official App Server `model/list` with explicit catalog source and fetch time. Engines without a catalog expose Engine default plus advanced model IDs; successful Runs create verified history scoped to the same Engine and non-secret Connection reference. Only explicit model-not-found/incompatibility failures mark a model unavailable.
+- RUX 发起的 Codex Thread 与 Claude Session 已使用规范化 Native Session Link 持久化并可在兼容 Task 中恢复。恢复失败保留原 Session 证据并要求用户显式重试或创建新 Task；不会静默回退为新会话。
+- P0 Desktop Release Candidate 已在隔离打包环境完成干净启动、显式 Agent 检测、首次 Run、重启后同 Thread 恢复、Terminal 不恢复与 Workspace 切换。Workspace Starter Task 在第一次发送时采用规范化后的用户提示词标题，避免已运行历史继续显示为“开始新任务”。
 - External Codex/Claude conversation discovery, import, Projection Revisions, and context handoff remain P1 work; this architecture does not claim background conversation synchronization.
 - Parts of Changes and Context remain showcase-backed in the Renderer and must not be presented as fully repository-backed until that wiring is complete.
 - macOS packages remain unsigned until Developer ID signing and notarization are configured.

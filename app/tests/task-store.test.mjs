@@ -200,6 +200,15 @@ function taskState(workspaceId, status = "completed") {
   run.modelSource = "manual";
   run.modelVerificationStatus = "unverified";
   run.agentSnapshot = structuredClone(agentRevision);
+  run.sessionId = "claude-session-1";
+  run.sessionLink = {
+    kind: "claude-session",
+    engine: "claude-code",
+    providerConnectionId: providerConnection.id,
+    agentRevisionId: agentRevision.id,
+    workspaceId,
+    nativeSessionId: "claude-session-1",
+  };
   return state;
 }
 
@@ -392,6 +401,7 @@ test("persists Task, Message, Run, and event data across store reopen", async ()
     assert.equal(loaded.tasks[0].runs[0].contextSnapshot.instructions[0].content, "Use project guidance");
     assert.equal(loaded.tasks[0].runs[0].gitBaseline.id, "baseline-1");
     assert.equal(loaded.tasks[0].runs[0].gitPatch.files[0].path, "src/index.ts");
+    assert.equal(loaded.tasks[0].runs[0].sessionLink.nativeSessionId, "claude-session-1");
   } finally {
     await rm(temporaryRoot, { recursive: true, force: true });
   }
@@ -637,6 +647,7 @@ test("rejects nonexistent, wrong-Engine, and fabricated legacy Agent Revision re
     nonexistent.tasks[0].agentRevisionId = "agent-revision:custom-00000000-0000-4000-8000-000000000099@1";
     delete nonexistent.tasks[0].agentRevisionSnapshot;
     nonexistent.tasks[0].runs[0].agentRevisionId = nonexistent.tasks[0].agentRevisionId;
+    nonexistent.tasks[0].runs[0].sessionLink.agentRevisionId = nonexistent.tasks[0].agentRevisionId;
     delete nonexistent.tasks[0].runs[0].agentSnapshot;
     assert.throws(() => store.save(nonexistent), /nonexistent Agent Revision/);
 
@@ -651,6 +662,9 @@ test("rejects nonexistent, wrong-Engine, and fabricated legacy Agent Revision re
     delete wrongEngine.tasks[0].agentRevisionSnapshot;
     wrongEngine.tasks[0].runs[0].adapter = "codex";
     wrongEngine.tasks[0].runs[0].providerConnection = structuredClone(wrongEngine.tasks[0].providerConnection);
+    wrongEngine.tasks[0].runs[0].sessionLink.kind = "codex-thread";
+    wrongEngine.tasks[0].runs[0].sessionLink.engine = "codex";
+    wrongEngine.tasks[0].runs[0].sessionLink.providerConnectionId = wrongEngine.tasks[0].providerConnection.id;
     delete wrongEngine.tasks[0].runs[0].agentSnapshot;
     assert.throws(() => store.save(wrongEngine), /wrong Engine or Connection/);
 

@@ -495,7 +495,12 @@ function createDesktopRuntime(api) {
       }).catch((error) => {
         const emit = activeRuns.get(runId);
         if (!emit) return;
-        emit({ type: "run.failed", runId, error: error instanceof Error ? error.message : String(error) });
+        emit({
+          type: "run.failed",
+          runId,
+          error: error instanceof Error ? error.message : String(error),
+          ...(normalized.options.sessionId ? { resumeSessionId: normalized.options.sessionId } : {}),
+        });
         activeRuns.delete(runId);
       });
 

@@ -87,6 +87,11 @@ import {
   verifiedModelHistory,
 } from "./model-state.js";
 import {
+  createNativeSessionLink,
+  latestCompatibleSessionLink,
+  resumeFailureForTask,
+} from "./session-link.js";
+import {
   agentRevisionIdFor,
   builtInAgentRevisionId,
   defaultModelState,
@@ -293,6 +298,11 @@ function createWorkspaceStarterTask(workspace, codexSettings = defaultCodexSetti
   };
 }
 
+function taskTitleFromPrompt(prompt) {
+  const title = String(prompt || "").trim().replace(/\s+/g, " ");
+  return title.length > 24 ? `${title.slice(0, 24)}…` : title;
+}
+
 function withoutSupersededWorkspaceStarter(tasks, workspaceId) {
   const starterId = `workspace-${workspaceId}`;
   return tasks.some((task) => task.id !== starterId)
@@ -355,11 +365,19 @@ function normalizePersistedTask(task, workspaceId = task.workspaceId) {
     const runModelState = run.modelSource && run.modelVerificationStatus
       ? { modelSource: run.modelSource, modelVerificationStatus: run.modelVerificationStatus }
       : defaultModelState(run.model || task.model);
+    const sessionLink = run.sessionLink || createNativeSessionLink({
+      adapter: runAdapter,
+      providerConnection: run.providerConnection || defaultProviderConnectionForAdapter(runAdapter),
+      agentRevisionId: run.agentRevisionId || agentRevisionId,
+      workspaceId,
+      sessionId: run.sessionId,
+    });
     return {
       ...run,
       agentRevisionId: run.agentRevisionId || agentRevisionId,
       providerConnection: run.providerConnection || defaultProviderConnectionForAdapter(runAdapter),
       ...runModelState,
+      ...(sessionLink ? { sessionLink } : {}),
       status: run.status === "completed" && verifications.some((verification) => verification.status === "failed")
         ? "failed"
         : run.status,
@@ -419,16 +437,6 @@ function seedShowcaseTasks(workspace) {
 function runtimeAdapterForTask(task) {
   return task.adapter
     || (task.agent === "Claude Code" ? "claude-code" : ["Codex", "Rux"].includes(task.agent) ? "codex" : "mock");
-}
-
-function latestSessionIdForTask(task, adapter, profileId, agentRevisionId, connectionId) {
-  return [...(task.runs || [])]
-    .reverse()
-    .find((run) => run.adapter === adapter
-      && (run.profileId || undefined) === (profileId || undefined)
-      && run.agentRevisionId === agentRevisionId
-      && run.providerConnection?.id === connectionId
-      && run.sessionId)?.sessionId;
 }
 
 const maxStreamingAssistantText = 1_000_000;
@@ -525,6 +533,13 @@ function recordRuntimeEvent(task, event) {
   };
 
   if (event.type === "run.started") {
+    const resumeFrom = createNativeSessionLink({
+      adapter: event.adapter,
+      providerConnection: event.providerConnection || taskConnection,
+      agentRevisionId: event.agentRevisionId || taskRevisionId,
+      workspaceId: task.workspaceId,
+      sessionId: event.resumeSessionId,
+    });
     nextRun = {
       ...nextRun,
       adapter: event.adapter,
@@ -538,6 +553,7 @@ function recordRuntimeEvent(task, event) {
       providerConnection: event.providerConnection || taskConnection,
       modelSource: event.modelSource || taskModelState.modelSource,
       modelVerificationStatus: event.modelVerificationStatus || taskModelState.modelVerificationStatus,
+      ...(resumeFrom ? { resumeFrom, sessionLink: resumeFrom } : {}),
     };
   } else if (event.type === "permission.requested") {
     const permissionRequests = Array.isArray(nextRun.permissionRequests) ? nextRun.permissionRequests : [];
@@ -577,9 +593,17 @@ function recordRuntimeEvent(task, event) {
         : [...permissionDecisions, event.decision],
     };
   } else if (event.type === "run.metadata") {
+    const sessionLink = createNativeSessionLink({
+      adapter: nextRun.adapter,
+      providerConnection: nextRun.providerConnection,
+      agentRevisionId: nextRun.agentRevisionId,
+      workspaceId: task.workspaceId,
+      sessionId: event.sessionId,
+    });
     nextRun = {
       ...nextRun,
       ...(event.sessionId ? { sessionId: event.sessionId } : {}),
+      ...(sessionLink ? { sessionLink, resumeFailure: undefined } : {}),
       ...(event.model ? { model: event.model } : {}),
       ...(event.reasoningEffort ? { reasoningEffort: event.reasoningEffort } : {}),
       ...(event.cwd ? { cwd: event.cwd } : {}),
@@ -637,7 +661,20 @@ function recordRuntimeEvent(task, event) {
   } else if (event.type === "run.cancelled") {
     nextRun = { ...nextRun, status: "cancelled", finishedAt: now };
   } else if (event.type === "run.failed") {
-    nextRun = { ...nextRun, status: "failed", finishedAt: now, error: event.error };
+    const resumeFrom = nextRun.resumeFrom || createNativeSessionLink({
+      adapter: nextRun.adapter,
+      providerConnection: nextRun.providerConnection,
+      agentRevisionId: nextRun.agentRevisionId,
+      workspaceId: task.workspaceId,
+      sessionId: event.resumeSessionId,
+    });
+    nextRun = {
+      ...nextRun,
+      status: "failed",
+      finishedAt: now,
+      error: event.error,
+      ...(resumeFrom ? { resumeFrom, sessionLink: resumeFrom, resumeFailure: event.error } : {}),
+    };
   }
 
   nextRun = { ...nextRun, ...modelStateAfterRun(nextRun, event) };
@@ -1310,12 +1347,13 @@ function ChangedFilesCard({ state, onOpenChanges, onRestoreChanges }) {
   );
 }
 
-function TaskTimeline({ task, streamingMessages = [], changes, onOpenChanges, onRestoreChanges, onOpenRun, onWaitingAction, onPermissionDecision, permissionBusy, permissionError, taskActionError, onDismissTaskActionError, agentRevisionUpdate, onCreateTaskWithLatestAgent, workspacePlaceholder = false }) {
+function TaskTimeline({ task, streamingMessages = [], changes, onOpenChanges, onRestoreChanges, onOpenRun, onWaitingAction, onPermissionDecision, permissionBusy, permissionError, taskActionError, onDismissTaskActionError, agentRevisionUpdate, onCreateTaskWithLatestAgent, onRetrySession, onCreateFreshTask, workspacePlaceholder = false }) {
   const isWaiting = task.status === "waiting";
   const isCompleted = task.status === "completed";
   const hasOutcome = task.status === "completed" || task.status === "failed";
   const doneCount = task.plan.filter((item) => item.state === "done").length;
   const latestRun = task.runs?.[task.runs.length - 1];
+  const sessionRecovery = resumeFailureForTask(task);
   const pendingPermission = [...(latestRun?.permissionRequests || [])]
     .reverse()
     .find((request) => request.status === "pending");
@@ -1381,6 +1419,20 @@ function TaskTimeline({ task, streamingMessages = [], changes, onOpenChanges, on
             <span>{taskActionError}</span>
             <button type="button" className="icon-button" onClick={onDismissTaskActionError} aria-label="关闭任务错误"><X size={14} /></button>
           </div>
+        ) : null}
+        {sessionRecovery ? (
+          <section className="session-recovery-card" role="alert" aria-label="Native Session 恢复失败">
+            <span className="session-recovery-icon"><CircleAlert size={17} /></span>
+            <div>
+              <strong>未能恢复原 Native Session</strong>
+              <p>{sessionRecovery.error}</p>
+              <small>{sessionRecovery.link.kind === "codex-thread" ? "Codex Thread" : "Claude Session"} · {sessionRecovery.link.nativeSessionId}</small>
+            </div>
+            <div className="session-recovery-actions">
+              <button type="button" className="secondary-button" onClick={onRetrySession}>重试原 Session</button>
+              <button type="button" className="primary-button" onClick={onCreateFreshTask}>创建新任务</button>
+            </div>
+          </section>
         ) : null}
         {agentRevisionUpdate ? (
           <section className="agent-revision-notice" aria-label="Agent 有新 Revision">
@@ -2084,12 +2136,17 @@ function RunPane({ task, onToggleRun, runReviewState, onOpenRunDiff, onAcceptRun
         </div>
         <dl>
           <div><dt>Agent</dt><dd><Bot size={13} /> {ruxAgentLabel(inspectedRun?.agentSnapshot?.name || task.agent)}</dd></div>
+          <div><dt>Engine</dt><dd>{ruxAdapterLabel(inspectedRun?.adapter || runtimeAdapterForTask(task))}</dd></div>
+          <div><dt>Revision</dt><dd title={inspectedRun?.agentRevisionId || task.agentRevisionId}>{inspectedRun?.agentRevisionId || task.agentRevisionId}</dd></div>
+          <div><dt>Connection</dt><dd title={inspectedRun?.providerConnection?.label || task.providerConnection?.label}>{inspectedRun?.providerConnection?.label || task.providerConnection?.label || "—"}</dd></div>
           <div><dt>Model</dt><dd>{ruxModelLabel(inspectedRun?.model || task.model)}</dd></div>
+          <div><dt>Model state</dt><dd>{modelStateLabel(inspectedRun?.modelSource || task.modelSource, inspectedRun?.modelVerificationStatus || task.modelVerificationStatus)}</dd></div>
           <div><dt>Reasoning</dt><dd>{reasoningEffortLabel(inspectedRun?.reasoningEffort || task.reasoningEffort)}</dd></div>
           <div><dt>Elapsed</dt><dd>{formatDuration(inspectedRun?.durationMs) || (isLatest ? task.elapsed : "—")}</dd></div>
           <div><dt>Tokens</dt><dd>{isLatest ? task.tokens : "见 Run usage events"}</dd></div>
           {inspectedRun?.costUsd === undefined ? null : <div><dt>Cost</dt><dd>${inspectedRun.costUsd.toFixed(4)}</dd></div>}
           <div><dt>Permission</dt><dd><ShieldCheck size={13} /> {permissionLabel(inspectedRun?.permissionMode || task.permissionMode)}</dd></div>
+          <div><dt>Session</dt><dd title={inspectedRun?.sessionLink?.nativeSessionId || inspectedRun?.sessionId || ""}>{inspectedRun?.sessionLink?.kind === "codex-thread" ? "Codex Thread" : inspectedRun?.sessionLink?.kind === "claude-session" ? "Claude Session" : inspectedRun?.sessionId ? "Native Session" : "尚未建立"}{inspectedRun?.sessionLink?.nativeSessionId || inspectedRun?.sessionId ? ` · ${inspectedRun?.sessionLink?.nativeSessionId || inspectedRun?.sessionId}` : ""}</dd></div>
         </dl>
       </section>
 
@@ -4210,13 +4267,8 @@ export function App() {
       plan: [],
     } : task));
     const adapter = runtimeAdapterForTask(taskSnapshot);
-    const sessionId = latestSessionIdForTask(
-      taskSnapshot,
-      adapter,
-      taskSnapshot.agentProfileId,
-      taskSnapshot.agentRevisionId,
-      taskSnapshot.providerConnection?.id,
-    );
+    const sessionLink = latestCompatibleSessionLink(taskSnapshot);
+    const sessionId = sessionLink?.nativeSessionId;
     const requestedModel = adapter === "claude-code"
       ? modelAlias(taskSnapshot.model)
       : taskSnapshot.model && !taskSnapshot.model.toLowerCase().includes("default") ? taskSnapshot.model : undefined;
@@ -4297,6 +4349,9 @@ export function App() {
     const messageId = `user-${Date.now()}`;
     setTasks((items) => items.map((task) => task.id === taskId ? {
       ...task,
+      ...(task.id === `workspace-${task.workspaceId}` && !task.messages.length && !(task.runs || []).length
+        ? { title: taskTitleFromPrompt(prompt) }
+        : {}),
       updatedAt: "现在",
       updatedAtIso: createdAt,
       messages: [...task.messages, {
@@ -4351,7 +4406,7 @@ export function App() {
     const task = {
       id,
       workspaceId: workspaceState.active.id,
-      title: prompt.length > 24 ? `${prompt.slice(0, 24)}…` : prompt,
+      title: taskTitleFromPrompt(prompt),
       preview: "新任务正在启动",
       status: "waiting",
       updatedAt: "现在",
@@ -4432,6 +4487,63 @@ export function App() {
     };
     setTaskActionError("");
     setTasks((items) => [task, ...items.filter((item) => item.id !== `workspace-${selectedTask.workspaceId}`)]);
+    setSelectedTaskId(id);
+    setInspectorOpen(false);
+    setSidebarOpen(false);
+    window.setTimeout(() => composerInputRef.current?.focus(), 0);
+  };
+
+  const retryFailedSession = () => {
+    const recovery = resumeFailureForTask(selectedTask);
+    if (!recovery || ["running", "blocked"].includes(selectedTask.status)) return;
+    const sourceMessage = [...(selectedTask.messages || [])].reverse()
+      .find((message) => message.role === "user" && message.runId === recovery.run.id);
+    if (!sourceMessage?.text) {
+      setTaskActionError("找不到这次恢复尝试对应的用户输入；请创建新任务后重新发送。");
+      return;
+    }
+    setTaskActionError("");
+    launchRun(selectedTask.id, sourceMessage.text, selectedTask, sourceMessage.id);
+  };
+
+  const createFreshTaskAfterSessionFailure = () => {
+    const recovery = resumeFailureForTask(selectedTask);
+    if (!recovery || workspaceState.active.placeholder) return;
+    const sourceMessage = [...(selectedTask.messages || [])].reverse()
+      .find((message) => message.role === "user" && message.runId === recovery.run.id);
+    const id = `task-${Date.now()}`;
+    const createdAt = isoNow();
+    const task = {
+      id,
+      workspaceId: selectedTask.workspaceId,
+      title: `${selectedTask.title.slice(0, 72)} · 新会话`,
+      preview: "已创建空白任务；不会复用失败的 Native Session",
+      status: "waiting",
+      updatedAt: "现在",
+      updatedAtIso: createdAt,
+      createdAt,
+      agent: selectedTask.agent,
+      adapter: runtimeAdapterForTask(selectedTask),
+      ...(selectedTask.agentProfileId ? { agentProfileId: selectedTask.agentProfileId } : {}),
+      agentRevisionId: selectedTask.agentRevisionId,
+      providerConnection: selectedTask.providerConnection,
+      permissionMode: selectedTask.permissionMode || "acceptEdits",
+      model: selectedTask.model,
+      modelSource: selectedTask.modelSource,
+      modelVerificationStatus: selectedTask.modelVerificationStatus,
+      ...(selectedTask.reasoningEffort ? { reasoningEffort: selectedTask.reasoningEffort } : {}),
+      contextFiles: [],
+      branch: selectedTask.branch || workspaceState.active.branch,
+      elapsed: "—",
+      tokens: "—",
+      messages: [],
+      plan: [],
+      activity: [],
+      runs: [],
+    };
+    setTaskActionError("");
+    setTasks((items) => [task, ...items]);
+    if (sourceMessage?.text) setDrafts((items) => ({ ...items, [id]: sourceMessage.text }));
     setSelectedTaskId(id);
     setInspectorOpen(false);
     setSidebarOpen(false);
@@ -5239,6 +5351,8 @@ export function App() {
             onDismissTaskActionError={() => setTaskActionError("")}
             agentRevisionUpdate={selectedAgentRevisionUpdate}
             onCreateTaskWithLatestAgent={createTaskWithLatestAgent}
+            onRetrySession={retryFailedSession}
+            onCreateFreshTask={createFreshTaskAfterSessionFailure}
             workspacePlaceholder={workspaceState.active.placeholder}
           />
           <Composer

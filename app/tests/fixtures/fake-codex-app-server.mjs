@@ -480,6 +480,13 @@ lines.on("line", (line) => {
       });
       return;
     }
+    if (scenario === "resume-error" && message.method === "thread/resume") {
+      send({
+        id: message.id,
+        error: { code: -32044, message: "native thread not found" },
+      });
+      return;
+    }
     if (scenario === "runtime-echo") {
       runtimeSequence += 1;
       threadId = message.method === "thread/resume"

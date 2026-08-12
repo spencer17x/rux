@@ -72,8 +72,8 @@ P1 明确不包含：
 | P0-E1 | 已验证 | 显式双 Engine 检测、官方登录委托、缺失/未登录/已连接/错误状态及非敏感 Connection 边界已通过自动化和打包桌面验收 |
 | P0-E2 | 已验证 | Definition 编辑追加 Revision，Task/Run 固定旧版本；新版提示只创建固定最新版的空白新任务，删除 Definition 仍保留历史 Revision |
 | P0-E3 | 已完成 | 官方目录来源/刷新时间、Engine 默认、Connection 隔离的验证历史、手动模型和错误分类已实现并测试 |
-| P0-E4 | 进行中（已有基础） | 两个 Engine 均可恢复 Session，兼容规则与完整桌面验收未完成 |
-| P0-E5 | 未开始 | 需等待 P0-E0 至 P0-E4 退出 |
+| P0-E4 | 已完成 | Native Session Link、四维兼容恢复、显式失败分支、Run 证据与打包桌面验收已完成 |
+| P0-E5 | 已完成 | 打包应用已完成干净启动、显式检测、首次 Run、重启续聊、Session 恢复与 Workspace 切换验收；仍为未签名本地 RC |
 | P1-E0 至 P1-E6 | 未开始 | 不应在 P0 数据合同稳定前提前接入 UI |
 
 ## 4. 依赖顺序
@@ -182,6 +182,8 @@ flowchart LR
 
 目标：一次真实任务从创建、执行、权限、持久化到恢复全程可审查。
 
+实现状态（2026-08-12）：已完成。Codex Thread 与 Claude Session 均保存为规范化 Session Link；恢复同时校验 Engine、Connection、Agent Revision 与 Workspace。恢复失败会保留原生标识和错误证据，只提供重试原 Session 或创建空白新 Task 两条显式路径，不会静默启动新 Session。
+
 交付物：
 
 - Run 启动时使用 Task 固定的 Engine、Connection 和 Agent Revision；模型覆盖只影响该 Run。
@@ -198,6 +200,8 @@ flowchart LR
 ### P0-E5：Desktop 发布候选与体验验收
 
 目标：在真实打包应用中完成从空白启动到重启续聊的完整路径。
+
+实现状态（2026-08-12）：已完成。真实 macOS arm64 打包应用在隔离 Workspace、用户数据目录与 Fake CLI 下完成干净启动、用户显式检测、CLI API Key/OAuth 状态、首次 Run、Run 证据、应用重启、同一 Codex Thread 续聊、Terminal 不恢复与 Workspace 切换。测试 Provider 的 Base URL/API Key 未进入持久化文件。首次 Run 同时会把 Workspace Starter Task 改为由用户提示词生成的可识别标题。当前包未签名、未公证，只是本地 Release Candidate。
 
 交付物：
 
@@ -534,7 +538,7 @@ flowchart LR
 | 打包 | `npm run package` 成功生成当前平台应用 |
 | Desktop | 启动实际打包应用，完成空白启动→检测→选 Agent/模型→Run→重启续聊 |
 | 安全 | Fake CLI 证明不读取/复制凭据；Renderer Payload 与持久化文件不含 Token |
-| 证据 | `design-audit/p0-agent-provider/` 保存稳定截图、路径、结果和已知限制 |
+| 证据 | `design-audit/p0-release-candidate/` 保存稳定截图、路径、结果和已知限制 |
 | 发布事实 | macOS 未签名时必须继续明确标注，不得描述为可公开分发正式包 |
 
 ### 10.3 P1 Release Gate

@@ -140,6 +140,8 @@ flowchart LR
 
 ### 5.8 RUX 发起的会话自动留存
 
+实现状态（2026-08-12）：Desktop 已将 Codex Thread 与 Claude Session 统一为规范化 Session Link，并按 Engine、Connection、Agent Revision、Workspace 四个维度判断恢复兼容性。恢复失败会持久化原 Session 与错误原因，用户只能显式重试或创建不继承 Session 的新 Task；Run 面板可回看实际执行配置与 Session 证据。
+
 - RUX 自动记录从 RUX 发起的用户消息、Agent 消息、Run 事件、权限决策与 Native Session ID。
 - 后续输入在兼容条件下恢复同一个 Codex Thread 或 Claude Code Session。
 - 应用重启后，Task 与已完成历史仍然可见；运行中的孤儿记录恢复为已停止或已中断。
@@ -542,12 +544,14 @@ Workspace 归属单独保存；嵌套 Workspace 使用规范化真实路径的�
 
 ## 13. 当前实现与目标差距
 
+P0 实现状态（2026-08-12）：Desktop 本地 Release Candidate 已通过隔离 Fake CLI 的干净启动、显式连接检测、首次 Run、重启续聊、同 Native Session 恢复、Terminal 不恢复与 Workspace 切换验收。自动化、Web/Desktop/TUI 构建和当前平台打包均通过。macOS 包仍未签名和公证，不是可公开分发的正式版本。
+
 | 能力 | 当前事实 | 目标 |
 | --- | --- | --- |
 | Claude Code 执行 | 已接入真实本机 CLI 和规范化流事件 | 保持并完善连接状态与恢复体验 |
 | Codex 执行 | 已接入真实 CLI/App Server 路径 | 保持并用于会话列表、读取与恢复 |
 | Task/Message/Run | 已按授权 Workspace 持久化到 Main 管理的 SQLite | 继续作为 RUX Projection |
-| Native Session 延续 | 已保存 Session ID，并可为后续 Run 恢复 | 补齐可见状态、异常与兼容性判断 |
+| Native Session 延续 | 已保存规范化 Session Link，按 Engine/Connection/Revision/Workspace 恢复，并提供可见失败恢复分支 | P1 扩展到外部会话发现、导入与 Projection 版本 |
 | 账户界面 | 已采用无 RUX 账号前置的“Agent 与 Provider”语义，分别管理 Rux/Claude Code | 后续按同一 Connection 合同扩展 Engine |
 | 登录状态同步 | 已提供用户显式触发的统一检测；启动和打开面板均不自动读取状态 | 保持用户主动与 CLI 凭据边界 |
 | 模型目录 | Codex 已有结构化模型目录基础；其他 Engine 和自定义配置能力不一致 | 增加 Engine 优先目录、手动输入、运行验证和来源状态 |

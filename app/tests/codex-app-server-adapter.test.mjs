@@ -257,6 +257,28 @@ test("performs the initialize/thread/start/turn/start handshake and streams rich
   assert.equal(collector.events.filter((event) => event.type === "run.completed").length, 1);
 });
 
+test("a failed Codex resume never falls back to a new Thread", async (t) => {
+  const fake = fakeServer(t, "resume-error");
+  const collector = eventCollector();
+  const adapter = new CodexAppServerAdapter(fake.directory, collector.emit, fake.options);
+  t.after(() => adapter.dispose());
+
+  await assert.rejects(adapter.start({
+    runId: "resume-missing",
+    prompt: "Continue exactly this Thread",
+    permissionMode: "plan",
+    sessionId: "thread-missing",
+    agentRevisionId: "builtin:codex@1",
+  }), /native thread not found/);
+  const failed = collector.events.find((event) => event.type === "run.failed" && event.runId === "resume-missing");
+  assert.equal(failed?.resumeSessionId, "thread-missing");
+  const methods = transcriptMessages(fake.transcript)
+    .filter((entry) => entry.direction === "client")
+    .map((entry) => entry.message.method)
+    .filter((method) => method === "thread/resume" || method === "thread/start");
+  assert.deepEqual(methods, ["thread/resume"]);
+});
+
 test("forwards transient assistant text only when the desktop Runtime opts in", async (t) => {
   const fake = fakeServer(t, "stream");
   const collector = eventCollector();

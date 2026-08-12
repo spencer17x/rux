@@ -1938,10 +1938,14 @@ select:focus-visible {
 .run-status-card dd {
   display: inline-flex;
   align-items: center;
+  min-width: 0;
   gap: 4px;
   margin: 0;
   color: #53544f;
   font-weight: 560;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .run-section {
@@ -3521,6 +3525,61 @@ select:focus-visible {
 .codex-shell .composer-context-row {
   width: min(var(--reference-content-width), calc(100% - 48px));
   margin-top: 5px;
+}
+
+.codex-shell .session-recovery-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  margin: 4px 0 16px;
+  padding: 12px 13px;
+  border: 1px solid #ead7c7;
+  border-radius: 12px;
+  background: #fffaf5;
+}
+
+.codex-shell .session-recovery-icon {
+  display: inline-flex;
+  color: #a26139;
+}
+
+.codex-shell .session-recovery-card strong,
+.codex-shell .session-recovery-card p,
+.codex-shell .session-recovery-card small {
+  display: block;
+  margin: 0;
+}
+
+.codex-shell .session-recovery-card p {
+  margin-top: 3px;
+  color: #725b4c;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.codex-shell .session-recovery-card small {
+  overflow: hidden;
+  margin-top: 4px;
+  color: #9a7c68;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.codex-shell .session-recovery-actions {
+  display: flex;
+  gap: 6px;
+}
+
+@media (max-width: 760px) {
+  .codex-shell .session-recovery-card {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .codex-shell .session-recovery-actions {
+    grid-column: 2;
+  }
 }
 
 .codex-shell .inspector {

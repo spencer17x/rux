@@ -352,6 +352,19 @@ export interface RunStartParams {
   contextFiles?: string[];
 }
 
+export const nativeSessionKinds = ["codex-thread", "claude-session", "mock-session"] as const;
+export type NativeSessionKind = (typeof nativeSessionKinds)[number];
+
+/** A non-secret, immutable reference used to decide whether a Task may resume a provider-native session. */
+export interface NativeSessionLink {
+  kind: NativeSessionKind;
+  engine: RunAdapter;
+  providerConnectionId: string;
+  agentRevisionId: string;
+  workspaceId: string;
+  nativeSessionId: string;
+}
+
 export interface RunCancelParams {
   runId: string;
 }
@@ -825,6 +838,9 @@ export interface PersistedRun {
   model?: string;
   reasoningEffort?: ReasoningEffort;
   sessionId?: string;
+  sessionLink?: NativeSessionLink;
+  resumeFrom?: NativeSessionLink;
+  resumeFailure?: string;
   profileId?: string;
   agentRevisionId: string;
   providerConnection: ProviderConnectionRef;
@@ -1099,6 +1115,7 @@ export type RuntimeEvent =
       reasoningEffort?: ReasoningEffort;
       profileId?: string;
       agentRevisionId?: string;
+      resumeSessionId?: string;
       providerConnection?: ProviderConnectionRef;
       modelSource?: ModelSource;
       modelVerificationStatus?: ModelVerificationStatus;
@@ -1220,6 +1237,7 @@ export type RuntimeEvent =
       type: "run.failed";
       runId: string;
       error: string;
+      resumeSessionId?: string;
     };
 
 export type RuntimeWireMessage =
@@ -1375,6 +1393,15 @@ const agentProfileInstructionsSchema = z.string().trim().min(1).max(20_000);
 const agentProfileSkillIdsSchema = z.array(agentIdentifierSchema).max(64);
 const agentProfileToolIdsSchema = z.array(agentIdentifierSchema).max(64);
 const agentRevisionIdentifierSchema = z.string().trim().min(1).max(240);
+
+export const nativeSessionLinkSchema = z.object({
+  kind: z.enum(nativeSessionKinds),
+  engine: z.enum(runAdapters),
+  providerConnectionId: z.string().trim().min(1).max(240),
+  agentRevisionId: agentRevisionIdentifierSchema,
+  workspaceId: z.string().trim().min(1).max(240),
+  nativeSessionId: z.string().trim().min(1).max(500),
+}).strict();
 
 export const providerConnectionRefSchema = z.object({
   id: z.string().trim().min(1).max(240).regex(/^(?:cli|legacy):[a-z0-9._/-]+(?::[a-z0-9._/-]+)*$/i),
@@ -1853,6 +1880,9 @@ export const persistedRunSchema = z.object({
   model: z.string().max(120).optional(),
   reasoningEffort: reasoningEffortSchema.optional(),
   sessionId: z.string().max(500).optional(),
+  sessionLink: nativeSessionLinkSchema.optional(),
+  resumeFrom: nativeSessionLinkSchema.optional(),
+  resumeFailure: z.string().max(16_000).optional(),
   profileId: z.string().max(120).optional(),
   agentRevisionId: agentRevisionIdentifierSchema,
   providerConnection: providerConnectionRefSchema,
@@ -1884,6 +1914,21 @@ export const persistedRunSchema = z.object({
   const builtInAdapter = builtInAgentRevisionAdapter(run.agentRevisionId);
   if (builtInAdapter && builtInAdapter !== run.adapter) {
     context.addIssue({ code: "custom", path: ["agentRevisionId"], message: "Run built-in Revision must match its adapter" });
+  }
+  for (const [field, link] of [["sessionLink", run.sessionLink], ["resumeFrom", run.resumeFrom]] as const) {
+    if (!link) continue;
+    if (link.engine !== run.adapter) {
+      context.addIssue({ code: "custom", path: [field, "engine"], message: "Native Session Engine must match its Run" });
+    }
+    if (link.providerConnectionId !== run.providerConnection.id) {
+      context.addIssue({ code: "custom", path: [field, "providerConnectionId"], message: "Native Session Connection must match its Run" });
+    }
+    if (link.agentRevisionId !== run.agentRevisionId) {
+      context.addIssue({ code: "custom", path: [field, "agentRevisionId"], message: "Native Session Revision must match its Run" });
+    }
+  }
+  if (run.resumeFailure && !run.resumeFrom) {
+    context.addIssue({ code: "custom", path: ["resumeFailure"], message: "Resume failure requires an attempted Native Session" });
   }
   if (run.agentSnapshot) {
     if (run.agentSnapshot.id !== run.agentRevisionId) {
@@ -1997,6 +2042,13 @@ export const persistedTaskSchema = z.object({
       context.addIssue({ code: "custom", path: ["agentRevisionSnapshot", "backend"], message: "Task snapshot Engine must match its adapter" });
     }
   }
+  task.runs.forEach((run, index) => {
+    for (const [field, link] of [["sessionLink", run.sessionLink], ["resumeFrom", run.resumeFrom]] as const) {
+      if (link && link.workspaceId !== task.workspaceId) {
+        context.addIssue({ code: "custom", path: ["runs", index, field, "workspaceId"], message: "Native Session Workspace must match its Task" });
+      }
+    }
+  });
   task.reviewAcceptances.forEach((acceptance, index) => {
     if (!acceptance.runId || !acceptance.runPatchSnapshotId) return;
     const run = task.runs.find((candidate) => candidate.id === acceptance.runId);

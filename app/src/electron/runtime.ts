@@ -285,6 +285,7 @@ function startMockRun(params: ReturnType<typeof runStartParamsSchema.parse>): {
     reasoningEffort: params.reasoningEffort,
     profileId: params.profileId,
     agentRevisionId: params.agentRevisionId,
+    ...(params.sessionId ? { resumeSessionId: params.sessionId } : {}),
   });
 
   timers.push(setTimeout(() => {

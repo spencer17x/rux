@@ -8,11 +8,15 @@ The desktop UI should stay visually close to the Codex app: a pale, flat navigat
 
 Keep sidebar task history compact and single-line. The default showcase task should open in a credible completed state rather than looking permanently busy; running, stopped, and waiting states should appear only when the task lifecycle actually calls for them. Preserve sidebar, review, and draft preferences across launches without automatically reopening a terminal session.
 
+A Workspace starter Task keeps its placeholder title only before the first message. On first send, derive a compact single-line title from the normalized user prompt so persisted and resumed task history never continues to look like an unused “start new task” row.
+
 Keep the sidebar footer actions explicit and separate. The `当前项目` row owns the native workspace picker, while the bottom-most full-width `账户与登录` row opens Agent and Provider connection management without implying that a Rux cloud account is required. Do not run a status inspection merely because the app or connection surface opens; inspect installed official CLIs and their non-sensitive status only after the user explicitly clicks the detection action. In the Projects list, clicking a project heading only expands or collapses its tasks; switching happens when a task inside that project is opened. Keep `打开项目…` as a separate labelled action. Do not hide account access behind an icon-only control or overload the account row with project switching.
 
 Keep the account menu focused on authentication and Rux settings. Do not add social invitation actions or decorative pet controls.
 
 Keep model selection honest and compact. The primary Composer selector may show Engine default, official catalog models, and verified history for the current Connection; advanced manual IDs belong in the disclosed run settings. Show source/verification state there, and warn without silently replacing a saved catalog model that disappears after refresh.
+
+Keep Native Session recovery explicit and reviewable. Show recovery actions only after a real resume failure, retain the attempted Codex Thread or Claude Session identifier and error, and offer retrying that same Session or creating a blank new Task. Never make a fresh Session look like a successful resume. Keep Engine, Revision, Connection, model state, permission mode, and Session visible in the on-demand Run surface rather than adding a permanent panel.
 
 Render Rux settings as a full-height two-pane surface that follows the accepted Codex settings reference: a 240 px pale navigation rail with a labelled return action and search, plus a centered white settings canvas with section headings and rounded grouped rows. Keep every enabled setting wired to a real Rux behavior, keep unavailable categories visibly disabled, and never add the Pet category from the reference.
 

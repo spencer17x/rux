@@ -168,6 +168,8 @@ test("clean startup waits for explicit project and account actions", async () =>
   assert.match(rendererSource, /window\.rux \|\| !showcaseMode/);
   assert.match(rendererSource, /workspaceState\.recent\.filter\(\(workspace\) => !workspace\.placeholder\)/);
   assert.doesNotMatch(rendererSource, /SuperZ|<span className="account-avatar">SU<\/span>/);
+  assert.match(rendererSource, /task\.id === `workspace-\$\{task\.workspaceId\}` && !task\.messages\.length/);
+  assert.match(rendererSource, /title: taskTitleFromPrompt\(prompt\)/);
 
   const hydrateStart = rendererSource.indexOf("const hydrate = async () =>");
   const hydrateEnd = rendererSource.indexOf("void hydrate()", hydrateStart);
@@ -221,7 +223,7 @@ test("renderer keeps Agent setup actionable and resumes the selected task sessio
   assert.match(rendererSource, /className="composer-agent-warning"/);
   assert.match(rendererSource, /onClick=\{onOpenAccounts\}>账户与登录<\/button>/);
   assert.match(rendererSource, /const preflight = runPreflight\(selectedTask, prompt\)/);
-  assert.match(rendererSource, /const sessionId = latestSessionIdForTask\([\s\S]*taskSnapshot\.agentRevisionId,[\s\S]*taskSnapshot\.providerConnection\?\.id/);
+  assert.match(rendererSource, /const sessionLink = latestCompatibleSessionLink\(taskSnapshot\);\s+const sessionId = sessionLink\?\.nativeSessionId/);
   assert.match(rendererSource, /model: requestedModel,\s+reasoningEffort: taskSnapshot\.reasoningEffort \|\| undefined,\s+sessionId,\s+profileId: taskSnapshot\.agentProfileId,\s+agentRevisionId:/);
   assert.match(rendererSource, /runtime\.listAgentModels\(\{ adapter: "codex", limit: 100/);
   assert.match(rendererSource, /const \[drafts, setDrafts\] = useState/);
@@ -243,10 +245,22 @@ test("renderer keeps Tasks pinned to immutable Agent Revisions and branches upgr
   assert.match(rendererSource, /已删除 Definition 的历史 Revision/);
 
   const upgradeStart = rendererSource.indexOf("const createTaskWithLatestAgent = () =>");
-  const upgradeEnd = rendererSource.indexOf("\n  const selectTask =", upgradeStart);
+  const upgradeEnd = rendererSource.indexOf("\n  const retryFailedSession =", upgradeStart);
   const upgradeSource = rendererSource.slice(upgradeStart, upgradeEnd);
   assert.doesNotMatch(upgradeSource, /selectedTask\.messages|selectedTask\.runs|selectedTask\.contextFiles|sessionId/);
   assert.doesNotMatch(upgradeSource, /map\(\(task\).*agentRevisionId/);
+});
+
+test("renderer makes Native Session resume failure recoverable without silent fallback", async () => {
+  const renderer = await readFile(path.join(root, "src", "App.jsx"), "utf8");
+  const runtime = await readFile(path.join(root, "src", "runtime.js"), "utf8");
+  assert.match(renderer, /未能恢复原 Native Session/);
+  assert.match(renderer, /重试原 Session/);
+  assert.match(renderer, /创建新任务/);
+  assert.match(renderer, /Session<\/dt><dd title=/);
+  assert.match(renderer, /Revision<\/dt>/);
+  assert.match(renderer, /Connection<\/dt>/);
+  assert.match(runtime, /resumeSessionId: normalized\.options\.sessionId/);
 });
 
 test("renderer exposes truthful model source, manual verification, and catalog-removal states", async () => {
