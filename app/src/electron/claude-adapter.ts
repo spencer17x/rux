@@ -277,6 +277,7 @@ export class ClaudeCodeAdapter {
       permissionMode: params.permissionMode,
       model: params.model,
       profileId: params.profileId,
+      agentRevisionId: params.agentRevisionId,
     });
 
     child.stdout?.setEncoding("utf8");

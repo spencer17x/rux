@@ -7,13 +7,15 @@ import {
   forceKillChildProcessGroup,
   ensureChildProcessGroupTerminated,
 } from "./child-process-lifecycle.ts";
-import type {
-  AuthConnectionStatus,
-  AuthMethod,
-  AuthProviderId,
-  AuthProviderInfo,
-  AuthState,
-} from "../shared/protocol";
+import {
+  officialCliProviderConnection,
+  type AgentBackend,
+  type AuthConnectionStatus,
+  type AuthMethod,
+  type AuthProviderId,
+  type AuthProviderInfo,
+  type AuthState,
+} from "../shared/protocol.ts";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -195,6 +197,9 @@ function readVersion(executable: string, provider: AuthProviderId): string | und
 }
 
 function inspectProvider(definition: CliDefinition): AuthProviderInfo {
+  const providerConnection = officialCliProviderConnection(
+    (definition.id === "chatgpt" ? "codex" : "claude-code") satisfies AgentBackend,
+  );
   const executable = findExecutable(definition);
   if (!executable) {
     return {
@@ -204,6 +209,7 @@ function inspectProvider(definition: CliDefinition): AuthProviderInfo {
       status: "not-installed",
       installed: false,
       canLogin: false,
+      providerConnection,
       detail: `未找到 ${definition.cliName} CLI`,
     };
   }
@@ -233,6 +239,7 @@ function inspectProvider(definition: CliDefinition): AuthProviderInfo {
     status: parsed.status,
     installed: true,
     canLogin: true,
+    providerConnection,
     authMethod: parsed.authMethod,
     version: readVersion(executable, definition.id),
     executable,

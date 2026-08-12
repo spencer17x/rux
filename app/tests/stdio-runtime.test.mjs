@@ -216,6 +216,7 @@ test("standalone JSONL Runtime runs Codex and custom Agent profiles over stdio",
       prompt: "Only report the result.",
       permissionMode: "plan",
       profileId: created.result.id,
+      agentRevisionId: created.result.latestRevisionId,
       contextFiles: ["AGENTS.md"],
     },
   })}\n`);
@@ -232,11 +233,13 @@ test("standalone JSONL Runtime runs Codex and custom Agent profiles over stdio",
   assert.equal(started.event.model, "fake-model");
   assert.equal(started.event.reasoningEffort, "high");
   assert.equal(started.event.profileId, created.result.id);
+  assert.equal(started.event.agentRevisionId, created.result.latestRevisionId);
   const agentSnapshot = messages.find((message) =>
     message.kind === "event"
       && message.event.type === "run.agent-snapshot"
       && message.event.runId === "stdio-run");
-  assert.equal(agentSnapshot.event.profile.id, created.result.id);
+  assert.equal(agentSnapshot.event.profile.id, created.result.latestRevisionId);
+  assert.equal(agentSnapshot.event.profile.profileId, created.result.id);
   assert.equal(agentSnapshot.event.profile.instructions, "Always review the evidence first.");
   assert.equal(agentSnapshot.event.profile.permissionMode, "plan");
   assert.equal(agentSnapshot.event.profile.reasoningEffort, "high");
@@ -286,6 +289,7 @@ test("standalone JSONL Runtime runs Codex and custom Agent profiles over stdio",
       adapter: "codex",
       prompt: "Create immutable Run review evidence.",
       permissionMode: "plan",
+      agentRevisionId: "builtin:codex@1",
       contextFiles: [],
     },
   })}\n`);
@@ -374,6 +378,7 @@ test("standalone JSONL Runtime runs Codex and custom Agent profiles over stdio",
       permissionMode: "acceptEdits",
       model: "fake-model",
       reasoningEffort: "high",
+      agentRevisionId: "builtin:codex@1",
       contextFiles: [],
     },
   })}\n`);
@@ -428,6 +433,7 @@ test("standalone JSONL Runtime runs Codex and custom Agent profiles over stdio",
       adapter: "codex",
       prompt: "Wait and stop.",
       permissionMode: "acceptEdits",
+      agentRevisionId: "builtin:codex@1",
       contextFiles: [],
     },
   })}\n`);

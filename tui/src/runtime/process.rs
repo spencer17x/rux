@@ -238,7 +238,7 @@ mod tests {
         fs::write(
             &host,
             r"import readline from 'node:readline';
-console.log(JSON.stringify({kind:'event',event:{type:'runtime.ready',status:{protocolVersion:2,pid:process.pid,platform:process.platform,workspaceRoot:process.env.RUX_WORKSPACE_ROOT,startedAt:'test'}}}));
+console.log(JSON.stringify({kind:'event',event:{type:'runtime.ready',status:{protocolVersion:3,pid:process.pid,platform:process.platform,workspaceRoot:process.env.RUX_WORKSPACE_ROOT,startedAt:'test'}}}));
 readline.createInterface({input:process.stdin}).on('line', line => {
   const request = JSON.parse(line);
   console.log(JSON.stringify({kind:'response',id:request.id,ok:true,result:{runId:request.params.runId,adapter:'codex'}}));

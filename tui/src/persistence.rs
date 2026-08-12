@@ -192,6 +192,10 @@ pub struct TaskRunSettings {
     pub model: Option<String>,
     pub permission_mode: String,
     pub profile_id: Option<String>,
+    pub agent_revision_id: String,
+    pub provider_connection: Value,
+    pub model_source: String,
+    pub model_verification_status: String,
     pub session_id: Option<String>,
 }
 
@@ -206,6 +210,10 @@ pub struct HydratedTask {
     pub model: Option<String>,
     pub permission_mode: String,
     pub profile_id: Option<String>,
+    pub agent_revision_id: String,
+    pub provider_connection: Value,
+    pub model_source: String,
+    pub model_verification_status: String,
     pub session_id: Option<String>,
     pub run_count: usize,
     pub evidence: Vec<EvidenceItem>,
@@ -242,7 +250,7 @@ impl TaskPersistence {
         Self {
             enabled: false,
             state: Some(WorkspaceTaskState {
-                version: 1,
+                version: 2,
                 workspace_id: "demo".into(),
                 tasks: Vec::new(),
                 updated_at: now_iso(),
@@ -265,7 +273,7 @@ impl TaskPersistence {
     pub fn load(&mut self, value: &Value) -> Result<Option<HydratedTask>> {
         let state: WorkspaceTaskState =
             serde_json::from_value(value.clone()).context("decode shared task state")?;
-        if state.version != 1 || state.workspace_id.is_empty() {
+        if state.version != 2 || state.workspace_id.is_empty() {
             bail!("unsupported shared task state");
         }
         let selected = state
@@ -488,6 +496,7 @@ impl TaskPersistence {
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     fn hydrated_task(&self) -> Result<Option<HydratedTask>> {
         let Some(task) = &self.active_task else {
             return Ok(None);
@@ -552,6 +561,33 @@ impl TaskPersistence {
             .and_then(|run| string(run, "profileId"))
             .or_else(|| string(task, "agentProfileId"))
             .map(ToOwned::to_owned);
+        let agent_revision_id = latest_run
+            .and_then(|run| string(run, "agentRevisionId"))
+            .or_else(|| string(task, "agentRevisionId"))
+            .map_or_else(|| built_in_revision_id(&adapter), ToOwned::to_owned);
+        let provider_connection = latest_run
+            .and_then(|run| run.get("providerConnection"))
+            .or_else(|| task.get("providerConnection"))
+            .cloned()
+            .unwrap_or_else(|| default_provider_connection(&adapter));
+        let model_source = latest_run
+            .and_then(|run| string(run, "modelSource"))
+            .or_else(|| string(task, "modelSource"))
+            .unwrap_or(if model.is_some() {
+                "manual"
+            } else {
+                "engine-default"
+            })
+            .to_owned();
+        let model_verification_status = latest_run
+            .and_then(|run| string(run, "modelVerificationStatus"))
+            .or_else(|| string(task, "modelVerificationStatus"))
+            .unwrap_or(if model.is_some() {
+                "unverified"
+            } else {
+                "not-required"
+            })
+            .to_owned();
         let session_id = latest_run
             .and_then(|run| string(run, "sessionId"))
             .map(ToOwned::to_owned);
@@ -565,6 +601,10 @@ impl TaskPersistence {
             model,
             permission_mode,
             profile_id,
+            agent_revision_id,
+            provider_connection,
+            model_source,
+            model_verification_status,
             session_id,
             run_count: runs.len(),
             evidence: evidence_items(&runs),
@@ -597,12 +637,28 @@ impl TaskPersistence {
             ),
             ("adapter".into(), Value::String(settings.adapter.clone())),
             (
+                "agentRevisionId".into(),
+                Value::String(settings.agent_revision_id.clone()),
+            ),
+            (
+                "providerConnection".into(),
+                settings.provider_connection.clone(),
+            ),
+            (
                 "permissionMode".into(),
                 Value::String(settings.permission_mode.clone()),
             ),
             (
                 "model".into(),
                 Value::String(settings.model.clone().unwrap_or_else(|| "Default".into())),
+            ),
+            (
+                "modelSource".into(),
+                Value::String(settings.model_source.clone()),
+            ),
+            (
+                "modelVerificationStatus".into(),
+                Value::String(settings.model_verification_status.clone()),
             ),
             ("branch".into(), Value::String("—".into())),
             ("elapsed".into(), Value::String("—".into())),
@@ -720,6 +776,22 @@ fn ensure_run(task: &mut Map<String, Value>, run_id: &str, settings: &TaskRunSet
         ("id".into(), Value::String(run_id.into())),
         ("taskId".into(), Value::String(task_id)),
         ("adapter".into(), Value::String(settings.adapter.clone())),
+        (
+            "agentRevisionId".into(),
+            Value::String(settings.agent_revision_id.clone()),
+        ),
+        (
+            "providerConnection".into(),
+            settings.provider_connection.clone(),
+        ),
+        (
+            "modelSource".into(),
+            Value::String(settings.model_source.clone()),
+        ),
+        (
+            "modelVerificationStatus".into(),
+            Value::String(settings.model_verification_status.clone()),
+        ),
         ("status".into(), Value::String("running".into())),
         ("prompt".into(), Value::String(prompt)),
         (
@@ -746,6 +818,7 @@ fn ensure_run(task: &mut Map<String, Value>, run_id: &str, settings: &TaskRunSet
     runs.push(Value::Object(run));
 }
 
+#[allow(clippy::too_many_lines)]
 fn apply_run_event(run: &mut Map<String, Value>, event: &RuntimeEvent, now: &str) {
     match event.event_type.as_str() {
         "run.started" => {
@@ -760,8 +833,14 @@ fn apply_run_event(run: &mut Map<String, Value>, event: &RuntimeEvent, now: &str
         "run.agent-snapshot" => {
             if let Some(profile) = event.fields.get("profile").and_then(Value::as_object) {
                 run.insert("agentSnapshot".into(), Value::Object(profile.clone()));
-                if let Some(profile_id) = profile.get("id").and_then(Value::as_str) {
+                if let Some(revision_id) = profile.get("id").and_then(Value::as_str) {
+                    run.insert("agentRevisionId".into(), Value::String(revision_id.into()));
+                }
+                if let Some(profile_id) = profile.get("profileId").and_then(Value::as_str) {
                     run.insert("profileId".into(), Value::String(profile_id.into()));
+                }
+                if let Some(connection) = profile.get("providerConnection") {
+                    run.insert("providerConnection".into(), connection.clone());
                 }
             }
         }
@@ -856,6 +935,22 @@ fn apply_task_event(
         "run.started" => {
             task.insert("status".into(), Value::String("running".into()));
             task.insert("adapter".into(), Value::String(settings.adapter.clone()));
+            task.insert(
+                "agentRevisionId".into(),
+                Value::String(settings.agent_revision_id.clone()),
+            );
+            task.insert(
+                "providerConnection".into(),
+                settings.provider_connection.clone(),
+            );
+            task.insert(
+                "modelSource".into(),
+                Value::String(settings.model_source.clone()),
+            );
+            task.insert(
+                "modelVerificationStatus".into(),
+                Value::String(settings.model_verification_status.clone()),
+            );
             task.insert(
                 "agent".into(),
                 Value::String(agent_name(&settings.adapter).into()),
@@ -1066,6 +1161,32 @@ fn truncate(text: &str, max_chars: usize) -> String {
     truncated
 }
 
+fn built_in_revision_id(adapter: &str) -> String {
+    format!("builtin:{adapter}@1")
+}
+
+fn default_provider_connection(adapter: &str) -> Value {
+    if adapter == "mock" {
+        json!({
+            "id": "legacy:mock:local-demo",
+            "kind": "legacy",
+            "engine": "mock",
+            "label": "Legacy local demo"
+        })
+    } else {
+        json!({
+            "id": format!("cli:{adapter}:default"),
+            "kind": "official-cli",
+            "engine": adapter,
+            "label": if adapter == "claude-code" {
+                "Claude Code CLI default"
+            } else {
+                "Codex CLI default"
+            }
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -1078,6 +1199,10 @@ mod tests {
             model: None,
             permission_mode: "plan".into(),
             profile_id: None,
+            agent_revision_id: built_in_revision_id("codex"),
+            provider_connection: default_provider_connection("codex"),
+            model_source: "engine-default".into(),
+            model_verification_status: "not-required".into(),
             session_id: None,
         }
     }
@@ -1179,7 +1304,7 @@ mod tests {
         let mut persistence = TaskPersistence::awaiting();
         persistence
             .load(&json!({
-                "version": 1,
+                "version": 2,
                 "workspaceId": "workspace-1",
                 "tasks": [],
                 "updatedAt": "2026-08-10T00:00:00Z"
@@ -1265,7 +1390,7 @@ mod tests {
         let mut persistence = TaskPersistence::awaiting();
         let selected = persistence
             .load(&json!({
-                "version": 1,
+                "version": 2,
                 "workspaceId": "workspace-1",
                 "tasks": [
                     {
@@ -1361,7 +1486,7 @@ mod tests {
         let mut persistence = TaskPersistence::awaiting();
         let hydrated = persistence
             .load(&json!({
-                "version": 1,
+                "version": 2,
                 "workspaceId": "workspace-1",
                 "tasks": [{
                     "id": "task-1",

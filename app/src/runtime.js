@@ -1,4 +1,5 @@
 import { changedFiles } from "./data.js";
+import { builtInAgentRevisionId } from "./shared/protocol.ts";
 
 const delay = (fn, duration) => window.setTimeout(fn, duration);
 const webSnapshotId = "f".repeat(64);
@@ -30,16 +31,25 @@ const webAuthState = () => ({
 
 function normalizeRunArguments(options, emit) {
   if (typeof options === "function") {
-    return { options: { adapter: "mock", permissionMode: "acceptEdits" }, emit: options };
+    return {
+      options: {
+        adapter: "mock",
+        permissionMode: "acceptEdits",
+        agentRevisionId: builtInAgentRevisionId("mock"),
+      },
+      emit: options,
+    };
   }
+  const adapter = options?.adapter || "mock";
   return {
     options: {
-      adapter: options?.adapter || "mock",
+      adapter,
       permissionMode: options?.permissionMode || "acceptEdits",
       model: options?.model,
       reasoningEffort: options?.reasoningEffort,
       sessionId: options?.sessionId,
       profileId: options?.profileId,
+      agentRevisionId: options?.agentRevisionId || builtInAgentRevisionId(adapter),
       contextFiles: options?.contextFiles,
     },
     emit,
@@ -60,6 +70,7 @@ export function createMockRuntime() {
       model: options.model,
       reasoningEffort: options.reasoningEffort,
       profileId: options.profileId,
+      agentRevisionId: options.agentRevisionId,
     });
     timers.push(delay(() => emit({
       type: "activity.started",
@@ -278,6 +289,7 @@ export function createMockRuntime() {
           model: normalized.options.model,
           reasoningEffort: normalized.options.reasoningEffort,
           profileId: normalized.options.profileId,
+          agentRevisionId: normalized.options.agentRevisionId,
           contextFiles: normalized.options.contextFiles || [],
           request: record.request,
         });
@@ -478,6 +490,7 @@ function createDesktopRuntime(api) {
         ...(normalized.options.reasoningEffort ? { reasoningEffort: normalized.options.reasoningEffort } : {}),
         ...(normalized.options.sessionId ? { sessionId: normalized.options.sessionId } : {}),
         ...(normalized.options.profileId ? { profileId: normalized.options.profileId } : {}),
+        agentRevisionId: normalized.options.agentRevisionId,
         ...(normalized.options.contextFiles?.length ? { contextFiles: normalized.options.contextFiles } : {}),
       }).catch((error) => {
         const emit = activeRuns.get(runId);

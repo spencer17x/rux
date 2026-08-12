@@ -45,8 +45,11 @@ test("creates, persists, and reloads a custom Agent profile", (t) => {
   const reloaded = new AgentProfileStore(file);
   assert.deepEqual(reloaded.list(), [created]);
   const persisted = JSON.parse(readFileSync(file, "utf8"));
-  assert.equal(persisted.version, 1);
-  assert.equal(persisted.revision, 1);
+  assert.equal(persisted.version, 2);
+  assert.equal(persisted.storeRevision, 1);
+  assert.equal(persisted.agentRevisions.length, 1);
+  assert.equal(created.latestRevisionId, persisted.agentRevisions[0].id);
+  assert.deepEqual(reloaded.getRevision(created.latestRevisionId), persisted.agentRevisions[0]);
   assert.ok(directory);
 });
 
@@ -73,11 +76,12 @@ test("serializes interleaved mutations from independent store instances", (t) =>
 
   assert.deepEqual(left.list(), [updated]);
   assert.deepEqual(right.list(), [updated]);
-  assert.deepEqual(JSON.parse(readFileSync(file, "utf8")), {
-    version: 1,
-    revision: 4,
-    profiles: [updated],
-  });
+  const persisted = JSON.parse(readFileSync(file, "utf8"));
+  assert.equal(persisted.version, 2);
+  assert.equal(persisted.storeRevision, 4);
+  assert.deepEqual(persisted.profiles, [updated]);
+  assert.equal(persisted.agentRevisions.length, 3);
+  assert.ok(persisted.agentRevisions.some((revision) => revision.profileId === second.id));
 });
 
 test("applies stale updates to the latest revision and never resurrects deleted profiles", (t) => {
@@ -107,11 +111,11 @@ test("applies stale updates to the latest revision and never resurrects deleted 
   left.delete(created.id);
   assert.throws(() => stale.update(created.id, { enabled: false }), /not found/);
   assert.throws(() => stale.delete(created.id), /not found/);
-  assert.deepEqual(JSON.parse(readFileSync(file, "utf8")), {
-    version: 1,
-    revision: 4,
-    profiles: [],
-  });
+  const persisted = JSON.parse(readFileSync(file, "utf8"));
+  assert.equal(persisted.version, 2);
+  assert.equal(persisted.storeRevision, 4);
+  assert.deepEqual(persisted.profiles, []);
+  assert.equal(persisted.agentRevisions.length, 3);
 });
 
 test("updates policy fields without changing profile identity", (t) => {
@@ -132,6 +136,70 @@ test("updates policy fields without changing profile identity", (t) => {
   assert.equal(updated.backend, "codex");
   assert.equal(updated.reasoningEffort, "medium");
   assert.deepEqual(updated.skillIds, ["review/code", "test/focused"]);
+});
+
+test("appends immutable Agent Revisions and keeps them after Definition deletion", (t) => {
+  const { file, store, cleanup } = fixture();
+  t.after(cleanup);
+  const created = store.create(example);
+  const firstBytes = JSON.stringify(store.getRevision(created.latestRevisionId));
+
+  const second = store.update(created.id, { instructions: "Use the second immutable policy." });
+  const third = store.update(created.id, { permissionMode: "dontAsk" });
+
+  assert.equal(second.revisionNumber, 2);
+  assert.equal(third.revisionNumber, 3);
+  assert.equal(JSON.stringify(store.getRevision(created.latestRevisionId)), firstBytes);
+  assert.deepEqual(
+    store.listRevisions(created.id).map((revision) => revision.revisionNumber),
+    [1, 2, 3],
+  );
+
+  store.delete(created.id);
+  assert.equal(store.get(created.id), undefined);
+  assert.equal(JSON.stringify(store.getRevision(created.latestRevisionId)), firstBytes);
+  assert.equal(JSON.parse(readFileSync(file, "utf8")).agentRevisions.length, 3);
+});
+
+test("atomically migrates each v1 Profile to a deterministic initial Revision", (t) => {
+  const directory = mkdtempSync(join(tmpdir(), "rux-agent-profiles-v1-"));
+  const file = join(directory, "agents.json");
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const legacyProfile = {
+    id: "custom-00000000-0000-4000-8000-000000000009",
+    ...example,
+    description: example.description,
+    permissionMode: example.permissionMode,
+    skillIds: example.skillIds,
+    toolIds: example.toolIds,
+    enabled: true,
+    createdAt: "2026-08-01T00:00:00.000Z",
+    updatedAt: "2026-08-02T00:00:00.000Z",
+  };
+  writeFileSync(file, `${JSON.stringify({ version: 1, revision: 7, profiles: [legacyProfile] })}\n`, "utf8");
+
+  const store = new AgentProfileStore(file);
+  const [profile] = store.list();
+  const persisted = JSON.parse(readFileSync(file, "utf8"));
+
+  assert.equal(persisted.version, 2);
+  assert.equal(persisted.storeRevision, 7);
+  assert.equal(profile.latestRevisionId, `${profile.id.replace(/^/, "agent-revision:")}@1`);
+  assert.equal(profile.modelSource, "legacy");
+  assert.equal(persisted.agentRevisions[0].id, profile.latestRevisionId);
+  assert.equal(persisted.agentRevisions[0].instructions, legacyProfile.instructions);
+});
+
+test("rejects a future Profile Store version without mutating it", (t) => {
+  const directory = mkdtempSync(join(tmpdir(), "rux-agent-profiles-future-"));
+  const file = join(directory, "agents.json");
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const source = '{"version":3,"storeRevision":9,"profiles":[],"agentRevisions":[]}\n';
+  writeFileSync(file, source, "utf8");
+
+  assert.throws(() => new AgentProfileStore(file), /Invalid Agent profile store/);
+  assert.equal(readFileSync(file, "utf8"), source);
+  assert.equal(existsSync(`${file}.lock`), false);
 });
 
 test("rejects duplicate names and secret or executable fields", (t) => {

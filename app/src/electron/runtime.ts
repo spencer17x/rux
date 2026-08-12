@@ -48,7 +48,7 @@ import {
   type RuntimeResponse,
   type RuntimeStatus,
   type RuntimeWireMessage,
-  type AgentProfile,
+  type AgentRevision,
   type ContextSnapshot,
   type RunStartParams,
 } from "../shared/protocol";
@@ -179,10 +179,6 @@ const codex = new CodexRuntimeAdapter(workspaceRoot, emit, {
 const gitChanges = new GitChangesService(workspaceRoot);
 const authManager = new AuthManager(workspaceRoot);
 const workspaceId = createHash("sha256").update(workspaceRoot).digest("hex").slice(0, 12);
-const taskStore = new TaskStore(resolve(
-  process.env.RUX_STATE_ROOT ?? workspaceRoot,
-  "rux-task-state.sqlite3",
-));
 let agentProfileStore: AgentProfileStore | undefined;
 
 function profiles(): AgentProfileStore {
@@ -192,6 +188,12 @@ function profiles(): AgentProfileStore {
   ));
   return agentProfileStore;
 }
+
+const taskStore = new TaskStore(
+  resolve(process.env.RUX_STATE_ROOT ?? workspaceRoot, "rux-task-state.sqlite3"),
+  undefined,
+  (revisionId) => profiles().getRevision(revisionId),
+);
 
 function respond(response: RuntimeResponse): void {
   post(response);
@@ -281,6 +283,7 @@ function startMockRun(params: ReturnType<typeof runStartParamsSchema.parse>): {
     model: params.model,
     reasoningEffort: params.reasoningEffort,
     profileId: params.profileId,
+    agentRevisionId: params.agentRevisionId,
   });
 
   timers.push(setTimeout(() => {
@@ -336,7 +339,7 @@ async function contextSnapshot(params: unknown) {
 type PreparedRun = {
   params: RunStartParams;
   context: ContextSnapshot;
-  profile?: AgentProfile;
+  profile?: AgentRevision;
 };
 
 async function prepareRun(params: ReturnType<typeof runStartParamsSchema.parse>): Promise<PreparedRun> {
@@ -344,12 +347,14 @@ async function prepareRun(params: ReturnType<typeof runStartParamsSchema.parse>)
     throw new Error("Rux Demo Agent is disabled in production builds");
   }
   let effectiveParams: RunStartParams = params;
-  let profileSnapshot: AgentProfile | undefined;
+  let profileSnapshot: AgentRevision | undefined;
   const runContextSnapshot = await contextSnapshot({ selectedFiles: params.contextFiles });
   const promptSections: string[] = [];
   if (params.profileId) {
-    const profile = profiles().get(params.profileId);
-    if (!profile || !profile.enabled) throw new Error("Custom Agent profile is unavailable");
+    const profile = profiles().getRevision(params.agentRevisionId);
+    if (!profile || profile.profileId !== params.profileId || !profile.enabled) {
+      throw new Error("Custom Agent Revision is unavailable");
+    }
     if (profile.backend !== params.adapter) {
       throw new Error("Custom Agent backend does not match the requested adapter");
     }
@@ -423,6 +428,7 @@ function recoverPendingRun(runId: string, requestId: string): PendingPermissionR
         ...(run.reasoningEffort ? { reasoningEffort: run.reasoningEffort } : {}),
         ...(run.sessionId ? { sessionId: run.sessionId } : {}),
         ...(run.profileId ? { profileId: run.profileId } : {}),
+        agentRevisionId: run.agentRevisionId,
         contextFiles: run.contextFiles,
       },
     };

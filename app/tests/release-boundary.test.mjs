@@ -201,8 +201,8 @@ test("renderer keeps Agent setup actionable and resumes the selected task sessio
   assert.match(rendererSource, /className="composer-agent-warning"/);
   assert.match(rendererSource, /onClick=\{onOpenAccounts\}>账户与登录<\/button>/);
   assert.match(rendererSource, /const preflight = runPreflight\(selectedTask, prompt\)/);
-  assert.match(rendererSource, /const sessionId = latestSessionIdForTask\(taskSnapshot, adapter, taskSnapshot\.agentProfileId\)/);
-  assert.match(rendererSource, /model: requestedModel,\s+reasoningEffort: taskSnapshot\.reasoningEffort \|\| undefined,\s+sessionId,\s+profileId:/);
+  assert.match(rendererSource, /const sessionId = latestSessionIdForTask\([\s\S]*taskSnapshot\.agentRevisionId,[\s\S]*taskSnapshot\.providerConnection\?\.id/);
+  assert.match(rendererSource, /model: requestedModel,\s+reasoningEffort: taskSnapshot\.reasoningEffort \|\| undefined,\s+sessionId,\s+profileId: taskSnapshot\.agentProfileId,\s+agentRevisionId:/);
   assert.match(rendererSource, /runtime\.listAgentModels\(\{ adapter: "codex", limit: 100/);
   assert.match(rendererSource, /const \[drafts, setDrafts\] = useState/);
   assert.match(rendererSource, /composerInputRef\.current\?\.focus\(\)/);

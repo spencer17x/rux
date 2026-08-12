@@ -3,8 +3,14 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import {
+  agentRevisionSchema,
+  builtInAgentRevisionAdapter,
+  builtInAgentRevisionId,
+  defaultProviderConnectionForAdapter,
+  legacyProviderConnectionForAdapter,
   persistedWorkspaceIdSchema,
   workspaceTaskStateSchema,
+  type AgentRevision,
   type PersistedRun,
   type PersistedRunEvent,
   type PersistedTask,
@@ -15,6 +21,11 @@ import {
 
 type StoredWorkspaceRow = {
   state_json: string;
+};
+
+type StoredWorkspaceMigrationRow = StoredWorkspaceRow & {
+  workspace_id: string;
+  updated_at: string;
 };
 
 type SchemaVersionRow = {
@@ -34,13 +45,170 @@ type TableListRow = {
   strict: number;
 };
 
-const TASK_STORE_SCHEMA_VERSION = 1;
+const TASK_STORE_SCHEMA_VERSION = 2;
 
 const expectedWorkspaceStateColumns = [
   { name: "workspace_id", type: "TEXT", notnull: 1, pk: 1 },
   { name: "state_json", type: "TEXT", notnull: 1, pk: 0 },
   { name: "updated_at", type: "TEXT", notnull: 1, pk: 0 },
 ] as const;
+
+type UnknownRecord = Record<string, unknown>;
+
+function objectValue(value: unknown): UnknownRecord | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as UnknownRecord
+    : undefined;
+}
+
+function stringValue(object: UnknownRecord | undefined, key: string): string | undefined {
+  const value = object?.[key];
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function legacyAdapter(task: UnknownRecord, run?: UnknownRecord): "claude-code" | "codex" | "mock" {
+  const candidate = stringValue(run, "adapter") ?? stringValue(task, "adapter");
+  if (candidate === "claude-code" || candidate === "codex" || candidate === "mock") return candidate;
+  const agent = stringValue(task, "agent");
+  if (agent === "Claude Code") return "claude-code";
+  if (agent === "Codex" || agent === "Rux") return "codex";
+  return "mock";
+}
+
+function legacyRevisionHash(scope: string): string {
+  return createHash("sha256").update(scope).digest("hex");
+}
+
+function legacyRevision(
+  scope: string,
+  task: UnknownRecord,
+  run: UnknownRecord | undefined,
+  fallbackCreatedAt: string,
+): AgentRevision | undefined {
+  const adapter = legacyAdapter(task, run);
+  if (adapter === "mock") return undefined;
+  const snapshot = objectValue(run?.agentSnapshot);
+  const profileId = stringValue(snapshot, "id")
+    ?? stringValue(run, "profileId")
+    ?? stringValue(task, "agentProfileId");
+  if (!profileId && !snapshot) return undefined;
+
+  const hash = legacyRevisionHash(scope);
+  const name = (stringValue(snapshot, "name") ?? stringValue(task, "agent") ?? "Legacy Agent").slice(0, 80);
+  const description = (stringValue(snapshot, "description") ?? "Migrated from a legacy Task snapshot").slice(0, 400);
+  const instructions = (stringValue(snapshot, "instructions")
+    ?? "Legacy migration: the original Agent instructions were not persisted.").slice(0, 20_000);
+  const model = stringValue(snapshot, "model") ?? stringValue(run, "model") ?? stringValue(task, "model");
+  const reasoningEffort = stringValue(snapshot, "reasoningEffort") ?? stringValue(run, "reasoningEffort")
+    ?? stringValue(task, "reasoningEffort");
+  const permissionCandidate = stringValue(snapshot, "permissionMode") ?? stringValue(run, "permissionMode")
+    ?? stringValue(task, "permissionMode");
+  const permissionMode = permissionCandidate === "plan" || permissionCandidate === "dontAsk"
+    ? permissionCandidate
+    : "acceptEdits";
+  const skillIds = Array.isArray(snapshot?.skillIds)
+    ? snapshot.skillIds.filter((value): value is string => typeof value === "string")
+    : [];
+  const toolIds = Array.isArray(snapshot?.toolIds)
+    ? snapshot.toolIds.filter((value): value is string => typeof value === "string")
+    : [];
+
+  return agentRevisionSchema.parse({
+    id: `legacy-agent-revision:${hash}`,
+    profileId: profileId ?? `legacy-profile:${hash.slice(0, 32)}`,
+    revisionNumber: 1,
+    origin: "legacy-task",
+    name,
+    description,
+    backend: adapter,
+    providerConnection: legacyProviderConnectionForAdapter(adapter),
+    ...(model ? { model } : {}),
+    modelSource: "legacy",
+    modelVerificationStatus: "legacy",
+    ...(reasoningEffort ? { reasoningEffort } : {}),
+    instructions,
+    permissionMode,
+    skillIds,
+    toolIds,
+    enabled: snapshot?.enabled !== false,
+    createdAt: stringValue(snapshot, "updatedAt")
+      ?? stringValue(snapshot, "createdAt")
+      ?? stringValue(run, "startedAt")
+      ?? stringValue(task, "createdAt")
+      ?? fallbackCreatedAt,
+  });
+}
+
+/** Deterministically upgrades one validated-or-validatable v1 JSON snapshot. */
+export function migrateWorkspaceTaskStateV1(input: unknown): WorkspaceTaskState {
+  const state = objectValue(input);
+  if (!state) throw new Error("Legacy task state must be an object");
+  if (state.version === 2) return workspaceTaskStateSchema.parse(state);
+  if (state.version !== 1) throw new Error(`Unsupported workspace task state version: ${String(state.version)}`);
+  const workspaceId = stringValue(state, "workspaceId");
+  const updatedAt = stringValue(state, "updatedAt");
+  if (!workspaceId || !updatedAt || !Array.isArray(state.tasks)) {
+    throw new Error("Legacy task state is missing its workspace identity, timestamp, or tasks");
+  }
+
+  const tasks = state.tasks.map((taskInput, taskIndex) => {
+    const task = objectValue(taskInput);
+    if (!task) throw new Error(`Legacy task at index ${taskIndex} must be an object`);
+    const taskId = stringValue(task, "id") ?? `index-${taskIndex}`;
+    const legacyRuns = Array.isArray(task.runs) ? task.runs : [];
+    const taskEvidenceRun = [...legacyRuns].reverse()
+      .map(objectValue)
+      .find((run) => run && (objectValue(run.agentSnapshot) || stringValue(run, "profileId")));
+    const adapter = legacyAdapter(task, taskEvidenceRun);
+    const taskSnapshot = legacyRevision(
+      `${workspaceId}:${taskId}:task`,
+      task,
+      taskEvidenceRun,
+      updatedAt,
+    );
+    const taskRevisionId = taskSnapshot?.id ?? builtInAgentRevisionId(adapter);
+    const providerConnection = taskSnapshot?.providerConnection
+      ?? defaultProviderConnectionForAdapter(adapter);
+    const runs = legacyRuns.map((runInput, runIndex) => {
+      const run = objectValue(runInput);
+      if (!run) throw new Error(`Legacy Run at index ${runIndex} must be an object`);
+      const runId = stringValue(run, "id") ?? `index-${runIndex}`;
+      const runAdapter = legacyAdapter(task, run);
+      const runSnapshot = legacyRevision(
+        `${workspaceId}:${taskId}:run:${runId}`,
+        task,
+        run,
+        updatedAt,
+      );
+      return {
+        ...run,
+        agentRevisionId: runSnapshot?.id ?? builtInAgentRevisionId(runAdapter),
+        providerConnection: runSnapshot?.providerConnection
+          ?? defaultProviderConnectionForAdapter(runAdapter),
+        modelSource: "legacy",
+        modelVerificationStatus: "legacy",
+        ...(runSnapshot ? { agentSnapshot: runSnapshot } : {}),
+      };
+    });
+    return {
+      ...task,
+      adapter,
+      agentRevisionId: taskRevisionId,
+      ...(taskSnapshot ? { agentRevisionSnapshot: taskSnapshot } : {}),
+      providerConnection,
+      modelSource: "legacy",
+      modelVerificationStatus: "legacy",
+      runs,
+    };
+  });
+
+  return workspaceTaskStateSchema.parse({
+    version: 2,
+    workspaceId,
+    tasks,
+    updatedAt,
+  });
+}
 
 function readSchemaVersion(database: DatabaseSync): number {
   const row = database.prepare("PRAGMA user_version").get() as SchemaVersionRow | undefined;
@@ -79,19 +247,42 @@ function assertWorkspaceTaskStateSchema(database: DatabaseSync): void {
 }
 
 function migrateFromVersion(database: DatabaseSync, version: number): number {
-  if (version !== 0) {
-    throw new Error(`No Task store migration is available from schema version ${version}`);
+  if (version === 0) {
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS workspace_task_state (
+        workspace_id TEXT PRIMARY KEY NOT NULL,
+        state_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      ) STRICT
+    `);
+    database.exec("PRAGMA user_version = 1");
+    return 1;
   }
-
-  database.exec(`
-    CREATE TABLE IF NOT EXISTS workspace_task_state (
-      workspace_id TEXT PRIMARY KEY NOT NULL,
-      state_json TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    ) STRICT
-  `);
-  database.exec("PRAGMA user_version = 1");
-  return 1;
+  if (version === 1) {
+    assertWorkspaceTaskStateSchema(database);
+    const rows = database.prepare(`
+      SELECT workspace_id, state_json, updated_at FROM workspace_task_state
+    `).all() as unknown as StoredWorkspaceMigrationRow[];
+    const update = database.prepare(`
+      UPDATE workspace_task_state SET state_json = ?, updated_at = ? WHERE workspace_id = ?
+    `);
+    for (const row of rows) {
+      let legacy: unknown;
+      try {
+        legacy = JSON.parse(row.state_json) as unknown;
+      } catch (error) {
+        throw new Error(`Stored task state for workspace ${row.workspace_id} is not valid JSON`, { cause: error });
+      }
+      const migrated = migrateWorkspaceTaskStateV1(legacy);
+      if (migrated.workspaceId !== row.workspace_id) {
+        throw new Error(`Stored task state workspace mismatch: expected ${row.workspace_id}`);
+      }
+      update.run(JSON.stringify(migrated), migrated.updatedAt, row.workspace_id);
+    }
+    database.exec("PRAGMA user_version = 2");
+    return 2;
+  }
+  throw new Error(`No Task store migration is available from schema version ${version}`);
 }
 
 function initializeTaskStoreSchema(database: DatabaseSync): void {
@@ -137,7 +328,7 @@ function initializeTaskStoreSchema(database: DatabaseSync): void {
 
 function emptyWorkspaceState(workspaceId: string, now: string): WorkspaceTaskState {
   return {
-    version: 1,
+    version: 2,
     workspaceId,
     tasks: [],
     updatedAt: now,
@@ -281,7 +472,7 @@ export function mergeWorkspaceTaskStates(
     byId.set(task.id, existing ? mergeTask(existing, task) : task);
   }
   return workspaceTaskStateSchema.parse({
-    version: 1,
+    version: 2,
     workspaceId: current.workspaceId,
     tasks: [...byId.values()].sort((left, right) =>
       (left.createdAt ?? "").localeCompare(right.createdAt ?? "") || left.id.localeCompare(right.id)),
@@ -374,6 +565,94 @@ export function normalizeInterruptedTaskState(
   };
 }
 
+export type AgentRevisionResolver = (revisionId: string) => AgentRevision | undefined;
+
+function legacyRevisionIds(state: WorkspaceTaskState): Set<string> {
+  const ids = new Set<string>();
+  for (const task of state.tasks) {
+    if (task.agentRevisionSnapshot?.origin === "legacy-task") ids.add(task.agentRevisionId);
+    for (const run of task.runs) {
+      if (run.agentSnapshot?.origin === "legacy-task") ids.add(run.agentRevisionId);
+    }
+  }
+  return ids;
+}
+
+function assertRevisionReference(
+  label: string,
+  revisionId: string,
+  adapter: PersistedRun["adapter"],
+  connectionId: string,
+  snapshot: AgentRevision | undefined,
+  profileId: string | undefined,
+  resolver: AgentRevisionResolver | undefined,
+  knownLegacyIds: Set<string>,
+): void {
+  const builtInAdapter = builtInAgentRevisionAdapter(revisionId);
+  if (builtInAdapter) {
+    if (builtInAdapter !== adapter) throw new Error(`${label} built-in Agent Revision uses the wrong Engine`);
+    const expected = defaultProviderConnectionForAdapter(adapter);
+    if (connectionId !== expected.id) throw new Error(`${label} built-in Agent Revision uses the wrong Connection`);
+    if (snapshot) throw new Error(`${label} built-in Agent Revision must not carry a custom snapshot`);
+    if (profileId) throw new Error(`${label} built-in Agent Revision must not reference a custom Agent profile`);
+    return;
+  }
+
+  if (revisionId.startsWith("legacy-agent-revision:")) {
+    if (!knownLegacyIds.has(revisionId) || snapshot?.origin !== "legacy-task" || snapshot.id !== revisionId) {
+      throw new Error(`${label} references an unknown legacy Agent Revision`);
+    }
+    if (snapshot.backend !== adapter || snapshot.providerConnection.id !== connectionId) {
+      throw new Error(`${label} legacy Agent Revision uses the wrong Engine or Connection`);
+    }
+    return;
+  }
+
+  if (!resolver) throw new Error(`${label} custom Agent Revision cannot be resolved by this Task store`);
+  const resolved = resolver(revisionId);
+  if (!resolved) throw new Error(`${label} references a nonexistent Agent Revision: ${revisionId}`);
+  if (resolved.backend !== adapter || resolved.providerConnection.id !== connectionId) {
+    throw new Error(`${label} Agent Revision uses the wrong Engine or Connection`);
+  }
+  if (!profileId || resolved.profileId !== profileId) {
+    throw new Error(`${label} Agent Revision does not belong to its Agent profile`);
+  }
+  if (snapshot && snapshot.id !== resolved.id) {
+    throw new Error(`${label} snapshot does not match its resolved Agent Revision`);
+  }
+}
+
+function assertAgentRevisionReferences(
+  state: WorkspaceTaskState,
+  resolver: AgentRevisionResolver | undefined,
+  knownLegacyIds: Set<string>,
+): void {
+  for (const task of state.tasks) {
+    assertRevisionReference(
+      `Task ${task.id}`,
+      task.agentRevisionId,
+      task.adapter,
+      task.providerConnection.id,
+      task.agentRevisionSnapshot,
+      task.agentProfileId,
+      resolver,
+      knownLegacyIds,
+    );
+    for (const run of task.runs) {
+      assertRevisionReference(
+        `Run ${run.id}`,
+        run.agentRevisionId,
+        run.adapter,
+        run.providerConnection.id,
+        run.agentSnapshot,
+        run.profileId,
+        resolver,
+        knownLegacyIds,
+      );
+    }
+  }
+}
+
 /**
  * Main-process-owned Task/Message/Run store.
  *
@@ -386,12 +665,18 @@ export function normalizeInterruptedTaskState(
 export class TaskStore {
   readonly #database: DatabaseSync;
   readonly #now: () => string;
+  readonly #revisionResolver: AgentRevisionResolver | undefined;
   #closed = false;
 
-  constructor(databasePath: string, now: () => string = () => new Date().toISOString()) {
+  constructor(
+    databasePath: string,
+    now: () => string = () => new Date().toISOString(),
+    revisionResolver?: AgentRevisionResolver,
+  ) {
     mkdirSync(dirname(databasePath), { recursive: true });
     this.#database = new DatabaseSync(databasePath);
     this.#now = now;
+    this.#revisionResolver = revisionResolver;
     try {
       this.#database.exec("PRAGMA synchronous = FULL");
       this.#database.exec("PRAGMA foreign_keys = ON");
@@ -424,6 +709,7 @@ export class TaskStore {
     if (state.workspaceId !== workspaceId) {
       throw new Error(`Stored task state workspace mismatch: expected ${workspaceId}`);
     }
+    assertAgentRevisionReferences(state, this.#revisionResolver, legacyRevisionIds(state));
 
     const normalized = normalizeInterruptedTaskState(state, now);
     if (normalized.changed) this.save(normalized.state);
@@ -438,6 +724,7 @@ export class TaskStore {
         .prepare("SELECT state_json FROM workspace_task_state WHERE workspace_id = ?")
         .get(incoming.workspaceId) as StoredWorkspaceRow | undefined;
       let state: WorkspaceTaskState = incoming;
+      let knownLegacyIds = new Set<string>();
       if (storedRow) {
         let stored: unknown;
         try {
@@ -445,7 +732,12 @@ export class TaskStore {
         } catch (error) {
           throw new Error(`Stored task state for workspace ${incoming.workspaceId} is not valid JSON`, { cause: error });
         }
-        state = mergeWorkspaceTaskStates(workspaceTaskStateSchema.parse(stored), incoming);
+        const current = workspaceTaskStateSchema.parse(stored);
+        knownLegacyIds = legacyRevisionIds(current);
+        assertAgentRevisionReferences(incoming, this.#revisionResolver, knownLegacyIds);
+        state = mergeWorkspaceTaskStates(current, incoming);
+      } else {
+        assertAgentRevisionReferences(incoming, this.#revisionResolver, knownLegacyIds);
       }
       const serialized = JSON.stringify(state);
       this.#database.prepare(`

@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const RUX_PROTOCOL_VERSION = 2 as const;
+export const RUX_PROTOCOL_VERSION = 3 as const;
 
 export const IPC_CHANNELS = {
   request: "rux:runtime:request",
@@ -114,6 +114,7 @@ export interface AuthProviderInfo {
   version?: string;
   executable?: string;
   detail?: string;
+  providerConnection?: ProviderConnectionRef;
 }
 
 export interface AuthState {
@@ -181,11 +182,96 @@ export interface AgentModelListResult {
 export const agentBackends = ["claude-code", "codex"] as const;
 export type AgentBackend = (typeof agentBackends)[number];
 
+export const providerConnectionKinds = ["official-cli", "legacy"] as const;
+export type ProviderConnectionKind = (typeof providerConnectionKinds)[number];
+
+/**
+ * A stable, non-secret reference to authentication/configuration owned by an
+ * Engine. It never contains tokens, API keys, Base URLs, or credential paths.
+ */
+export interface ProviderConnectionRef {
+  id: string;
+  kind: ProviderConnectionKind;
+  engine: RunAdapter;
+  label: string;
+}
+
+export const modelSources = [
+  "engine-default",
+  "engine-catalog",
+  "verified-history",
+  "manual",
+  "legacy",
+] as const;
+export type ModelSource = (typeof modelSources)[number];
+
+export const modelVerificationStatuses = [
+  "not-required",
+  "unverified",
+  "verified",
+  "unavailable",
+  "legacy",
+] as const;
+export type ModelVerificationStatus = (typeof modelVerificationStatuses)[number];
+
+export const agentRevisionOrigins = ["profile-store", "legacy-task"] as const;
+export type AgentRevisionOrigin = (typeof agentRevisionOrigins)[number];
+
+export function officialCliProviderConnection(engine: AgentBackend): ProviderConnectionRef {
+  return {
+    id: `cli:${engine}:default`,
+    kind: "official-cli",
+    engine,
+    label: engine === "codex" ? "Codex CLI default" : "Claude Code CLI default",
+  };
+}
+
+export function defaultProviderConnectionForAdapter(adapter: RunAdapter): ProviderConnectionRef {
+  return adapter === "mock"
+    ? { id: "legacy:mock:local-demo", kind: "legacy", engine: "mock", label: "Legacy local demo" }
+    : officialCliProviderConnection(adapter);
+}
+
+export function legacyProviderConnectionForAdapter(adapter: RunAdapter): ProviderConnectionRef {
+  return {
+    id: `legacy:${adapter}:migrated`,
+    kind: "legacy",
+    engine: adapter,
+    label: `Legacy ${adapter} connection (source unknown)`,
+  };
+}
+
+export function defaultModelState(model?: string): {
+  modelSource: ModelSource;
+  modelVerificationStatus: ModelVerificationStatus;
+} {
+  if (!model || /\bdefault\b/i.test(model)) {
+    return { modelSource: "engine-default", modelVerificationStatus: "not-required" };
+  }
+  return { modelSource: "manual", modelVerificationStatus: "unverified" };
+}
+
+export function agentRevisionIdFor(profileId: string, revisionNumber: number): string {
+  return `agent-revision:${profileId}@${revisionNumber}`;
+}
+
+export function builtInAgentRevisionId(adapter: RunAdapter): string {
+  return `builtin:${adapter}@1`;
+}
+
+export function builtInAgentRevisionAdapter(revisionId: string): RunAdapter | undefined {
+  const match = /^builtin:(claude-code|codex|mock)@1$/.exec(revisionId);
+  return match?.[1] as RunAdapter | undefined;
+}
+
 export interface AgentProfileInput {
   name: string;
   description?: string;
   backend: AgentBackend;
+  providerConnection?: ProviderConnectionRef;
   model?: string;
+  modelSource?: ModelSource;
+  modelVerificationStatus?: ModelVerificationStatus;
   reasoningEffort?: ReasoningEffort;
   instructions: string;
   permissionMode?: PermissionMode;
@@ -199,7 +285,35 @@ export interface AgentProfile {
   name: string;
   description: string;
   backend: AgentBackend;
+  providerConnection: ProviderConnectionRef;
   model?: string;
+  modelSource: ModelSource;
+  modelVerificationStatus: ModelVerificationStatus;
+  reasoningEffort?: ReasoningEffort;
+  instructions: string;
+  permissionMode: PermissionMode;
+  skillIds: string[];
+  toolIds: string[];
+  enabled: boolean;
+  latestRevisionId: string;
+  revisionNumber: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Immutable execution configuration captured on every Agent save. */
+export interface AgentRevision {
+  id: string;
+  profileId: string;
+  revisionNumber: number;
+  origin: AgentRevisionOrigin;
+  name: string;
+  description: string;
+  backend: AgentBackend;
+  providerConnection: ProviderConnectionRef;
+  model?: string;
+  modelSource: ModelSource;
+  modelVerificationStatus: ModelVerificationStatus;
   reasoningEffort?: ReasoningEffort;
   instructions: string;
   permissionMode: PermissionMode;
@@ -207,7 +321,6 @@ export interface AgentProfile {
   toolIds: string[];
   enabled: boolean;
   createdAt: string;
-  updatedAt: string;
 }
 
 export interface AgentProfileUpdateParams {
@@ -228,6 +341,7 @@ export interface RunStartParams {
   permissionMode: PermissionMode;
   sessionId?: string;
   profileId?: string;
+  agentRevisionId: string;
   contextFiles?: string[];
 }
 
@@ -657,6 +771,7 @@ export interface PersistedTaskMessage {
   agent?: string;
   adapter?: RunAdapter;
   profileId?: string;
+  agentRevisionId?: string;
 }
 
 export interface PersistedPlanStep {
@@ -704,7 +819,11 @@ export interface PersistedRun {
   reasoningEffort?: ReasoningEffort;
   sessionId?: string;
   profileId?: string;
-  agentSnapshot?: AgentProfile;
+  agentRevisionId: string;
+  providerConnection: ProviderConnectionRef;
+  modelSource: ModelSource;
+  modelVerificationStatus: ModelVerificationStatus;
+  agentSnapshot?: AgentRevision;
   contextFiles: string[];
   contextSnapshot?: ContextSnapshot;
   gitBaseline?: GitRunBaseline;
@@ -737,10 +856,15 @@ export interface PersistedTask {
   pinned?: boolean;
   archived?: boolean;
   agent: string;
-  adapter?: RunAdapter;
+  adapter: RunAdapter;
   agentProfileId?: string;
+  agentRevisionId: string;
+  agentRevisionSnapshot?: AgentRevision;
+  providerConnection: ProviderConnectionRef;
   permissionMode?: PermissionMode;
   model: string;
+  modelSource: ModelSource;
+  modelVerificationStatus: ModelVerificationStatus;
   reasoningEffort?: ReasoningEffort;
   contextFiles?: string[];
   branch: string;
@@ -754,7 +878,7 @@ export interface PersistedTask {
 }
 
 export interface WorkspaceTaskState {
-  version: 1;
+  version: 2;
   workspaceId: string;
   tasks: PersistedTask[];
   updatedAt: string;
@@ -967,6 +1091,10 @@ export type RuntimeEvent =
       model?: string;
       reasoningEffort?: ReasoningEffort;
       profileId?: string;
+      agentRevisionId?: string;
+      providerConnection?: ProviderConnectionRef;
+      modelSource?: ModelSource;
+      modelVerificationStatus?: ModelVerificationStatus;
     }
   | {
       type: "run.metadata";
@@ -981,7 +1109,7 @@ export type RuntimeEvent =
   | {
       type: "run.agent-snapshot";
       runId: string;
-      profile: AgentProfile;
+      profile: AgentRevision;
     }
   | {
       type: "run.context-snapshot";
@@ -1007,6 +1135,10 @@ export type RuntimeEvent =
       model?: string;
       reasoningEffort?: ReasoningEffort;
       profileId?: string;
+      agentRevisionId?: string;
+      providerConnection?: ProviderConnectionRef;
+      modelSource?: ModelSource;
+      modelVerificationStatus?: ModelVerificationStatus;
       contextFiles?: string[];
       request: PermissionRequest;
     }
@@ -1197,8 +1329,20 @@ export const runStartParamsSchema = z.object({
   permissionMode: z.enum(permissionModes),
   sessionId: z.string().min(1).max(500).optional(),
   profileId: z.string().min(1).max(120).optional(),
+  agentRevisionId: z.string().min(1).max(240),
   contextFiles: z.array(z.string().min(1).max(4_096)).max(500).default([]),
-}).strict();
+}).strict().superRefine((params, context) => {
+  if (!params.profileId) {
+    const builtInAdapter = builtInAgentRevisionAdapter(params.agentRevisionId);
+    if (builtInAdapter !== params.adapter) {
+      context.addIssue({
+        code: "custom",
+        path: ["agentRevisionId"],
+        message: "Built-in Agent Revision must match the requested adapter",
+      });
+    }
+  }
+});
 
 export const runCancelParamsSchema = z.object({
   runId: z.string().min(1).max(120),
@@ -1217,12 +1361,41 @@ const agentProfileModelSchema = z.string().trim().min(1).max(120);
 const agentProfileInstructionsSchema = z.string().trim().min(1).max(20_000);
 const agentProfileSkillIdsSchema = z.array(agentIdentifierSchema).max(64);
 const agentProfileToolIdsSchema = z.array(agentIdentifierSchema).max(64);
+const agentRevisionIdentifierSchema = z.string().trim().min(1).max(240);
+
+export const providerConnectionRefSchema = z.object({
+  id: z.string().trim().min(1).max(240).regex(/^(?:cli|legacy):[a-z0-9._/-]+(?::[a-z0-9._/-]+)*$/i),
+  kind: z.enum(providerConnectionKinds),
+  engine: z.enum(runAdapters),
+  label: z.string().trim().min(1).max(160),
+}).strict().superRefine((connection, context) => {
+  if (connection.kind === "official-cli" && !connection.id.startsWith(`cli:${connection.engine}:`)) {
+    context.addIssue({
+      code: "custom",
+      path: ["id"],
+      message: "Official CLI Connection id must be scoped to its Engine",
+    });
+  }
+  if (connection.kind === "legacy" && !connection.id.startsWith(`legacy:${connection.engine}:`)) {
+    context.addIssue({
+      code: "custom",
+      path: ["id"],
+      message: "Legacy Connection id must be scoped to its Engine",
+    });
+  }
+});
+
+export const modelSourceSchema = z.enum(modelSources);
+export const modelVerificationStatusSchema = z.enum(modelVerificationStatuses);
 
 export const agentProfileInputSchema = z.object({
   name: agentProfileNameSchema,
   description: agentProfileDescriptionSchema.default(""),
   backend: z.enum(agentBackends),
+  providerConnection: providerConnectionRefSchema.optional(),
   model: agentProfileModelSchema.optional(),
+  modelSource: modelSourceSchema.optional(),
+  modelVerificationStatus: modelVerificationStatusSchema.optional(),
   reasoningEffort: reasoningEffortSchema.optional(),
   instructions: agentProfileInstructionsSchema,
   permissionMode: z.enum(permissionModes).default("acceptEdits"),
@@ -1233,15 +1406,65 @@ export const agentProfileInputSchema = z.object({
 
 export const agentProfileSchema = agentProfileInputSchema.extend({
   id: z.string().regex(/^custom-[a-f0-9-]{36}$/),
+  providerConnection: providerConnectionRefSchema,
+  modelSource: modelSourceSchema,
+  modelVerificationStatus: modelVerificationStatusSchema,
+  latestRevisionId: agentRevisionIdentifierSchema,
+  revisionNumber: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
   createdAt: z.iso.datetime({ offset: true }),
   updatedAt: z.iso.datetime({ offset: true }),
-}).strict();
+}).strict().superRefine((profile, context) => {
+  if (profile.providerConnection.engine !== profile.backend) {
+    context.addIssue({ code: "custom", path: ["providerConnection", "engine"], message: "Agent Connection Engine must match its backend" });
+  }
+  if (profile.latestRevisionId !== agentRevisionIdFor(profile.id, profile.revisionNumber)) {
+    context.addIssue({ code: "custom", path: ["latestRevisionId"], message: "Agent latestRevisionId must match its revision number" });
+  }
+});
+
+export const agentRevisionSchema = z.object({
+  id: agentRevisionIdentifierSchema,
+  profileId: z.string().trim().min(1).max(240),
+  revisionNumber: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  origin: z.enum(agentRevisionOrigins),
+  name: agentProfileNameSchema,
+  description: agentProfileDescriptionSchema,
+  backend: z.enum(agentBackends),
+  providerConnection: providerConnectionRefSchema,
+  model: agentProfileModelSchema.optional(),
+  modelSource: modelSourceSchema,
+  modelVerificationStatus: modelVerificationStatusSchema,
+  reasoningEffort: reasoningEffortSchema.optional(),
+  instructions: agentProfileInstructionsSchema,
+  permissionMode: z.enum(permissionModes),
+  skillIds: agentProfileSkillIdsSchema,
+  toolIds: agentProfileToolIdsSchema,
+  enabled: z.boolean(),
+  createdAt: z.iso.datetime({ offset: true }),
+}).strict().superRefine((revision, context) => {
+  if (revision.providerConnection.engine !== revision.backend) {
+    context.addIssue({ code: "custom", path: ["providerConnection", "engine"], message: "Agent Revision Connection Engine must match its backend" });
+  }
+  if (revision.origin === "profile-store") {
+    if (!/^custom-[a-f0-9-]{36}$/.test(revision.profileId)) {
+      context.addIssue({ code: "custom", path: ["profileId"], message: "Stored Agent Revision must reference a custom Agent profile" });
+    }
+    if (revision.id !== agentRevisionIdFor(revision.profileId, revision.revisionNumber)) {
+      context.addIssue({ code: "custom", path: ["id"], message: "Agent Revision id must match its profile and revision number" });
+    }
+  } else if (!/^legacy-agent-revision:[a-f0-9]{64}$/.test(revision.id)) {
+    context.addIssue({ code: "custom", path: ["id"], message: "Legacy Agent Revision id must be deterministic" });
+  }
+});
 
 export const agentProfilePatchSchema = z.object({
   name: agentProfileNameSchema.optional(),
   description: agentProfileDescriptionSchema.optional(),
   backend: z.enum(agentBackends).optional(),
+  providerConnection: providerConnectionRefSchema.optional(),
   model: agentProfileModelSchema.optional(),
+  modelSource: modelSourceSchema.optional(),
+  modelVerificationStatus: modelVerificationStatusSchema.optional(),
   reasoningEffort: reasoningEffortSchema.optional(),
   instructions: agentProfileInstructionsSchema.optional(),
   permissionMode: z.enum(permissionModes).optional(),
@@ -1561,6 +1784,7 @@ export const persistedTaskMessageSchema = z.object({
   agent: z.string().min(1).max(240).optional(),
   adapter: z.enum(runAdapters).optional(),
   profileId: z.string().min(1).max(120).optional(),
+  agentRevisionId: z.string().min(1).max(240).optional(),
 }).strict();
 
 export const persistedPlanStepSchema = z.object({
@@ -1617,7 +1841,11 @@ export const persistedRunSchema = z.object({
   reasoningEffort: reasoningEffortSchema.optional(),
   sessionId: z.string().max(500).optional(),
   profileId: z.string().max(120).optional(),
-  agentSnapshot: agentProfileSchema.optional(),
+  agentRevisionId: agentRevisionIdentifierSchema,
+  providerConnection: providerConnectionRefSchema,
+  modelSource: modelSourceSchema,
+  modelVerificationStatus: modelVerificationStatusSchema,
+  agentSnapshot: agentRevisionSchema.optional(),
   contextFiles: z.array(z.string().min(1).max(4_096)).max(500).default([]),
   contextSnapshot: contextSnapshotSchema.optional(),
   gitBaseline: gitRunBaselineSchema.optional(),
@@ -1637,6 +1865,24 @@ export const persistedRunSchema = z.object({
   verifications: z.array(verificationEvidenceSchema).max(20_000).default([]),
   events: z.array(persistedRunEventSchema).max(50_000),
 }).strict().superRefine((run, context) => {
+  if (run.providerConnection.engine !== run.adapter) {
+    context.addIssue({ code: "custom", path: ["providerConnection", "engine"], message: "Run Connection Engine must match its adapter" });
+  }
+  const builtInAdapter = builtInAgentRevisionAdapter(run.agentRevisionId);
+  if (builtInAdapter && builtInAdapter !== run.adapter) {
+    context.addIssue({ code: "custom", path: ["agentRevisionId"], message: "Run built-in Revision must match its adapter" });
+  }
+  if (run.agentSnapshot) {
+    if (run.agentSnapshot.id !== run.agentRevisionId) {
+      context.addIssue({ code: "custom", path: ["agentSnapshot", "id"], message: "Run snapshot must match its Agent Revision reference" });
+    }
+    if (run.agentSnapshot.backend !== run.adapter) {
+      context.addIssue({ code: "custom", path: ["agentSnapshot", "backend"], message: "Run snapshot Engine must match its adapter" });
+    }
+    if (run.profileId && run.agentSnapshot.profileId !== run.profileId) {
+      context.addIssue({ code: "custom", path: ["agentSnapshot", "profileId"], message: "Run snapshot must match its Agent profile" });
+    }
+  }
   if (run.gitBaseline && run.gitBaseline.runId !== run.id) {
     context.addIssue({ code: "custom", path: ["gitBaseline", "runId"], message: "Git baseline runId must match its parent Run" });
   }
@@ -1703,10 +1949,15 @@ export const persistedTaskSchema = z.object({
   pinned: z.boolean().optional(),
   archived: z.boolean().optional(),
   agent: z.string().min(1).max(240),
-  adapter: z.enum(runAdapters).optional(),
+  adapter: z.enum(runAdapters),
   agentProfileId: z.string().min(1).max(120).optional(),
+  agentRevisionId: agentRevisionIdentifierSchema,
+  agentRevisionSnapshot: agentRevisionSchema.optional(),
+  providerConnection: providerConnectionRefSchema,
   permissionMode: z.enum(permissionModes).optional(),
   model: z.string().min(1).max(240),
+  modelSource: modelSourceSchema,
+  modelVerificationStatus: modelVerificationStatusSchema,
   reasoningEffort: reasoningEffortSchema.optional(),
   contextFiles: z.array(z.string().min(1).max(4_096)).max(200).default([]),
   branch: z.string().max(1_000),
@@ -1718,6 +1969,21 @@ export const persistedTaskSchema = z.object({
   runs: z.array(persistedRunSchema).max(2_000).default([]),
   reviewAcceptances: z.array(gitReviewAcceptanceSchema).max(2_000).default([]),
 }).strict().superRefine((task, context) => {
+  if (task.providerConnection.engine !== task.adapter) {
+    context.addIssue({ code: "custom", path: ["providerConnection", "engine"], message: "Task Connection Engine must match its adapter" });
+  }
+  const builtInAdapter = builtInAgentRevisionAdapter(task.agentRevisionId);
+  if (builtInAdapter && builtInAdapter !== task.adapter) {
+    context.addIssue({ code: "custom", path: ["agentRevisionId"], message: "Task built-in Revision must match its adapter" });
+  }
+  if (task.agentRevisionSnapshot) {
+    if (task.agentRevisionSnapshot.id !== task.agentRevisionId) {
+      context.addIssue({ code: "custom", path: ["agentRevisionSnapshot", "id"], message: "Task snapshot must match its Agent Revision reference" });
+    }
+    if (task.agentRevisionSnapshot.backend !== task.adapter) {
+      context.addIssue({ code: "custom", path: ["agentRevisionSnapshot", "backend"], message: "Task snapshot Engine must match its adapter" });
+    }
+  }
   task.reviewAcceptances.forEach((acceptance, index) => {
     if (!acceptance.runId || !acceptance.runPatchSnapshotId) return;
     const run = task.runs.find((candidate) => candidate.id === acceptance.runId);
@@ -1763,7 +2029,7 @@ export const persistedTaskSchema = z.object({
 });
 
 export const workspaceTaskStateSchema = z.object({
-  version: z.literal(1),
+  version: z.literal(2),
   workspaceId: persistedWorkspaceIdSchema,
   tasks: z.array(persistedTaskSchema).max(20_000),
   updatedAt: persistedIsoDateSchema,
@@ -1782,6 +2048,22 @@ export const workspaceTaskStateSchema = z.object({
           code: "custom",
           path: ["tasks", taskIndex, "runs", runIndex, "taskId"],
           message: "Run taskId must match its parent task",
+        });
+      }
+      const legacyHistory = task.agentRevisionSnapshot?.origin === "legacy-task"
+        || run.agentSnapshot?.origin === "legacy-task";
+      if (!legacyHistory && run.agentRevisionId !== task.agentRevisionId) {
+        context.addIssue({
+          code: "custom",
+          path: ["tasks", taskIndex, "runs", runIndex, "agentRevisionId"],
+          message: "Run Agent Revision must match its parent Task",
+        });
+      }
+      if (!legacyHistory && run.providerConnection.id !== task.providerConnection.id) {
+        context.addIssue({
+          code: "custom",
+          path: ["tasks", taskIndex, "runs", runIndex, "providerConnection", "id"],
+          message: "Run Connection must match its parent Task",
         });
       }
     });

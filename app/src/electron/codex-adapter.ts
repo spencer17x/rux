@@ -21,6 +21,7 @@ export type CodexAdapterEvent = CodexNormalizedEvent
       permissionMode?: CodexPermissionMode;
       model?: string;
       profileId?: string;
+      agentRevisionId?: string;
     }
   | { type: "run.cancelled"; runId: string };
 
@@ -31,6 +32,7 @@ export type CodexStartParams = {
   permissionMode: CodexPermissionMode;
   sessionId?: string;
   profileId?: string;
+  agentRevisionId?: string;
 };
 
 export type CodexAdapterInfo = {
@@ -188,6 +190,7 @@ export class CodexAdapter {
       permissionMode: params.permissionMode,
       model: params.model,
       profileId: params.profileId,
+      agentRevisionId: params.agentRevisionId,
     });
     child.stdin?.end(params.prompt);
 

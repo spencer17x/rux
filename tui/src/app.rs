@@ -27,12 +27,38 @@ pub fn adapter_label(adapter: &str) -> &str {
     }
 }
 
+fn built_in_revision_id(adapter: &str) -> String {
+    format!("builtin:{adapter}@1")
+}
+
+fn default_provider_connection(adapter: &str) -> Value {
+    if adapter == "mock" {
+        json!({
+            "id": "legacy:mock:local-demo",
+            "kind": "legacy",
+            "engine": "mock",
+            "label": "Legacy local demo"
+        })
+    } else {
+        json!({
+            "id": format!("cli:{adapter}:default"),
+            "kind": "official-cli",
+            "engine": adapter,
+            "label": if adapter == "claude-code" { "Claude Code CLI default" } else { "Codex CLI default" }
+        })
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RunConfiguration {
     pub adapter: String,
     pub model: Option<String>,
+    pub model_source: String,
+    pub model_verification_status: String,
     pub permission_mode: String,
     pub profile_id: Option<String>,
+    pub agent_revision_id: String,
+    pub provider_connection: Value,
     pub session_id: Option<String>,
 }
 
@@ -43,16 +69,24 @@ impl RunConfiguration {
             Self {
                 adapter: "codex".into(),
                 model: None,
+                model_source: "engine-default".into(),
+                model_verification_status: "not-required".into(),
                 permission_mode: "plan".into(),
                 profile_id: None,
+                agent_revision_id: built_in_revision_id("codex"),
+                provider_connection: default_provider_connection("codex"),
                 session_id: None,
             }
         } else {
             Self {
                 adapter: "mock".into(),
                 model: Some("demo".into()),
+                model_source: "manual".into(),
+                model_verification_status: "unverified".into(),
                 permission_mode: "acceptEdits".into(),
                 profile_id: None,
+                agent_revision_id: built_in_revision_id("mock"),
+                provider_connection: default_provider_connection("mock"),
                 session_id: None,
             }
         }
@@ -71,6 +105,13 @@ impl RunConfiguration {
             self.permission_mode
         )
     }
+}
+
+#[derive(Clone, Debug)]
+struct ProfileRevisionRef {
+    revision_id: String,
+    backend: String,
+    provider_connection: Value,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -367,6 +408,7 @@ pub struct App {
     pending_escape: Option<(EscapeIntent, u64)>,
     next_request_number: u64,
     pending_requests: BTreeMap<String, String>,
+    profile_revisions: BTreeMap<String, ProfileRevisionRef>,
     persistence: TaskPersistence,
     changes_snapshot_id: Option<String>,
     changed_paths: Vec<String>,
@@ -412,6 +454,7 @@ impl App {
             pending_escape: None,
             next_request_number: 1,
             pending_requests: BTreeMap::new(),
+            profile_revisions: BTreeMap::new(),
             persistence,
             changes_snapshot_id: None,
             changed_paths: Vec::new(),
@@ -677,6 +720,10 @@ impl App {
         if let Some(profile_id) = &self.run_configuration.profile_id {
             params.insert("profileId".into(), Value::String(profile_id.clone()));
         }
+        params.insert(
+            "agentRevisionId".into(),
+            Value::String(self.run_configuration.agent_revision_id.clone()),
+        );
         if let Some(session_id) = &self.run_configuration.session_id {
             params.insert("sessionId".into(), Value::String(session_id.clone()));
         }
@@ -769,6 +816,13 @@ impl App {
             return;
         }
         self.run_configuration.model = (arguments != "default").then(|| arguments.to_owned());
+        if self.run_configuration.model.is_some() {
+            self.run_configuration.model_source = "manual".into();
+            self.run_configuration.model_verification_status = "unverified".into();
+        } else {
+            self.run_configuration.model_source = "engine-default".into();
+            self.run_configuration.model_verification_status = "not-required".into();
+        }
         self.status_hint = format!("Next run: {}", self.run_configuration.summary());
     }
 
@@ -795,6 +849,8 @@ impl App {
         if self.run_configuration.adapter != adapter {
             self.run_configuration.adapter = adapter.into();
             self.run_configuration.profile_id = None;
+            self.run_configuration.agent_revision_id = built_in_revision_id(adapter);
+            self.run_configuration.provider_connection = default_provider_connection(adapter);
             self.run_configuration.session_id = None;
         }
         self.status_hint = format!("Next run: {}", self.run_configuration.summary());
@@ -832,7 +888,28 @@ impl App {
             let request = self.request("agent.profile.list", json!({}));
             return vec![Effect::SendRuntime(request)];
         }
-        self.run_configuration.profile_id = (arguments != "none").then(|| arguments.to_owned());
+        if arguments == "none" {
+            self.run_configuration.profile_id = None;
+            self.run_configuration.agent_revision_id =
+                built_in_revision_id(&self.run_configuration.adapter);
+            self.run_configuration.provider_connection =
+                default_provider_connection(&self.run_configuration.adapter);
+            self.run_configuration.session_id = None;
+            self.status_hint = format!("Next run: {}", self.run_configuration.summary());
+            return Vec::new();
+        }
+        let Some(selection) = self.profile_revisions.get(arguments).cloned() else {
+            self.entries.push(TranscriptEntry::Error(
+                "Unknown profile Revision; run /profile, then select a listed profile id".into(),
+            ));
+            return vec![Effect::SendRuntime(
+                self.request("agent.profile.list", json!({})),
+            )];
+        };
+        self.run_configuration.profile_id = Some(arguments.to_owned());
+        self.run_configuration.adapter = selection.backend;
+        self.run_configuration.agent_revision_id = selection.revision_id;
+        self.run_configuration.provider_connection = selection.provider_connection;
         self.run_configuration.session_id = None;
         self.status_hint = format!("Next run: {}", self.run_configuration.summary());
         Vec::new()
@@ -1369,6 +1446,7 @@ impl App {
         Vec::new()
     }
 
+    #[allow(clippy::too_many_lines)]
     fn apply_response(&mut self, method: Option<&str>, result: Option<&Value>) {
         match method {
             Some("agent.list") => {
@@ -1401,6 +1479,35 @@ impl App {
                 self.entries.push(TranscriptEntry::System(adapters));
             }
             Some("agent.profile.list") => {
+                if let Some(items) = result
+                    .and_then(|value| value.get("profiles"))
+                    .and_then(Value::as_array)
+                {
+                    for item in items {
+                        let Some(id) = item.get("id").and_then(Value::as_str) else {
+                            continue;
+                        };
+                        let Some(revision_id) =
+                            item.get("latestRevisionId").and_then(Value::as_str)
+                        else {
+                            continue;
+                        };
+                        let Some(backend) = item.get("backend").and_then(Value::as_str) else {
+                            continue;
+                        };
+                        let Some(provider_connection) = item.get("providerConnection") else {
+                            continue;
+                        };
+                        self.profile_revisions.insert(
+                            id.into(),
+                            ProfileRevisionRef {
+                                revision_id: revision_id.into(),
+                                backend: backend.into(),
+                                provider_connection: provider_connection.clone(),
+                            },
+                        );
+                    }
+                }
                 let profiles = result
                     .and_then(|value| value.get("profiles"))
                     .and_then(Value::as_array)
@@ -1422,7 +1529,11 @@ impl App {
                                         .get("backend")
                                         .and_then(Value::as_str)
                                         .unwrap_or("unknown");
-                                    format!("{name} [{backend}] id={id}")
+                                    let revision = item
+                                        .get("latestRevisionId")
+                                        .and_then(Value::as_str)
+                                        .unwrap_or("unknown");
+                                    format!("{name} [{backend}] id={id} revision={revision}")
                                 })
                                 .collect::<Vec<_>>()
                                 .join(" · ")
@@ -1657,6 +1768,10 @@ impl App {
             model,
             permission_mode,
             profile_id,
+            agent_revision_id,
+            provider_connection,
+            model_source,
+            model_verification_status,
             session_id,
             run_count,
             evidence,
@@ -1679,8 +1794,12 @@ impl App {
         self.pending_permission = None;
         self.run_configuration.adapter = adapter;
         self.run_configuration.model = model;
+        self.run_configuration.model_source = model_source;
+        self.run_configuration.model_verification_status = model_verification_status;
         self.run_configuration.permission_mode = permission_mode;
         self.run_configuration.profile_id = profile_id;
+        self.run_configuration.agent_revision_id = agent_revision_id;
+        self.run_configuration.provider_connection = provider_connection;
         self.run_configuration.session_id = session_id;
         self.screen = Screen::Task;
         self.focus = Focus::Composer;
@@ -1700,6 +1819,10 @@ impl App {
             model: self.run_configuration.model.clone(),
             permission_mode: self.run_configuration.permission_mode.clone(),
             profile_id: self.run_configuration.profile_id.clone(),
+            agent_revision_id: self.run_configuration.agent_revision_id.clone(),
+            provider_connection: self.run_configuration.provider_connection.clone(),
+            model_source: self.run_configuration.model_source.clone(),
+            model_verification_status: self.run_configuration.model_verification_status.clone(),
             session_id: self.run_configuration.session_id.clone(),
         }
     }
@@ -2167,7 +2290,7 @@ mod tests {
         load_shared_state(
             app,
             json!({
-                "version": 1,
+                "version": 2,
                 "workspaceId": "workspace-1",
                 "tasks": [],
                 "updatedAt": "2026-08-10T00:00:00Z"
@@ -2340,7 +2463,7 @@ mod tests {
         load_shared_state(
             &mut app,
             json!({
-                "version": 1,
+                "version": 2,
                 "workspaceId": "workspace-1",
                 "tasks": [
                     {
@@ -2400,7 +2523,7 @@ mod tests {
         load_shared_state(
             &mut app,
             json!({
-                "version": 1,
+                "version": 2,
                 "workspaceId": "workspace-1",
                 "tasks": [{
                     "id": "task-evidence",
@@ -2544,6 +2667,14 @@ mod tests {
         app.update(Action::Submit);
         type_text(&mut app, "/permission plan");
         app.update(Action::Submit);
+        app.profile_revisions.insert(
+            "custom-reviewer".into(),
+            ProfileRevisionRef {
+                revision_id: "agent-revision:custom-reviewer@1".into(),
+                backend: "claude-code".into(),
+                provider_connection: default_provider_connection("claude-code"),
+            },
+        );
         type_text(&mut app, "/profile custom-reviewer");
         app.update(Action::Submit);
         type_text(&mut app, "review this change");
@@ -2559,6 +2690,10 @@ mod tests {
         assert_eq!(request.params["model"], "opus");
         assert_eq!(request.params["permissionMode"], "plan");
         assert_eq!(request.params["profileId"], "custom-reviewer");
+        assert_eq!(
+            request.params["agentRevisionId"],
+            "agent-revision:custom-reviewer@1"
+        );
         assert_eq!(request.params["prompt"], "review this change");
     }
 

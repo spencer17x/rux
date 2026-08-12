@@ -17,15 +17,70 @@ import {
   agentProfileInputSchema,
   agentProfilePatchSchema,
   agentProfileSchema,
+  agentRevisionIdFor,
+  agentRevisionSchema,
+  defaultModelState,
+  officialCliProviderConnection,
   type AgentProfile,
   type AgentProfileInput,
+  type AgentRevision,
+  type ModelSource,
+  type ModelVerificationStatus,
 } from "../shared/protocol.ts";
 
-const persistedAgentProfilesSchema = z.object({
+const legacyAgentProfileSchema = z.object({
+  id: z.string().regex(/^custom-[a-f0-9-]{36}$/),
+  name: z.string().trim().min(1).max(80),
+  description: z.string().trim().max(400),
+  backend: z.enum(["claude-code", "codex"]),
+  model: z.string().trim().min(1).max(120).optional(),
+  reasoningEffort: z.string().trim().min(1).max(64).optional(),
+  instructions: z.string().trim().min(1).max(20_000),
+  permissionMode: z.enum(["plan", "acceptEdits", "dontAsk"]),
+  skillIds: z.array(z.string().trim().min(1).max(120)).max(64),
+  toolIds: z.array(z.string().trim().min(1).max(120)).max(64),
+  enabled: z.boolean(),
+  createdAt: z.iso.datetime({ offset: true }),
+  updatedAt: z.iso.datetime({ offset: true }),
+}).strict();
+
+const persistedAgentProfilesV1Schema = z.object({
   version: z.literal(1),
   revision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).default(0),
-  profiles: z.array(agentProfileSchema),
+  profiles: z.array(legacyAgentProfileSchema),
 }).strict();
+
+const persistedAgentProfilesV2Schema = z.object({
+  version: z.literal(2),
+  storeRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).default(0),
+  profiles: z.array(agentProfileSchema),
+  agentRevisions: z.array(agentRevisionSchema),
+}).strict().superRefine((state, context) => {
+  const profileIds = new Set<string>();
+  const revisionIds = new Set<string>();
+  state.profiles.forEach((profile, index) => {
+    if (profileIds.has(profile.id)) {
+      context.addIssue({ code: "custom", path: ["profiles", index, "id"], message: "Agent profile ids must be unique" });
+    }
+    profileIds.add(profile.id);
+  });
+  state.agentRevisions.forEach((revision, index) => {
+    if (revisionIds.has(revision.id)) {
+      context.addIssue({ code: "custom", path: ["agentRevisions", index, "id"], message: "Agent Revision ids must be unique" });
+    }
+    revisionIds.add(revision.id);
+  });
+  state.profiles.forEach((profile, index) => {
+    const revision = state.agentRevisions.find((candidate) => candidate.id === profile.latestRevisionId);
+    if (!revision || revision.profileId !== profile.id || revision.revisionNumber !== profile.revisionNumber) {
+      context.addIssue({
+        code: "custom",
+        path: ["profiles", index, "latestRevisionId"],
+        message: "Agent profile must reference its persisted latest Revision",
+      });
+    }
+  });
+});
 
 type AgentProfileStoreOptions = {
   clock?: () => Date;
@@ -34,7 +89,7 @@ type AgentProfileStoreOptions = {
   lockRetryMs?: number;
 };
 
-type PersistedAgentProfiles = z.output<typeof persistedAgentProfilesSchema>;
+type PersistedAgentProfiles = z.output<typeof persistedAgentProfilesV2Schema>;
 
 const lockWaiter = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
 
@@ -60,18 +115,80 @@ function errorCode(error: unknown): string | undefined {
 function cloneProfile(profile: AgentProfile): AgentProfile {
   return {
     ...profile,
+    providerConnection: { ...profile.providerConnection },
     skillIds: [...profile.skillIds],
     toolIds: [...profile.toolIds],
   };
 }
 
+function cloneRevision(revision: AgentRevision): AgentRevision {
+  return {
+    ...revision,
+    providerConnection: { ...revision.providerConnection },
+    skillIds: [...revision.skillIds],
+    toolIds: [...revision.toolIds],
+  };
+}
+
+function selectedModelState(input: {
+  model?: string;
+  modelSource?: ModelSource;
+  modelVerificationStatus?: ModelVerificationStatus;
+}): { modelSource: ModelSource; modelVerificationStatus: ModelVerificationStatus } {
+  const fallback = defaultModelState(input.model);
+  return {
+    modelSource: input.modelSource ?? fallback.modelSource,
+    modelVerificationStatus: input.modelVerificationStatus ?? fallback.modelVerificationStatus,
+  };
+}
+
+function revisionFromProfile(profile: AgentProfile, createdAt: string): AgentRevision {
+  return agentRevisionSchema.parse({
+    id: profile.latestRevisionId,
+    profileId: profile.id,
+    revisionNumber: profile.revisionNumber,
+    origin: "profile-store",
+    name: profile.name,
+    description: profile.description,
+    backend: profile.backend,
+    providerConnection: profile.providerConnection,
+    ...(profile.model ? { model: profile.model } : {}),
+    modelSource: profile.modelSource,
+    modelVerificationStatus: profile.modelVerificationStatus,
+    ...(profile.reasoningEffort ? { reasoningEffort: profile.reasoningEffort } : {}),
+    instructions: profile.instructions,
+    permissionMode: profile.permissionMode,
+    skillIds: profile.skillIds,
+    toolIds: profile.toolIds,
+    enabled: profile.enabled,
+    createdAt,
+  });
+}
+
+function migrateV1(state: z.output<typeof persistedAgentProfilesV1Schema>): PersistedAgentProfiles {
+  const profiles = state.profiles.map((legacy) => agentProfileSchema.parse({
+    ...legacy,
+    providerConnection: officialCliProviderConnection(legacy.backend),
+    modelSource: "legacy",
+    modelVerificationStatus: "legacy",
+    latestRevisionId: agentRevisionIdFor(legacy.id, 1),
+    revisionNumber: 1,
+  }));
+  return persistedAgentProfilesV2Schema.parse({
+    version: 2,
+    storeRevision: state.revision,
+    profiles,
+    agentRevisions: profiles.map((profile) => revisionFromProfile(profile, profile.updatedAt)),
+  });
+}
+
+function emptyState(): PersistedAgentProfiles {
+  return { version: 2, storeRevision: 0, profiles: [], agentRevisions: [] };
+}
+
 /**
- * Owns non-secret custom Agent profiles.
- *
- * Profiles compose an installed, trusted backend with user instructions and
- * policy. They deliberately cannot contain tokens, credential paths, or an
- * arbitrary executable. Authentication and process discovery remain owned by
- * the official backend adapters.
+ * Owns non-secret custom Agent definitions and append-only immutable Revisions.
+ * Credentials and Engine process discovery remain owned by official adapters.
  */
 export class AgentProfileStore {
   private readonly filePath: string;
@@ -82,17 +199,15 @@ export class AgentProfileStore {
   private readonly lockRetryMs: number;
   private state: PersistedAgentProfiles;
 
-  constructor(
-    filePath: string,
-    options: AgentProfileStoreOptions = {},
-  ) {
+  constructor(filePath: string, options: AgentProfileStoreOptions = {}) {
     this.filePath = filePath;
     this.lockPath = `${filePath}.lock`;
     this.clock = options.clock ?? (() => new Date());
     this.idFactory = options.idFactory ?? randomUUID;
     this.lockTimeoutMs = durationOption(options.lockTimeoutMs, 2_000, "lockTimeoutMs");
     this.lockRetryMs = durationOption(options.lockRetryMs, 10, "lockRetryMs");
-    this.state = this.read();
+    this.state = emptyState();
+    this.initialize();
   }
 
   list(): AgentProfile[] {
@@ -104,54 +219,107 @@ export class AgentProfileStore {
     return profile ? cloneProfile(profile) : undefined;
   }
 
+  getRevision(id: string): AgentRevision | undefined {
+    const revision = this.reload().agentRevisions.find((item) => item.id === id);
+    return revision ? cloneRevision(revision) : undefined;
+  }
+
+  listRevisions(profileId: string): AgentRevision[] {
+    return this.reload().agentRevisions
+      .filter((revision) => revision.profileId === profileId)
+      .sort((left, right) => left.revisionNumber - right.revisionNumber)
+      .map(cloneRevision);
+  }
+
   create(input: AgentProfileInput): AgentProfile {
     const parsed = agentProfileInputSchema.parse(input);
-    return this.mutate((profiles) => {
-      this.assertUniqueName(profiles, parsed.name);
+    return this.mutate((state) => {
+      this.assertUniqueName(state.profiles, parsed.name);
       const now = this.clock().toISOString();
+      const id = `custom-${this.idFactory()}`;
+      const modelState = selectedModelState(parsed);
       const profile = agentProfileSchema.parse({
         ...parsed,
-        id: `custom-${this.idFactory()}`,
+        ...modelState,
+        id,
+        providerConnection: parsed.providerConnection ?? officialCliProviderConnection(parsed.backend),
+        latestRevisionId: agentRevisionIdFor(id, 1),
+        revisionNumber: 1,
         createdAt: now,
         updatedAt: now,
       });
+      const revision = revisionFromProfile(profile, now);
       return {
-        profiles: [...profiles, profile],
+        state: {
+          ...state,
+          profiles: [...state.profiles, profile],
+          agentRevisions: [...state.agentRevisions, revision],
+        },
         result: cloneProfile(profile),
       };
     });
   }
 
   update(id: string, patch: z.input<typeof agentProfilePatchSchema>): AgentProfile {
-    return this.mutate((profiles) => {
-      const index = profiles.findIndex((item) => item.id === id);
+    return this.mutate((state) => {
+      const index = state.profiles.findIndex((item) => item.id === id);
       if (index < 0) throw new Error(`Agent profile not found: ${id}`);
+      const current = state.profiles[index];
       const parsedPatch = agentProfilePatchSchema.parse(patch);
-      if (parsedPatch.name !== undefined) {
-        this.assertUniqueName(profiles, parsedPatch.name, id);
-      }
-      const profile = agentProfileSchema.parse({
-        ...profiles[index],
-        ...parsedPatch,
-        updatedAt: this.clock().toISOString(),
+      if (parsedPatch.name !== undefined) this.assertUniqueName(state.profiles, parsedPatch.name, id);
+      const now = this.clock().toISOString();
+      const revisionNumber = current.revisionNumber + 1;
+      const backend = parsedPatch.backend ?? current.backend;
+      const model = parsedPatch.model ?? current.model;
+      const modelState = selectedModelState({
+        model,
+        modelSource: parsedPatch.modelSource ?? current.modelSource,
+        modelVerificationStatus: parsedPatch.modelVerificationStatus ?? current.modelVerificationStatus,
       });
+      const profile = agentProfileSchema.parse({
+        ...current,
+        ...parsedPatch,
+        ...modelState,
+        providerConnection: parsedPatch.providerConnection
+          ?? (backend === current.backend ? current.providerConnection : officialCliProviderConnection(backend)),
+        latestRevisionId: agentRevisionIdFor(id, revisionNumber),
+        revisionNumber,
+        updatedAt: now,
+      });
+      const revision = revisionFromProfile(profile, now);
       return {
-        profiles: profiles.map((item, itemIndex) => itemIndex === index ? profile : item),
+        state: {
+          ...state,
+          profiles: state.profiles.map((item, itemIndex) => itemIndex === index ? profile : item),
+          agentRevisions: [...state.agentRevisions, revision],
+        },
         result: cloneProfile(profile),
       };
     });
   }
 
   delete(id: string): void {
-    this.mutate((profiles) => {
-      const next = profiles.filter((item) => item.id !== id);
-      if (next.length === profiles.length) throw new Error(`Agent profile not found: ${id}`);
-      return { profiles: next, result: undefined };
+    this.mutate((state) => {
+      const profiles = state.profiles.filter((item) => item.id !== id);
+      if (profiles.length === state.profiles.length) throw new Error(`Agent profile not found: ${id}`);
+      return { state: { ...state, profiles }, result: undefined };
     });
   }
 
-  private read(): PersistedAgentProfiles {
-    if (!existsSync(this.filePath)) return { version: 1, revision: 0, profiles: [] };
+  private initialize(): void {
+    if (!existsSync(this.filePath)) return;
+    const release = this.acquireLock();
+    try {
+      const loaded = this.readWithVersion();
+      if (loaded.migrated) this.persist(loaded.state);
+      this.state = loaded.state;
+    } finally {
+      release();
+    }
+  }
+
+  private readWithVersion(): { state: PersistedAgentProfiles; migrated: boolean } {
+    if (!existsSync(this.filePath)) return { state: emptyState(), migrated: false };
     let parsed: unknown;
     try {
       parsed = JSON.parse(readFileSync(this.filePath, "utf8"));
@@ -159,15 +327,18 @@ export class AgentProfileStore {
       throw new Error(`Unable to read Agent profiles at ${this.filePath}`, { cause: error });
     }
     try {
-      return persistedAgentProfilesSchema.parse(parsed);
+      if (typeof parsed === "object" && parsed !== null && "version" in parsed && parsed.version === 1) {
+        return { state: migrateV1(persistedAgentProfilesV1Schema.parse(parsed)), migrated: true };
+      }
+      return { state: persistedAgentProfilesV2Schema.parse(parsed), migrated: false };
     } catch (error) {
       throw new Error(`Invalid Agent profile store at ${this.filePath}`, { cause: error });
     }
   }
 
   private reload(): PersistedAgentProfiles {
-    const latest = this.read();
-    if (latest.revision < this.state.revision) {
+    const latest = this.readWithVersion().state;
+    if (latest.storeRevision < this.state.storeRevision) {
       throw new Error(`Agent profile store revision moved backwards at ${this.filePath}`);
     }
     this.state = latest;
@@ -183,18 +354,16 @@ export class AgentProfileStore {
   }
 
   private mutate<Result>(
-    apply: (profiles: AgentProfile[]) => { profiles: AgentProfile[]; result: Result },
+    apply: (state: PersistedAgentProfiles) => { state: PersistedAgentProfiles; result: Result },
   ): Result {
-    // The sibling lock serializes Desktop and TUI writers. Reloading only after
-    // acquisition makes the mutation operate on the preceding writer's revision.
     const release = this.acquireLock();
     try {
       const latest = this.reload();
-      const mutation = apply(latest.profiles);
-      const next = persistedAgentProfilesSchema.parse({
-        version: 1,
-        revision: latest.revision + 1,
-        profiles: mutation.profiles,
+      const mutation = apply(latest);
+      const next = persistedAgentProfilesV2Schema.parse({
+        ...mutation.state,
+        version: 2,
+        storeRevision: latest.storeRevision + 1,
       });
       this.persist(next);
       this.state = next;
@@ -205,7 +374,7 @@ export class AgentProfileStore {
   }
 
   private persist(state: PersistedAgentProfiles): void {
-    const parsed = persistedAgentProfilesSchema.parse(state);
+    const parsed = persistedAgentProfilesV2Schema.parse(state);
     mkdirSync(dirname(this.filePath), { recursive: true });
     const temporaryPath = `${this.filePath}.${process.pid}.${randomUUID()}.tmp`;
     try {
@@ -226,21 +395,16 @@ export class AgentProfileStore {
     mkdirSync(dirname(this.filePath), { recursive: true });
     const startedAt = performance.now();
     const token = `${process.pid}:${randomUUID()}`;
-
     while (true) {
       let descriptor: number;
       try {
         descriptor = openSync(this.lockPath, "wx", 0o600);
       } catch (error) {
         if (errorCode(error) !== "EEXIST") {
-          throw new Error(`Unable to acquire Agent profile store lock at ${this.lockPath}`, {
-            cause: error,
-          });
+          throw new Error(`Unable to acquire Agent profile store lock at ${this.lockPath}`, { cause: error });
         }
         const elapsed = performance.now() - startedAt;
         if (elapsed >= this.lockTimeoutMs) {
-          // Never reap an unowned lock: a timeout is safer than allowing two
-          // processes to enter the read-modify-write section concurrently.
           throw new Error(
             `Timed out acquiring Agent profile store lock at ${this.lockPath} after ${this.lockTimeoutMs}ms`,
             { cause: error },
@@ -249,7 +413,6 @@ export class AgentProfileStore {
         sleepSync(Math.min(this.lockRetryMs, this.lockTimeoutMs - elapsed));
         continue;
       }
-
       try {
         writeFileSync(descriptor, `${token}\n`, "utf8");
         fsyncSync(descriptor);
@@ -259,11 +422,8 @@ export class AgentProfileStore {
         } finally {
           rmSync(this.lockPath, { force: true });
         }
-        throw new Error(`Unable to initialize Agent profile store lock at ${this.lockPath}`, {
-          cause: error,
-        });
+        throw new Error(`Unable to initialize Agent profile store lock at ${this.lockPath}`, { cause: error });
       }
-
       return () => {
         try {
           closeSync(descriptor);

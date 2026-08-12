@@ -160,7 +160,7 @@ fn real_pty_browses_task_history_and_expands_unknown_evidence() {
 
     let binary = PathBuf::from(env!("CARGO_BIN_EXE_rux-tui"));
     let mut session = PtyHarness::spawn(&binary, &host, &workspace, &state_root);
-    session.wait_for("LIVE JSONL · CONNECTED · v2");
+    session.wait_for(&format!("LIVE JSONL · CONNECTED · v{PROTOCOL_VERSION}"));
     session.wait_for("TASK HISTORY · 2 PERSISTED");
     session.wait_for("Ctrl+T/Esc close");
 

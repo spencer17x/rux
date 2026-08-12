@@ -119,6 +119,7 @@ export class RunPermissionGate {
       ...(params.model ? { model: params.model } : {}),
       ...(params.reasoningEffort ? { reasoningEffort: params.reasoningEffort } : {}),
       ...(params.profileId ? { profileId: params.profileId } : {}),
+      agentRevisionId: params.agentRevisionId,
       contextFiles: params.contextFiles ?? [],
       request,
     });

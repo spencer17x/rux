@@ -24,6 +24,7 @@ import {
 import { basename, dirname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import runtimePath from "./runtime?modulePath";
+import { AgentProfileStore } from "./agent-profile-store";
 import { TaskStore } from "./task-store";
 import {
   IPC_CHANNELS,
@@ -68,6 +69,7 @@ let runtimePort: MessagePortMain | null = null;
 let workspaceState: WorkspaceState | null = null;
 let workspaceAuthorizationSource: WorkspaceAuthorizationSource = "placeholder";
 let taskStore: TaskStore | null = null;
+let agentProfileStore: AgentProfileStore | null = null;
 let runtimeStopPromise: Promise<void> | null = null;
 let workspaceTransition: Promise<void> = Promise.resolve();
 let quitCleanupStarted = false;
@@ -688,7 +690,12 @@ app.setName("Rux");
 
 app.whenReady().then(() => {
   initializeWorkspaceState();
-  taskStore = new TaskStore(resolve(app.getPath("userData"), "rux-task-state.sqlite3"));
+  agentProfileStore = new AgentProfileStore(resolve(app.getPath("userData"), "agent-profiles.json"));
+  taskStore = new TaskStore(
+    resolve(app.getPath("userData"), "rux-task-state.sqlite3"),
+    undefined,
+    (revisionId) => agentProfileStore?.getRevision(revisionId),
+  );
   registerIpcHandlers();
   startRuntimeProcess();
   mainWindow = createMainWindow();

@@ -1,7 +1,7 @@
 import readline from 'node:readline';
 
 const taskState = {
-  version: 1,
+  version: 2,
   workspaceId: 'workspace-pty',
   tasks: [
     {

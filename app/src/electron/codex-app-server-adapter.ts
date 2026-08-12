@@ -77,6 +77,7 @@ export interface CodexAppServerStartParams {
   permissionMode: PermissionMode;
   sessionId?: string;
   profileId?: string;
+  agentRevisionId?: string;
 }
 
 export type CodexAppServerAdapterEvent = RuntimeEvent
@@ -488,6 +489,7 @@ export class CodexAppServerAdapter {
         model: params.model,
         reasoningEffort: params.reasoningEffort,
         profileId: params.profileId,
+        agentRevisionId: params.agentRevisionId,
       });
       this.emit({
         type: "run.metadata",

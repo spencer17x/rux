@@ -80,6 +80,12 @@ import {
 } from "./data.js";
 import { createRuntimeClient } from "./runtime.js";
 import { TerminalView } from "./TerminalView.jsx";
+import {
+  agentRevisionIdFor,
+  builtInAgentRevisionId,
+  defaultModelState,
+  defaultProviderConnectionForAdapter,
+} from "./shared/protocol.ts";
 
 const showcaseMode = !window.rux
   && new URLSearchParams(window.location.search).get("showcase") === "codex";
@@ -209,8 +215,11 @@ function createWorkspaceStarterTask(workspace, codexSettings = defaultCodexSetti
     updatedAt: "现在",
     agent: "Rux",
     adapter: "codex",
+    agentRevisionId: builtInAgentRevisionId("codex"),
+    providerConnection: defaultProviderConnectionForAdapter("codex"),
     permissionMode: codexSettings.permissionMode || "acceptEdits",
     model: codexSettings.model || "Codex default",
+    ...defaultModelState(codexSettings.model || "Codex default"),
     ...(codexSettings.reasoningEffort ? { reasoningEffort: codexSettings.reasoningEffort } : {}),
     branch: workspace.branch,
     elapsed: "—",
@@ -254,10 +263,23 @@ function normalizePersistedTask(task, workspaceId = task.workspaceId) {
     && !(task.runs || []).length;
   const adapter = task.adapter
     || (task.agent === "Claude Code" ? "claude-code" : ["Codex", "Rux"].includes(task.agent) ? "codex" : "mock");
+  const agentRevisionId = task.agentRevisionId
+    || (task.agentProfileId ? agentRevisionIdFor(task.agentProfileId, 1) : builtInAgentRevisionId(adapter));
+  const providerConnection = task.providerConnection || defaultProviderConnectionForAdapter(adapter);
+  const taskModelState = task.modelSource && task.modelVerificationStatus
+    ? { modelSource: task.modelSource, modelVerificationStatus: task.modelVerificationStatus }
+    : defaultModelState(task.model);
   const runs = Array.isArray(task.runs) ? task.runs.map((run) => {
     const verifications = Array.isArray(run.verifications) ? run.verifications : [];
+    const runAdapter = run.adapter || adapter;
+    const runModelState = run.modelSource && run.modelVerificationStatus
+      ? { modelSource: run.modelSource, modelVerificationStatus: run.modelVerificationStatus }
+      : defaultModelState(run.model || task.model);
     return {
       ...run,
+      agentRevisionId: run.agentRevisionId || agentRevisionId,
+      providerConnection: run.providerConnection || defaultProviderConnectionForAdapter(runAdapter),
+      ...runModelState,
       status: run.status === "completed" && verifications.some((verification) => verification.status === "failed")
         ? "failed"
         : run.status,
@@ -273,6 +295,11 @@ function normalizePersistedTask(task, workspaceId = task.workspaceId) {
     ...task,
     workspaceId,
     adapter: migrateEmptyWorkspaceStarter ? "codex" : adapter,
+    agentRevisionId: migrateEmptyWorkspaceStarter ? builtInAgentRevisionId("codex") : agentRevisionId,
+    providerConnection: migrateEmptyWorkspaceStarter
+      ? defaultProviderConnectionForAdapter("codex")
+      : providerConnection,
+    ...taskModelState,
     ...(adapter === "codex" ? { agent: ruxAgentLabel(task.agent || "Rux") } : {}),
     ...(migrateEmptyWorkspaceStarter ? { agent: "Rux", model: "Codex default" } : {}),
     permissionMode: task.permissionMode || "acceptEdits",
@@ -292,7 +319,7 @@ function normalizePersistedTask(task, workspaceId = task.workspaceId) {
 
 function workspaceTaskSnapshot(workspaceId, tasks) {
   return {
-    version: 1,
+    version: 2,
     workspaceId,
     tasks: tasks
       .filter((task) => task.workspaceId === workspaceId)
@@ -314,11 +341,13 @@ function runtimeAdapterForTask(task) {
     || (task.agent === "Claude Code" ? "claude-code" : ["Codex", "Rux"].includes(task.agent) ? "codex" : "mock");
 }
 
-function latestSessionIdForTask(task, adapter, profileId) {
+function latestSessionIdForTask(task, adapter, profileId, agentRevisionId, connectionId) {
   return [...(task.runs || [])]
     .reverse()
     .find((run) => run.adapter === adapter
       && (run.profileId || undefined) === (profileId || undefined)
+      && run.agentRevisionId === agentRevisionId
+      && run.providerConnection?.id === connectionId
       && run.sessionId)?.sessionId;
 }
 
@@ -375,14 +404,23 @@ function recordRuntimeEvent(task, event) {
   const now = isoNow();
   const runs = Array.isArray(task.runs) ? task.runs : [];
   const existing = runs.find((run) => run.id === event.runId);
+  const taskAdapter = runtimeAdapterForTask(task);
+  const taskRevisionId = task.agentRevisionId || builtInAgentRevisionId(taskAdapter);
+  const taskConnection = task.providerConnection || defaultProviderConnectionForAdapter(taskAdapter);
+  const taskModelState = task.modelSource && task.modelVerificationStatus
+    ? { modelSource: task.modelSource, modelVerificationStatus: task.modelVerificationStatus }
+    : defaultModelState(task.model);
   const base = existing || {
     id: event.runId,
     taskId: task.id,
-    adapter: event.type === "run.started" ? event.adapter : runtimeAdapterForTask(task),
+    adapter: event.type === "run.started" ? event.adapter : taskAdapter,
     status: "running",
     prompt: event.type === "run.started" ? event.prompt : "",
     permissionMode: "acceptEdits",
     model: task.model,
+    agentRevisionId: taskRevisionId,
+    providerConnection: taskConnection,
+    ...taskModelState,
     ...(task.reasoningEffort ? { reasoningEffort: task.reasoningEffort } : {}),
     contextFiles: [],
     gitRestores: [],
@@ -416,6 +454,10 @@ function recordRuntimeEvent(task, event) {
       ...(event.model ? { model: event.model } : {}),
       ...(event.reasoningEffort ? { reasoningEffort: event.reasoningEffort } : {}),
       ...(event.profileId ? { profileId: event.profileId } : {}),
+      agentRevisionId: event.agentRevisionId || taskRevisionId,
+      providerConnection: event.providerConnection || taskConnection,
+      modelSource: event.modelSource || taskModelState.modelSource,
+      modelVerificationStatus: event.modelVerificationStatus || taskModelState.modelVerificationStatus,
     };
   } else if (event.type === "permission.requested") {
     const permissionRequests = Array.isArray(nextRun.permissionRequests) ? nextRun.permissionRequests : [];
@@ -432,6 +474,10 @@ function recordRuntimeEvent(task, event) {
       ...(event.model ? { model: event.model } : {}),
       ...(event.reasoningEffort ? { reasoningEffort: event.reasoningEffort } : {}),
       ...(event.profileId ? { profileId: event.profileId } : {}),
+      agentRevisionId: event.agentRevisionId || taskRevisionId,
+      providerConnection: event.providerConnection || taskConnection,
+      modelSource: event.modelSource || taskModelState.modelSource,
+      modelVerificationStatus: event.modelVerificationStatus || taskModelState.modelVerificationStatus,
     };
   } else if (event.type === "permission.decided") {
     const permissionRequests = Array.isArray(nextRun.permissionRequests) ? nextRun.permissionRequests : [];
@@ -465,7 +511,11 @@ function recordRuntimeEvent(task, event) {
   } else if (event.type === "run.agent-snapshot") {
     nextRun = {
       ...nextRun,
-      profileId: event.profile.id,
+      profileId: event.profile.profileId,
+      agentRevisionId: event.profile.id,
+      providerConnection: event.profile.providerConnection,
+      modelSource: event.profile.modelSource,
+      modelVerificationStatus: event.profile.modelVerificationStatus,
       agentSnapshot: event.profile,
     };
   } else if (event.type === "run.context-snapshot") {
@@ -512,6 +562,9 @@ function recordRuntimeEvent(task, event) {
 
   return {
     ...task,
+    ...(event.type === "run.agent-snapshot" && event.profile.id === taskRevisionId
+      ? { agentRevisionSnapshot: event.profile }
+      : {}),
     updatedAtIso: now,
     runs: existing
       ? runs.map((run) => run.id === event.runId ? nextRun : run)
@@ -3428,7 +3481,10 @@ export function App() {
             ? "请先在账户与登录中登录 Rux"
             : "",
         requiresLogin: adapter.id === "codex" && adapter.available && !authenticationReady,
+        agentRevisionId: builtInAgentRevisionId(adapter.id),
+        providerConnection: defaultProviderConnectionForAdapter(adapter.id),
         model: adapter.id === "codex" ? codexSettings.model : "Rux prototype",
+        ...defaultModelState(adapter.id === "codex" ? codexSettings.model : "Rux prototype"),
         reasoningEffort: adapter.id === "codex" ? codexSettings.reasoningEffort : "",
         permissionMode: adapter.id === "codex" ? codexSettings.permissionMode : "acceptEdits",
       };
@@ -3441,6 +3497,8 @@ export function App() {
         name: profile.name,
         adapter: profile.backend,
         profileId: profile.id,
+        agentRevisionId: profile.latestRevisionId,
+        providerConnection: profile.providerConnection,
         available: profile.enabled && Boolean(backend?.available) && authenticationReady,
         detail: profile.description || "自定义 Rux Agent",
         unavailableReason: !profile.enabled
@@ -3452,6 +3510,8 @@ export function App() {
               : "",
         requiresLogin: Boolean(backend?.available) && !authenticationReady,
         model: profile.model || codexSettings.model,
+        modelSource: profile.modelSource,
+        modelVerificationStatus: profile.modelVerificationStatus,
         reasoningEffort: profile.reasoningEffort || codexSettings.reasoningEffort,
         permissionMode: profile.permissionMode,
       };
@@ -3512,6 +3572,10 @@ export function App() {
           ...(fallback.reasoningEffort ? { reasoningEffort: fallback.reasoningEffort } : { reasoningEffort: undefined }),
           permissionMode: fallback.permissionMode || task.permissionMode || "acceptEdits",
           ...(fallback.profileId ? { agentProfileId: fallback.profileId } : { agentProfileId: undefined }),
+          agentRevisionId: fallback.agentRevisionId,
+          providerConnection: fallback.providerConnection,
+          modelSource: fallback.modelSource,
+          modelVerificationStatus: fallback.modelVerificationStatus,
           updatedAtIso: isoNow(),
         };
       });
@@ -3852,6 +3916,9 @@ export function App() {
     if (!String(prompt || "").trim()) {
       return { ok: false, error: "请先在输入框中描述你想完成的任务。" };
     }
+    if (!taskSnapshot.agentRevisionId || !taskSnapshot.providerConnection?.id) {
+      return { ok: false, error: "这个任务缺少可验证的 Agent Revision 或 Provider Connection，请新建任务。" };
+    }
     if (!runtime || !appReady) {
       const reason = persistenceError
         ? `任务状态尚未安全保存：${persistenceError}`
@@ -3898,7 +3965,13 @@ export function App() {
       plan: [],
     } : task));
     const adapter = runtimeAdapterForTask(taskSnapshot);
-    const sessionId = latestSessionIdForTask(taskSnapshot, adapter, taskSnapshot.agentProfileId);
+    const sessionId = latestSessionIdForTask(
+      taskSnapshot,
+      adapter,
+      taskSnapshot.agentProfileId,
+      taskSnapshot.agentRevisionId,
+      taskSnapshot.providerConnection?.id,
+    );
     const requestedModel = adapter === "claude-code"
       ? modelAlias(taskSnapshot.model)
       : taskSnapshot.model && !taskSnapshot.model.toLowerCase().includes("default") ? taskSnapshot.model : undefined;
@@ -3911,6 +3984,7 @@ export function App() {
         reasoningEffort: taskSnapshot.reasoningEffort || undefined,
         sessionId,
         profileId: taskSnapshot.agentProfileId,
+        agentRevisionId: taskSnapshot.agentRevisionId,
         contextFiles: taskSnapshot.contextFiles || [],
       }, (event) => receiveRunEvent(taskId, token, event));
     } catch (error) {
@@ -3930,6 +4004,7 @@ export function App() {
           agent: taskSnapshot.agent,
           adapter,
           ...(taskSnapshot.agentProfileId ? { profileId: taskSnapshot.agentProfileId } : {}),
+          agentRevisionId: taskSnapshot.agentRevisionId,
         } : message),
       } : task));
     }
@@ -4040,8 +4115,12 @@ export function App() {
       agent: choice.name,
       adapter: choice.adapter,
       ...(choice.profileId ? { agentProfileId: choice.profileId } : {}),
+      agentRevisionId: choice.agentRevisionId,
+      providerConnection: choice.providerConnection,
       permissionMode,
       model: choice.model,
+      modelSource: choice.modelSource,
+      modelVerificationStatus: choice.modelVerificationStatus,
       ...(choice.reasoningEffort ? { reasoningEffort: choice.reasoningEffort } : {}),
       contextFiles,
       branch: workspaceState.active.branch,
@@ -4320,6 +4399,10 @@ export function App() {
   const changeSelectedAgent = (choiceId) => {
     const choice = agentChoices.find((item) => item.id === choiceId);
     if (!choice || !choice.available) return;
+    if ((selectedTask.messages || []).length || (selectedTask.runs || []).length) {
+      setTaskActionError("已有内容的任务已固定 Agent Revision；请新建任务以切换 Agent。");
+      return;
+    }
     setTaskActionError("");
     const updatedAtIso = isoNow();
     setTasks((items) => items.map((task) => task.id === selectedTask.id
@@ -4331,6 +4414,10 @@ export function App() {
           ...(choice.reasoningEffort ? { reasoningEffort: choice.reasoningEffort } : { reasoningEffort: undefined }),
           permissionMode: choice.permissionMode || task.permissionMode || "acceptEdits",
           ...(choice.profileId ? { agentProfileId: choice.profileId } : { agentProfileId: undefined }),
+          agentRevisionId: choice.agentRevisionId,
+          providerConnection: choice.providerConnection,
+          modelSource: choice.modelSource,
+          modelVerificationStatus: choice.modelVerificationStatus,
           updatedAtIso,
         }
       : task));
@@ -4342,7 +4429,14 @@ export function App() {
       if (task.id !== selectedTask.id) return task;
       const supported = codexReasoningOptions(codexCatalog.models, model)
         .some((option) => option.reasoningEffort === task.reasoningEffort);
-      return { ...task, model, ...(supported ? {} : { reasoningEffort: undefined }), updatedAtIso };
+      const modelState = defaultModelState(model);
+      return {
+        ...task,
+        model,
+        ...modelState,
+        ...(supported ? {} : { reasoningEffort: undefined }),
+        updatedAtIso,
+      };
     }));
   };
 

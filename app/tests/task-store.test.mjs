@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
-import { TaskStore } from "../src/electron/task-store.ts";
+import { migrateWorkspaceTaskStateV1, TaskStore } from "../src/electron/task-store.ts";
 import {
   gitRunReviewAcceptanceSchema,
   workspaceTaskStateSchema,
@@ -12,7 +12,43 @@ import {
 
 const savedAt = "2026-08-10T10:00:00.000Z";
 
-function taskState(workspaceId, status = "completed") {
+const providerConnection = {
+  id: "cli:claude-code:default",
+  kind: "official-cli",
+  engine: "claude-code",
+  label: "Claude Code CLI default",
+};
+
+const agentRevision = {
+  id: "agent-revision:custom-00000000-0000-4000-8000-000000000001@1",
+  profileId: "custom-00000000-0000-4000-8000-000000000001",
+  revisionNumber: 1,
+  origin: "profile-store",
+  name: "Persistence Agent",
+  description: "Persist the immutable definition",
+  backend: "claude-code",
+  providerConnection,
+  model: "sonnet",
+  modelSource: "manual",
+  modelVerificationStatus: "unverified",
+  reasoningEffort: "high",
+  instructions: "Keep this definition with the historical Run.",
+  permissionMode: "acceptEdits",
+  skillIds: ["review"],
+  toolIds: ["git.diff"],
+  enabled: true,
+  createdAt: savedAt,
+};
+
+function createTaskStore(databasePath, now = undefined) {
+  return new TaskStore(
+    databasePath,
+    now,
+    (revisionId) => revisionId === agentRevision.id ? structuredClone(agentRevision) : undefined,
+  );
+}
+
+function legacyTaskState(workspaceId, status = "completed") {
   const runStatus = status === "running" ? "running" : "completed";
   return {
     version: 1,
@@ -147,6 +183,26 @@ function taskState(workspaceId, status = "completed") {
   };
 }
 
+function taskState(workspaceId, status = "completed") {
+  const state = legacyTaskState(workspaceId, status);
+  state.version = 2;
+  const task = state.tasks[0];
+  task.adapter = "claude-code";
+  task.agentProfileId = agentRevision.profileId;
+  task.agentRevisionId = agentRevision.id;
+  task.agentRevisionSnapshot = structuredClone(agentRevision);
+  task.providerConnection = structuredClone(providerConnection);
+  task.modelSource = "manual";
+  task.modelVerificationStatus = "unverified";
+  const run = task.runs[0];
+  run.agentRevisionId = agentRevision.id;
+  run.providerConnection = structuredClone(providerConnection);
+  run.modelSource = "manual";
+  run.modelVerificationStatus = "unverified";
+  run.agentSnapshot = structuredClone(agentRevision);
+  return state;
+}
+
 function createWorkspaceStateTable(database) {
   database.exec(`
     CREATE TABLE workspace_task_state (
@@ -160,7 +216,7 @@ function createWorkspaceStateTable(database) {
 test("upgrades an existing unversioned database without losing stored state", async () => {
   const temporaryRoot = await mkdtemp(join(tmpdir(), "rux-task-store-migration-"));
   const databasePath = join(temporaryRoot, "state.sqlite3");
-  const original = taskState("workspace-legacy");
+  const original = legacyTaskState("workspace-legacy");
   const serialized = JSON.stringify(original);
 
   try {
@@ -173,19 +229,24 @@ test("upgrades an existing unversioned database without losing stored state", as
     assert.equal(legacy.prepare("PRAGMA user_version").get().user_version, 0);
     legacy.close();
 
-    const store = new TaskStore(databasePath);
+    const store = createTaskStore(databasePath);
     const loaded = store.load(original.workspaceId);
     store.close();
     assert.equal(loaded.tasks[0].messages[0].text, "Keep this after restart");
 
     const migrated = new DatabaseSync(databasePath);
-    assert.equal(migrated.prepare("PRAGMA user_version").get().user_version, 1);
-    assert.equal(
-      migrated.prepare(`
+    assert.equal(migrated.prepare("PRAGMA user_version").get().user_version, 2);
+    const migratedState = JSON.parse(migrated.prepare(`
         SELECT state_json FROM workspace_task_state WHERE workspace_id = ?
-      `).get(original.workspaceId).state_json,
-      serialized,
-    );
+      `).get(original.workspaceId).state_json);
+    assert.equal(migratedState.version, 2);
+    assert.equal(migratedState.tasks[0].id, original.tasks[0].id);
+    assert.equal(migratedState.tasks[0].messages[0].id, original.tasks[0].messages[0].id);
+    assert.equal(migratedState.tasks[0].runs[0].id, original.tasks[0].runs[0].id);
+    assert.equal(migratedState.tasks[0].runs[0].events[0].id, original.tasks[0].runs[0].events[0].id);
+    assert.match(migratedState.tasks[0].agentRevisionId, /^legacy-agent-revision:/);
+    assert.equal(migratedState.tasks[0].providerConnection.kind, "legacy");
+    assert.match(migratedState.tasks[0].providerConnection.id, /^legacy:claude-code:/);
     migrated.close();
   } finally {
     await rm(temporaryRoot, { recursive: true, force: true });
@@ -205,16 +266,16 @@ test("rejects a database from a future schema version without mutating it", asyn
       INSERT INTO workspace_task_state (workspace_id, state_json, updated_at)
       VALUES (?, ?, ?)
     `).run(original.workspaceId, serialized, original.updatedAt);
-    future.exec("PRAGMA user_version = 2");
+    future.exec("PRAGMA user_version = 3");
     future.close();
 
     assert.throws(
-      () => new TaskStore(databasePath),
-      /schema version 2 is newer than supported version 1/,
+      () => createTaskStore(databasePath),
+      /schema version 3 is newer than supported version 2/,
     );
 
     const unchanged = new DatabaseSync(databasePath);
-    assert.equal(unchanged.prepare("PRAGMA user_version").get().user_version, 2);
+    assert.equal(unchanged.prepare("PRAGMA user_version").get().user_version, 3);
     assert.equal(
       unchanged.prepare(`
         SELECT state_json FROM workspace_task_state WHERE workspace_id = ?
@@ -230,7 +291,7 @@ test("rejects a database from a future schema version without mutating it", asyn
 test("rolls back a failed migration and preserves the original schema and data", async () => {
   const temporaryRoot = await mkdtemp(join(tmpdir(), "rux-task-store-rollback-"));
   const databasePath = join(temporaryRoot, "state.sqlite3");
-  const serialized = JSON.stringify(taskState("workspace-incompatible"));
+  const serialized = JSON.stringify(legacyTaskState("workspace-incompatible"));
 
   try {
     const incompatible = new DatabaseSync(databasePath);
@@ -249,7 +310,7 @@ test("rolls back a failed migration and preserves the original schema and data",
     incompatible.close();
 
     assert.throws(
-      () => new TaskStore(databasePath),
+      () => createTaskStore(databasePath),
       /incompatible column layout/,
     );
 
@@ -270,16 +331,53 @@ test("rolls back a failed migration and preserves the original schema and data",
   }
 });
 
+test("rolls back every row when one v1 Task snapshot cannot migrate", async () => {
+  const temporaryRoot = await mkdtemp(join(tmpdir(), "rux-task-store-row-rollback-"));
+  const databasePath = join(temporaryRoot, "state.sqlite3");
+  const valid = legacyTaskState("workspace-valid");
+  const invalid = { version: 1, workspaceId: "workspace-invalid", updatedAt: savedAt };
+
+  try {
+    const database = new DatabaseSync(databasePath);
+    createWorkspaceStateTable(database);
+    database.prepare(`
+      INSERT INTO workspace_task_state (workspace_id, state_json, updated_at) VALUES (?, ?, ?)
+    `).run(valid.workspaceId, JSON.stringify(valid), valid.updatedAt);
+    database.prepare(`
+      INSERT INTO workspace_task_state (workspace_id, state_json, updated_at) VALUES (?, ?, ?)
+    `).run(invalid.workspaceId, JSON.stringify(invalid), invalid.updatedAt);
+    database.exec("PRAGMA user_version = 1");
+    const before = database.prepare(`
+      SELECT workspace_id, state_json, updated_at FROM workspace_task_state ORDER BY workspace_id
+    `).all();
+    database.close();
+
+    assert.throws(() => createTaskStore(databasePath), /missing its workspace identity, timestamp, or tasks/);
+
+    const unchanged = new DatabaseSync(databasePath);
+    assert.equal(unchanged.prepare("PRAGMA user_version").get().user_version, 1);
+    assert.deepEqual(
+      unchanged.prepare(`
+        SELECT workspace_id, state_json, updated_at FROM workspace_task_state ORDER BY workspace_id
+      `).all(),
+      before,
+    );
+    unchanged.close();
+  } finally {
+    await rm(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
 test("persists Task, Message, Run, and event data across store reopen", async () => {
   const temporaryRoot = await mkdtemp(join(tmpdir(), "rux-task-store-"));
   const databasePath = join(temporaryRoot, "state.sqlite3");
 
   try {
-    const writer = new TaskStore(databasePath);
+    const writer = createTaskStore(databasePath);
     writer.save(taskState("workspace-a"));
     writer.close();
 
-    const reader = new TaskStore(databasePath);
+    const reader = createTaskStore(databasePath);
     const loaded = reader.load("workspace-a");
     reader.close();
 
@@ -332,10 +430,10 @@ test("persists Run-bound review evidence while accepting legacy review records",
     assert.equal(gitRunReviewAcceptanceSchema.safeParse(legacyAcceptance).success, false);
     assert.equal(gitRunReviewAcceptanceSchema.safeParse(runAcceptance).success, true);
 
-    const writer = new TaskStore(databasePath);
+    const writer = createTaskStore(databasePath);
     writer.save(state);
     writer.close();
-    const reader = new TaskStore(databasePath);
+    const reader = createTaskStore(databasePath);
     const loaded = reader.load("workspace-a");
     reader.close();
 
@@ -363,7 +461,7 @@ test("isolates state by workspace id", async () => {
   const databasePath = join(temporaryRoot, "state.sqlite3");
 
   try {
-    const store = new TaskStore(databasePath);
+    const store = createTaskStore(databasePath);
     store.save(taskState("workspace-a"));
     store.save(taskState("workspace-b"));
 
@@ -382,11 +480,11 @@ test("normalizes orphaned running tasks and runs to interrupted", async () => {
   const interruptedAt = "2026-08-10T10:05:00.000Z";
 
   try {
-    const writer = new TaskStore(databasePath);
+    const writer = createTaskStore(databasePath);
     writer.save(taskState("workspace-a", "running"));
     writer.close();
 
-    const reader = new TaskStore(databasePath, () => interruptedAt);
+    const reader = createTaskStore(databasePath, () => interruptedAt);
     const loaded = reader.load("workspace-a");
     reader.close();
 
@@ -421,11 +519,11 @@ test("preserves a blocked permission request across restart for explicit recover
   pending.tasks[0].runs[0].permissionDecisions = [];
 
   try {
-    const writer = new TaskStore(databasePath);
+    const writer = createTaskStore(databasePath);
     writer.save(pending);
     writer.close();
 
-    const reader = new TaskStore(databasePath, () => "2026-08-10T10:05:00.000Z");
+    const reader = createTaskStore(databasePath, () => "2026-08-10T10:05:00.000Z");
     const loaded = reader.load("workspace-a");
     reader.close();
 
@@ -461,12 +559,12 @@ test("interrupts an orphaned provider-native approval because its CLI callback c
   pending.tasks[0].runs[0].permissionDecisions = [];
 
   try {
-    const writer = new TaskStore(databasePath);
+    const writer = createTaskStore(databasePath);
     writer.save(pending);
     writer.close();
 
     const interruptedAt = "2026-08-10T10:05:00.000Z";
-    const reader = new TaskStore(databasePath, () => interruptedAt);
+    const reader = createTaskStore(databasePath, () => interruptedAt);
     const loaded = reader.load("workspace-a");
     reader.close();
 
@@ -489,7 +587,7 @@ test("persists archive state and rejects a stale snapshot that would reopen it",
   const databasePath = join(temporaryRoot, "state.sqlite3");
 
   try {
-    const store = new TaskStore(databasePath);
+    const store = createTaskStore(databasePath);
     const original = taskState("workspace-a");
     store.save(original);
 
@@ -512,7 +610,7 @@ test("persists archive state and rejects a stale snapshot that would reopen it",
 
 test("rejects renderer snapshots that do not satisfy the shared schema", async () => {
   const temporaryRoot = await mkdtemp(join(tmpdir(), "rux-task-store-"));
-  const store = new TaskStore(join(temporaryRoot, "state.sqlite3"));
+  const store = createTaskStore(join(temporaryRoot, "state.sqlite3"));
 
   try {
     assert.throws(() => store.save({
@@ -530,11 +628,45 @@ test("rejects renderer snapshots that do not satisfy the shared schema", async (
   }
 });
 
+test("rejects nonexistent, wrong-Engine, and fabricated legacy Agent Revision references", async () => {
+  const temporaryRoot = await mkdtemp(join(tmpdir(), "rux-task-store-references-"));
+  const store = createTaskStore(join(temporaryRoot, "state.sqlite3"));
+
+  try {
+    const nonexistent = taskState("workspace-nonexistent");
+    nonexistent.tasks[0].agentRevisionId = "agent-revision:custom-00000000-0000-4000-8000-000000000099@1";
+    delete nonexistent.tasks[0].agentRevisionSnapshot;
+    nonexistent.tasks[0].runs[0].agentRevisionId = nonexistent.tasks[0].agentRevisionId;
+    delete nonexistent.tasks[0].runs[0].agentSnapshot;
+    assert.throws(() => store.save(nonexistent), /nonexistent Agent Revision/);
+
+    const wrongEngine = taskState("workspace-wrong-engine");
+    wrongEngine.tasks[0].adapter = "codex";
+    wrongEngine.tasks[0].providerConnection = {
+      id: "cli:codex:default",
+      kind: "official-cli",
+      engine: "codex",
+      label: "Codex CLI default",
+    };
+    delete wrongEngine.tasks[0].agentRevisionSnapshot;
+    wrongEngine.tasks[0].runs[0].adapter = "codex";
+    wrongEngine.tasks[0].runs[0].providerConnection = structuredClone(wrongEngine.tasks[0].providerConnection);
+    delete wrongEngine.tasks[0].runs[0].agentSnapshot;
+    assert.throws(() => store.save(wrongEngine), /wrong Engine or Connection/);
+
+    const fabricatedLegacy = migrateWorkspaceTaskStateV1(legacyTaskState("workspace-fabricated-legacy"));
+    assert.throws(() => store.save(fabricatedLegacy), /unknown legacy Agent Revision/);
+  } finally {
+    store.close();
+    await rm(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
 test("merges stale cross-client snapshots without dropping messages, run events, or reviews", async () => {
   const temporaryRoot = await mkdtemp(join(tmpdir(), "rux-task-store-"));
   const databasePath = join(temporaryRoot, "state.sqlite3");
-  const desktopStore = new TaskStore(databasePath);
-  const tuiStore = new TaskStore(databasePath);
+  const desktopStore = createTaskStore(databasePath);
+  const tuiStore = createTaskStore(databasePath);
 
   try {
     const initial = taskState("workspace-a");
