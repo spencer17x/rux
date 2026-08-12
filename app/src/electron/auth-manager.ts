@@ -66,8 +66,8 @@ function normalizedClaudeMethod(record: JsonRecord): AuthMethod {
   const authMethod = typeof record.authMethod === "string" ? record.authMethod.toLowerCase() : "";
   const apiProvider = typeof record.apiProvider === "string" ? record.apiProvider.toLowerCase() : "";
   if (authMethod.includes("oauth")) return "oauth";
-  if (authMethod.includes("api") || authMethod.includes("key")) return "api-key";
   if (["bedrock", "vertex", "foundry"].some((provider) => apiProvider.includes(provider))) return "cloud";
+  if (authMethod.includes("api") || authMethod.includes("key")) return "api-key";
   return "unknown";
 }
 
@@ -77,11 +77,11 @@ export function parseClaudeAuthStatus(output: string, exitCode: number | null): 
     return {
       status: "connected",
       authMethod: normalizedClaudeMethod(record),
-      detail: "Claude Code CLI 已登录",
+      detail: "Claude Code 已通过官方 CLI 连接",
     };
   }
   if (record?.loggedIn === false || exitCode === 1) {
-    return { status: "signed-out", detail: "Claude Code CLI 尚未登录" };
+    return { status: "signed-out", detail: "Claude Code CLI 已安装但尚未连接" };
   }
   return { status: "error", detail: "无法读取 Claude Code 登录状态" };
 }
@@ -97,13 +97,17 @@ export function parseCodexAuthStatus(output: string, exitCode: number | null): P
     return {
       status: "connected",
       authMethod,
-      detail: authMethod === "chatgpt" ? "Rux 已通过 ChatGPT 登录" : "Rux 已登录",
+      detail: authMethod === "chatgpt"
+        ? "Rux 已通过 ChatGPT 连接"
+        : authMethod === "api-key"
+          ? "Rux 已通过官方 CLI 的 API Key 配置连接"
+          : "Rux 已通过官方 CLI 连接",
     };
   }
   if (normalized.includes("not logged") || normalized.includes("not signed") || exitCode === 1) {
-    return { status: "signed-out", detail: "Rux 尚未登录" };
+    return { status: "signed-out", detail: "Rux 尚未连接" };
   }
-  return { status: "error", detail: "无法读取 Rux 登录状态" };
+  return { status: "error", detail: "无法读取 Rux 连接状态" };
 }
 
 function definitions(): CliDefinition[] {
@@ -143,12 +147,12 @@ function definitions(): CliDefinition[] {
 }
 
 function executableCandidates(definition: CliDefinition): string[] {
+  if (definition.overridePath) return [definition.overridePath];
   const fromPath = (process.env.PATH ?? "")
     .split(delimiter)
     .filter(Boolean)
     .map((directory) => resolve(directory, definition.commandName));
-  return [definition.overridePath, ...fromPath, ...definition.extraPaths]
-    .filter((candidate): candidate is string => Boolean(candidate));
+  return [...fromPath, ...definition.extraPaths];
 }
 
 function findExecutable(definition: CliDefinition): string | undefined {
@@ -188,9 +192,11 @@ function readVersion(executable: string, provider: AuthProviderId): string | und
     if (result.status !== 0) return undefined;
     const line = result.stdout.trim().split(/\r?\n/, 1)[0];
     if (!line) return undefined;
-    return provider === "claude-code"
+    const normalized = provider === "claude-code"
       ? line.replace(/\s*\(Claude Code\)\s*$/, "")
       : line.replace(/^codex-cli\s+/i, "");
+    // Renderer receives a version, never arbitrary CLI stdout.
+    return normalized.match(/\b\d+\.\d+\.\d+(?:[-+][0-9a-z.-]+)?\b/i)?.[0];
   } catch {
     return undefined;
   }
@@ -322,31 +328,27 @@ export class AuthManager {
       });
     });
 
-    // `codex login` is the authority for this explicit user action. A successful
-    // exit must not trigger `codex login status` or inspect an unrelated provider.
-    if (providerId === "chatgpt") {
-      return {
-        providers: [{
-          id: definition.id,
-          name: definition.name,
-          cliName: definition.cliName,
-          status: "connected",
-          installed: true,
-          canLogin: true,
-          authMethod: "chatgpt",
-          executable,
-          detail: "已通过 Rux 本机组件完成 ChatGPT 登录",
-        }],
-        checkedAt: new Date().toISOString(),
-      };
-    }
-
-    const state = this.status();
-    const provider = state.providers.find((item) => item.id === providerId);
-    if (provider?.status !== "connected") {
-      throw new Error("登录流程已结束，但 CLI 尚未报告已登录状态");
-    }
-    return state;
+    // The explicitly launched official CLI is the authority for this action.
+    // Do not inspect a different Engine or emit a second status command after a
+    // successful login; the user can explicitly run detection again if desired.
+    const engine = providerId === "chatgpt" ? "codex" : "claude-code";
+    return {
+      providers: [{
+        id: definition.id,
+        name: definition.name,
+        cliName: definition.cliName,
+        status: "connected",
+        installed: true,
+        canLogin: true,
+        authMethod: providerId === "chatgpt" ? "chatgpt" : "oauth",
+        executable,
+        providerConnection: officialCliProviderConnection(engine),
+        detail: providerId === "chatgpt"
+          ? "已通过官方 codex CLI 完成 ChatGPT 登录"
+          : "已通过官方 Claude Code CLI 完成登录",
+      }],
+      checkedAt: new Date().toISOString(),
+    };
   }
 
   async cancel(providerId: AuthProviderId): Promise<void> {

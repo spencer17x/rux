@@ -98,8 +98,8 @@ export class CodexRuntimeAdapter {
     );
   }
 
-  info(): AgentAdapterInfo {
-    return this.adapter.info();
+  info(refresh = false): AgentAdapterInfo {
+    return this.adapter.info(refresh);
   }
 
   listModels(params: AgentModelListParams): Promise<AgentModelListResult> {

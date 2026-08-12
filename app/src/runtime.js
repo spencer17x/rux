@@ -98,7 +98,7 @@ export function createMockRuntime() {
       emit({
         type: "assistant.message",
         runId,
-        text: "当前是浏览器预览。请运行桌面版 Rux 以使用真实 Rux Agent。",
+        text: "当前是浏览器预览。请运行桌面版 Rux 以使用真实 Rux。",
       });
       emit({ type: "run.completed", runId, durationMs: 1_800, turns: 1 });
       activeRuns.delete(runId);
@@ -131,7 +131,7 @@ export function createMockRuntime() {
     async listAgents() {
       return {
         adapters: [
-          { id: "mock", name: "Rux Agent", available: true, version: "web-preview" },
+          { id: "mock", name: "Rux Demo", available: true, version: "web-preview" },
           { id: "claude-code", name: "Claude Code", available: false, detail: "仅桌面应用可用" },
           { id: "codex", name: "Rux", available: false, detail: "仅桌面应用可用" },
         ],
@@ -362,8 +362,8 @@ function createDesktopRuntime(api) {
   });
 
   return {
-    listAgents() {
-      return api.request("agent.list", {});
+    listAgents(params = {}) {
+      return api.request("agent.list", params);
     },
 
     listAgentModels(params = { adapter: "codex" }) {

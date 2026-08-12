@@ -71,6 +71,10 @@ test("standalone JSONL Runtime runs Codex and custom Agent profiles over stdio",
       CODEX_CLI_PATH: codex,
       CLAUDE_CODE_PATH: join(bin, "missing-claude"),
       RUX_FAKE_CODEX_SCENARIO: "runtime-echo",
+      RUX_FAKE_CODEX_AUTH_METHOD: "api-key",
+      RUX_FAKE_CODEX_REQUIRE_CUSTOM_PROVIDER: "1",
+      OPENAI_BASE_URL: "https://provider.example.invalid/v1",
+      OPENAI_API_KEY: "sk-proj-rux-fixture-secret-123456",
     },
     stdio: ["pipe", "pipe", "pipe"],
   });
@@ -142,6 +146,23 @@ test("standalone JSONL Runtime runs Codex and custom Agent profiles over stdio",
 
   child.stdin.write(`${JSON.stringify({
     kind: "request",
+    id: "auth-status",
+    method: "auth.status",
+    params: {},
+  })}\n`);
+  const authStatus = await waitFor(messages, (message) =>
+    message.kind === "response" && message.id === "auth-status");
+  assert.equal(authStatus.ok, true);
+  const codexConnection = authStatus.result.providers.find((provider) => provider.id === "chatgpt");
+  assert.equal(codexConnection.status, "connected");
+  assert.equal(codexConnection.authMethod, "api-key");
+  assert.equal(codexConnection.providerConnection.id, "cli:codex:default");
+  assert.equal(codexConnection.providerConnection.engine, "codex");
+  assert.equal(JSON.stringify(authStatus.result).includes("sk-proj-rux-fixture-secret"), false);
+  assert.equal(JSON.stringify(authStatus.result).includes("provider.example.invalid"), false);
+
+  child.stdin.write(`${JSON.stringify({
+    kind: "request",
     id: "agent-models",
     method: "agent.model.list",
     params: { adapter: "codex", limit: 1, includeHidden: false },
@@ -205,6 +226,7 @@ test("standalone JSONL Runtime runs Codex and custom Agent profiles over stdio",
   const created = await waitFor(messages, (message) =>
     message.kind === "response" && message.id === "profile-create");
   assert.equal(created.ok, true);
+  assert.equal(created.result.providerConnection.id, "cli:codex:default");
 
   child.stdin.write(`${JSON.stringify({
     kind: "request",
@@ -279,6 +301,12 @@ test("standalone JSONL Runtime runs Codex and custom Agent profiles over stdio",
     message.kind === "event" && message.event.type === "verification.recorded" && message.event.runId === "stdio-run");
   assert.equal(verification.event.verification.status, "passed");
   assert.equal(verification.event.verification.cwd, realpathSync(workspace));
+  const persistedProviderState = [
+    readFileSync(join(stateRoot, "agent-profiles.json")),
+    readFileSync(join(stateRoot, "rux-task-state.sqlite3")),
+  ].map((contents) => contents.toString("utf8")).join("\n");
+  assert.equal(persistedProviderState.includes("sk-proj-rux-fixture-secret"), false);
+  assert.equal(persistedProviderState.includes("provider.example.invalid"), false);
 
   child.stdin.write(`${JSON.stringify({
     kind: "request",

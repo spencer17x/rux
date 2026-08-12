@@ -127,8 +127,53 @@ const fallbackWorkspaceState = showcaseMode
     };
 
 const fallbackAdapters = [
-  { id: "codex", name: "Rux", available: false, detail: "正在检测本机 Rux 组件" },
+  { id: "codex", name: "Rux", available: false, detail: "尚未检测本机 Rux" },
+  { id: "claude-code", name: "Claude Code", available: false, detail: "尚未检测本机 Claude Code" },
 ];
+
+const providerSurfaces = [
+  {
+    id: "chatgpt",
+    adapter: "codex",
+    engineName: "Rux",
+    connectionName: "ChatGPT、API Key 或自定义 Provider",
+    cliLabel: "codex CLI",
+    installUrl: "https://developers.openai.com/codex/cli/",
+  },
+  {
+    id: "claude-code",
+    adapter: "claude-code",
+    engineName: "Claude Code",
+    connectionName: "Claude OAuth、API Key 或云 Provider",
+    cliLabel: "claude CLI",
+    installUrl: "https://docs.anthropic.com/en/docs/claude-code/getting-started",
+  },
+];
+
+function authProviderForAdapter(state, adapter) {
+  const providerId = adapter === "codex" ? "chatgpt" : adapter === "claude-code" ? "claude-code" : "";
+  return state?.providers?.find((provider) => provider.id === providerId);
+}
+
+function authMethodLabel(method) {
+  return {
+    chatgpt: "ChatGPT OAuth",
+    oauth: "OAuth",
+    "api-key": "CLI API Key",
+    cloud: "云 Provider",
+    unknown: "CLI 配置",
+  }[method] || "CLI 配置";
+}
+
+function mergeAuthState(current, incoming) {
+  if (!incoming) return current;
+  if (!current) return incoming;
+  const providers = new Map(current.providers.map((provider) => [provider.id, provider]));
+  for (const provider of incoming.providers || []) {
+    providers.set(provider.id, { ...(providers.get(provider.id) || {}), ...provider });
+  }
+  return { providers: [...providers.values()], checkedAt: incoming.checkedAt || current.checkedAt };
+}
 
 const permissionOptions = [
   { id: "plan", label: "只读规划", short: "Read only" },
@@ -146,7 +191,7 @@ function ruxVisibleText(value) {
 
 function ruxAgentLabel(value) {
   if (typeof value !== "string" || !value) return "Rux";
-  return ruxVisibleText(value).replace(/\bRUX\b/g, "Rux").replace(/\brux Agent\b/gi, "Rux Agent");
+  return ruxVisibleText(value).replace(/\bRUX\b/g, "Rux").replace(/\brux Agent\b/gi, "Rux");
 }
 
 function ruxAdapterLabel(value) {
@@ -157,6 +202,7 @@ function ruxAdapterLabel(value) {
 
 function ruxModelLabel(value) {
   if (!value || /^(codex|rux) default$/i.test(String(value))) return "Rux 默认";
+  if (/^claude default$/i.test(String(value))) return "Claude 默认";
   return ruxVisibleText(String(value));
 }
 
@@ -1041,7 +1087,7 @@ function Sidebar({
               <span className="account-avatar"><UserRound size={15} /></span><strong>{accountLabel}</strong>
             </button>
             <div className="account-popover-separator" />
-            <button type="button" role="menuitem" onClick={() => { setAccountMenuOpen(false); onOpenAccounts(); }}><LogIn size={17} /><span>{accountConnected ? "管理 Rux 登录" : "登录 Rux"}</span><ChevronRight size={15} /></button>
+            <button type="button" role="menuitem" onClick={() => { setAccountMenuOpen(false); onOpenAccounts(); }}><LogIn size={17} /><span>{accountConnected ? "管理 Agent 与 Provider" : "检测 Agent 与 Provider"}</span><ChevronRight size={15} /></button>
             <button type="button" role="menuitem" onClick={() => { setAccountMenuOpen(false); onOpenSettings(); }}><Settings size={17} /><span>Rux 设置</span><kbd>⌘,</kbd></button>
           </div>
         ) : null}
@@ -1455,7 +1501,7 @@ function Composer({ task, draft, onDraft, onSend, onAgentChange, onModelChange, 
     task.model,
     ...(runtimeAdapterForTask(task) === "codex"
       ? ["Codex default", ...(codexModels || []).map((model) => model.model)]
-      : ["Rux prototype"]),
+      : runtimeAdapterForTask(task) === "claude-code" ? ["Claude default"] : ["Rux prototype"]),
   ].filter(Boolean)));
   const reasoningOptions = runtimeAdapterForTask(task) === "codex"
     ? codexReasoningOptions(codexModels, task.model)
@@ -2654,7 +2700,7 @@ function useDialogFocus(open, onClose) {
     const returnTarget = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const dialog = dialogRef.current;
     if (!dialog) return undefined;
-    const focusable = () => [...dialog.querySelectorAll('button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), [tabindex]:not([tabindex="-1"])')];
+    const focusable = () => [...dialog.querySelectorAll('a[href], button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), [tabindex]:not([tabindex="-1"])')];
     const frame = window.requestAnimationFrame(() => (dialog.querySelector("[data-dialog-initial-focus]") || focusable()[0] || dialog).focus());
     const handleKeyDown = (event) => {
       if (event.key === "Escape") {
@@ -2720,10 +2766,13 @@ function NewTaskDialog({ open, onClose, onCreate, onOpenAccounts, agentChoices, 
 
   useEffect(() => {
     if (!open) return;
-    setAgentId("codex");
-    setPermissionMode(codexSettings.permissionMode || "acceptEdits");
-    setModel(codexSettings.model || "Codex default");
-    setReasoningEffort(codexSettings.reasoningEffort || "");
+    const choice = agentChoices.find((item) => item.available)
+      || agentChoices.find((item) => item.id === "codex")
+      || agentChoices[0];
+    setAgentId(choice?.id || "codex");
+    setPermissionMode(choice?.permissionMode || codexSettings.permissionMode || "acceptEdits");
+    setModel(choice?.model || codexSettings.model || "Codex default");
+    setReasoningEffort(choice?.reasoningEffort || "");
   }, [open]);
 
   useEffect(() => {
@@ -2858,16 +2907,13 @@ function NewTaskDialog({ open, onClose, onCreate, onOpenAccounts, agentChoices, 
   );
 }
 
-function AccountsDialog({ open, state, codexAdapter, loginProvider, error, notice, onClose, onLogin, onCancelLogin, onOpenSettings }) {
+function AccountsDialog({ open, state, adapters, checking, loginProvider, error, notice, onClose, onDetect, onLogin, onCancelLogin, onOpenSettings }) {
   const dialogRef = useDialogFocus(open, onClose);
   if (!open) return null;
-  const provider = state?.providers?.find((item) => item.id === "chatgpt");
-  const connected = provider?.status === "connected";
-  const isLoggingIn = loginProvider === "chatgpt";
-  const cliAvailable = Boolean(codexAdapter?.available) && Boolean(window.rux);
-  const statusLabel = isLoggingIn
-    ? "等待浏览器授权"
-    : connected ? "已连接 · ChatGPT" : cliAvailable ? "等待你登录" : "Rux 本机组件不可用";
+  const hasDetected = Boolean(state);
+  const checkedAt = state?.checkedAt
+    ? new Date(state.checkedAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })
+    : "尚未检测";
 
   return (
     <div className="dialog-backdrop account-dialog-backdrop" role="presentation" onMouseDown={(event) => {
@@ -2878,8 +2924,8 @@ function AccountsDialog({ open, state, codexAdapter, loginProvider, error, notic
           <div>
             <span className="account-dialog-icon"><UserRound size={18} /></span>
             <span>
-              <h2 id="account-dialog-title">账户与登录</h2>
-              <p>只在你点击后启动 Rux 登录</p>
+              <h2 id="account-dialog-title">Agent 与 Provider</h2>
+              <p>无需 Rux 账号；只在你点击后检查本机 CLI</p>
             </span>
           </div>
           <button type="button" className="icon-button" onClick={onClose} aria-label="关闭账户与登录">
@@ -2888,55 +2934,112 @@ function AccountsDialog({ open, state, codexAdapter, loginProvider, error, notic
         </header>
 
         <div className="account-dialog-body">
+          <section className="account-detection-card" aria-label="本机 Agent 检测">
+            <span className="account-sync-icon">{checking ? <LoaderCircle size={17} className="status-running" /> : <Laptop size={17} />}</span>
+            <span>
+              <strong>{checking ? "正在检测 Rux 与 Claude Code…" : hasDetected ? "本机 Agent 检测完成" : "检测本机 Agent"}</strong>
+              <small>{hasDetected ? `上次检测 ${checkedAt} · 不会后台自动刷新` : "检查安装、版本和非敏感连接状态，不读取凭据文件"}</small>
+            </span>
+            <button
+              data-dialog-initial-focus
+              type="button"
+              className="account-sync-button"
+              onClick={onDetect}
+              disabled={checking || Boolean(loginProvider) || !window.rux}
+            >
+              <RefreshCw size={13} className={checking ? "status-running" : ""} />
+              {checking ? "检测中" : hasDetected ? "重新检测" : "开始检测"}
+            </button>
+          </section>
           {error ? (
             <div className="account-error" role="alert">
               <CircleAlert size={15} />
               <span>{error}</span>
             </div>
           ) : null}
-          {notice ? <div className="account-notice" role="status">{isLoggingIn ? <LoaderCircle size={15} className="status-running" /> : notice.includes("取消") ? <Circle size={13} /> : <CheckCircle2 size={15} />}<span>{notice}</span></div> : null}
+          {notice ? <div className="account-notice" role="status">{loginProvider ? <LoaderCircle size={15} className="status-running" /> : notice.includes("取消") ? <Circle size={13} /> : <CheckCircle2 size={15} />}<span>{notice}</span></div> : null}
 
           <div className="account-provider-list">
-            <section className="account-provider is-codex-only">
-              <span className="account-provider-mark is-chatgpt"><Bot size={19} /></span>
-              <div className="account-provider-copy">
-                <div className="account-provider-title"><h3>Rux</h3><span>使用 ChatGPT 登录</span></div>
-                <p>{isLoggingIn
-                  ? "请在浏览器中完成授权；Rux 不会接收或保存你的 Token。"
-                  : connected
-                    ? "Rux 登录已完成，可以开始对话与编码。"
-                    : ruxVisibleText(codexAdapter?.detail) || "由本机官方登录组件管理授权与凭据。"}</p>
-                <code title="本机登录组件">
-                  {codexAdapter?.version ? `Rux ${codexAdapter.version}` : "Rux 登录组件"}
-                </code>
-              </div>
-              <div className="account-provider-actions">
-                <span className={`account-provider-status ${connected ? "is-connected" : isLoggingIn ? "is-loading" : ""}`}>
-                  {connected ? <CheckCircle2 size={13} /> : isLoggingIn ? <LoaderCircle size={13} className="status-running" /> : <Circle size={11} />}
-                  {statusLabel}
-                </span>
-                <button
-                  data-dialog-initial-focus
-                  type="button"
-                  className={`account-login-button ${isLoggingIn ? "is-cancel" : ""}`}
-                  onClick={() => isLoggingIn ? onCancelLogin("chatgpt") : onLogin("chatgpt")}
-                  disabled={!isLoggingIn && (!cliAvailable || Boolean(loginProvider))}
-                >
-                  {isLoggingIn ? <X size={14} /> : <LogIn size={14} />}
-                  {isLoggingIn ? "取消登录" : connected ? "重新登录" : "登录 Rux"}
-                </button>
-              </div>
-            </section>
+            {providerSurfaces.map((surface) => {
+              const provider = state?.providers?.find((item) => item.id === surface.id);
+              const adapter = adapters.find((item) => item.id === surface.adapter);
+              const isLoggingIn = loginProvider === surface.id;
+              const phase = checking
+                ? "checking"
+                : !hasDetected ? "unchecked" : provider?.status || "error";
+              const connected = phase === "connected";
+              const statusCopy = isLoggingIn
+                ? "等待浏览器授权"
+                : {
+                    unchecked: "未检测",
+                    checking: "检测中",
+                    "not-installed": "未安装",
+                    "signed-out": "已安装 · 未连接",
+                    connected: `已连接 · ${authMethodLabel(provider?.authMethod)}`,
+                    error: "检测错误",
+                  }[phase];
+              const detail = isLoggingIn
+                ? "请在官方浏览器授权页完成登录；Rux 不接收或保存 Token。"
+                : phase === "unchecked"
+                  ? `点击“开始检测”后检查 ${surface.cliLabel}。`
+                  : phase === "checking"
+                    ? `正在读取 ${surface.cliLabel} 的安装与非敏感状态…`
+                    : provider?.detail || adapter?.detail || `无法读取 ${surface.cliLabel} 状态。`;
+              const canStartLogin = Boolean(window.rux)
+                && provider?.installed
+                && provider?.canLogin
+                && !checking
+                && !loginProvider;
+              const loginLabel = connected
+                ? ["api-key", "cloud"].includes(provider?.authMethod) ? "改用 OAuth" : "重新登录"
+                : surface.id === "chatgpt" ? "使用 ChatGPT 登录" : "使用 Claude 登录";
+
+              return (
+                <section className="account-provider" key={surface.id} data-provider={surface.id}>
+                  <span className={`account-provider-mark ${surface.id === "chatgpt" ? "is-chatgpt" : "is-claude"}`}><Bot size={19} /></span>
+                  <div className="account-provider-copy">
+                    <div className="account-provider-title"><h3>{surface.engineName}</h3><span>{surface.connectionName}</span></div>
+                    <p>{detail}</p>
+                    {provider?.installed ? (
+                      <code title={provider.executable || surface.cliLabel}>
+                        {surface.cliLabel}{provider.version ? ` ${provider.version}` : ""}{provider.executable ? ` · ${provider.executable}` : ""}
+                      </code>
+                    ) : null}
+                  </div>
+                  <div className="account-provider-actions">
+                    <span className={`account-provider-status ${connected ? "is-connected" : phase === "error" || phase === "not-installed" ? "is-error" : isLoggingIn || phase === "checking" ? "is-loading" : ""}`}>
+                      {connected ? <CheckCircle2 size={13} /> : isLoggingIn || phase === "checking" ? <LoaderCircle size={13} className="status-running" /> : phase === "error" || phase === "not-installed" ? <CircleAlert size={13} /> : <Circle size={11} />}
+                      {statusCopy}
+                    </span>
+                    {phase === "not-installed" ? (
+                      <a className="account-install-link" href={surface.installUrl} target="_blank" rel="noreferrer"><Globe2 size={13} />官方安装说明</a>
+                    ) : phase === "error" ? (
+                      <button type="button" className="account-login-button is-secondary" onClick={onDetect} disabled={checking || Boolean(loginProvider)}><RefreshCw size={13} />重新检测</button>
+                    ) : phase === "unchecked" ? null : (
+                      <button
+                        type="button"
+                        className={`account-login-button ${isLoggingIn ? "is-cancel" : ""}`}
+                        onClick={() => isLoggingIn ? onCancelLogin(surface.id) : onLogin(surface.id)}
+                        disabled={!isLoggingIn && !canStartLogin}
+                      >
+                        {isLoggingIn ? <X size={14} /> : <LogIn size={14} />}
+                        {isLoggingIn ? "取消登录" : loginLabel}
+                      </button>
+                    )}
+                  </div>
+                </section>
+              );
+            })}
           </div>
           <div className="account-dialog-secondary-actions">
             <button type="button" className="secondary-button" onClick={onOpenSettings} disabled={Boolean(loginProvider)}><Settings size={14} /> Rux 设置</button>
-            <p>如果浏览器没有打开，可取消后重试登录。</p>
+            <p>API Key、Base URL 与云 Provider 继续由对应 CLI 管理；配置后回到这里重新检测。</p>
           </div>
         </div>
 
         <footer className="account-dialog-footer">
           <ShieldCheck size={15} />
-          <p>Rux 不读取、不复制、不保存凭据；登录、凭据存储与刷新均由本机官方登录组件管理。本阶段不会自动同步登录状态。</p>
+          <p>Rux 只保存非敏感的 CLI Connection 引用，不读取凭据文件、Keychain 或 Token。登录、凭据存储与刷新均由官方 CLI 管理。</p>
         </footer>
       </section>
     </div>
@@ -2995,7 +3098,7 @@ function CodexSettingsDialog({ open, connected, catalog, settings, onClose, onRe
             </div>
             <div className="rux-settings-nav-group">
               <p>编码</p>
-              <button type="button" onClick={() => document.getElementById("rux-agent-settings")?.scrollIntoView({ behavior: "smooth", block: "start" })}><Bot size={16} /><span>Rux Agent</span></button>
+              <button type="button" onClick={() => document.getElementById("rux-agent-settings")?.scrollIntoView({ behavior: "smooth", block: "start" })}><Bot size={16} /><span>Rux</span></button>
               <button type="button" disabled title="即将推出"><GitBranch size={16} /><span>Git</span></button>
             </div>
           </nav>
@@ -3038,7 +3141,7 @@ function CodexSettingsDialog({ open, connected, catalog, settings, onClose, onRe
                 {!connected ? (
                   <div className="settings-login-required" role="status">
                     <Bot size={18} />
-                    <span><strong>先登录 Rux</strong><small>登录后即可读取可用模型和推理强度，并开始对话与编码。</small></span>
+                    <span><strong>先连接 Rux</strong><small>在 Agent 与 Provider 中检测并连接后，即可读取模型与推理强度。</small></span>
                     <button type="button" className="primary-button" onClick={onOpenAccounts}>账户与登录</button>
                   </div>
                 ) : null}
@@ -3060,7 +3163,7 @@ function CodexSettingsDialog({ open, connected, catalog, settings, onClose, onRe
                     </select>
                   </label>
                   <div className="rux-settings-action-row">
-                    <span><strong>模型目录</strong><small>从本机 Rux Agent 服务获取最新模型列表</small></span>
+                    <span><strong>模型目录</strong><small>从本机 Rux 服务获取最新模型列表</small></span>
                     <button type="button" className="secondary-button" onClick={onReload} disabled={!connected || catalog.loading}>{catalog.loading ? <LoaderCircle size={14} className="status-running" /> : <RefreshCw size={14} />}刷新模型</button>
                   </div>
                   <div className="rux-settings-boundary"><ShieldCheck size={15} /><span><strong>权限边界</strong><small>设置会自动保存。Rux 的所有写入仍限制在当前工作区内。</small></span></div>
@@ -3199,7 +3302,7 @@ function AgentsDialog({ open, profiles, adapters, busy, error, onClose, onSave, 
             <div className="agent-form-grid">
               <label><span>名称</span><input value={draft.name} onChange={(event) => update("name", event.target.value)} maxLength={80} required /></label>
               <label><span>底座</span><select value={draft.backend} onChange={(event) => update("backend", event.target.value)}>
-                {adapters.filter((item) => item.id === "codex").map((adapter) => <option key={adapter.id} value={adapter.id}>{ruxAgentLabel(adapter.name)}{adapter.available ? "" : "（本机组件不可用）"}</option>)}
+                {adapters.filter((item) => item.id === "codex" || item.id === "claude-code").map((adapter) => <option key={adapter.id} value={adapter.id}>{ruxAgentLabel(adapter.name)}{adapter.available ? "" : "（尚未检测或本机组件不可用）"}</option>)}
               </select></label>
               <label className="is-wide"><span>描述</span><input value={draft.description} onChange={(event) => update("description", event.target.value)} maxLength={400} /></label>
               <label><span>模型（可选）</span><input value={draft.model} onChange={(event) => update("model", event.target.value)} placeholder="使用底座默认模型" /></label>
@@ -3268,6 +3371,7 @@ export function App() {
   const [accountsOpen, setAccountsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [authState, setAuthState] = useState(null);
+  const [authChecking, setAuthChecking] = useState(false);
   const [authLoginProvider, setAuthLoginProvider] = useState(null);
   const [authError, setAuthError] = useState("");
   const [authNotice, setAuthNotice] = useState("");
@@ -3294,7 +3398,7 @@ export function App() {
   const composerInputRef = useRef(null);
   const codexProvider = authState?.providers?.find((provider) => provider.id === "chatgpt");
   const codexConnected = codexProvider?.status === "connected";
-  const codexAdapter = adapters.find((adapter) => adapter.id === "codex") || fallbackAdapters[0];
+  const connectedProviderCount = authState?.providers?.filter((provider) => provider.status === "connected").length || 0;
 
   useEffect(() => {
     let disposed = false;
@@ -3306,7 +3410,7 @@ export function App() {
 
     const hydrate = async () => {
       const [agentResult, profileResult, nextState] = await Promise.all([
-        runtime.listAgents(),
+        window.rux ? Promise.resolve({ adapters: fallbackAdapters }) : runtime.listAgents(),
         runtime.listAgentProfiles(),
         window.rux ? window.rux.getWorkspaceState() : Promise.resolve(null),
       ]);
@@ -3467,31 +3571,38 @@ export function App() {
   }, [workspaceState.active.id]);
 
   const agentChoices = useMemo(() => {
-    const builtIns = adapters.filter((adapter) => adapter.id === "codex" || adapter.id === "mock").map((adapter) => {
-      const authenticationReady = adapter.id === "mock" || codexConnected;
+    const builtIns = adapters.filter((adapter) => ["codex", "claude-code", "mock"].includes(adapter.id)).map((adapter) => {
+      const provider = authProviderForAdapter(authState, adapter.id);
+      const authenticationReady = adapter.id === "mock" || provider?.status === "connected";
+      const defaultModel = adapter.id === "codex"
+        ? codexSettings.model
+        : adapter.id === "claude-code" ? "Claude default" : "Rux prototype";
       return {
         id: adapter.id,
-        name: adapter.id === "mock" ? "Rux Agent (Demo)" : "Rux",
+        name: adapter.id === "mock" ? "Rux Demo" : adapter.id === "claude-code" ? "Claude Code" : "Rux",
         adapter: adapter.id,
         available: adapter.available && authenticationReady,
         detail: adapter.id === "codex" ? "Rux 本机 Agent" : adapter.detail,
         unavailableReason: !adapter.available
-          ? "未找到可用的 Rux 本机组件"
+          ? authState
+            ? `未找到可用的 ${adapter.id === "claude-code" ? "Claude Code" : "Rux"} 本机组件`
+            : "请先在账户与登录中检测本机 Agent"
           : !authenticationReady
-            ? "请先在账户与登录中登录 Rux"
+            ? `请先在账户与登录中连接 ${adapter.id === "claude-code" ? "Claude Code" : "Rux"}`
             : "",
-        requiresLogin: adapter.id === "codex" && adapter.available && !authenticationReady,
+        requiresLogin: adapter.id !== "mock" && adapter.available && provider?.status === "signed-out",
         agentRevisionId: builtInAgentRevisionId(adapter.id),
-        providerConnection: defaultProviderConnectionForAdapter(adapter.id),
-        model: adapter.id === "codex" ? codexSettings.model : "Rux prototype",
-        ...defaultModelState(adapter.id === "codex" ? codexSettings.model : "Rux prototype"),
+        providerConnection: provider?.providerConnection || defaultProviderConnectionForAdapter(adapter.id),
+        model: defaultModel,
+        ...defaultModelState(defaultModel),
         reasoningEffort: adapter.id === "codex" ? codexSettings.reasoningEffort : "",
         permissionMode: adapter.id === "codex" ? codexSettings.permissionMode : "acceptEdits",
       };
     });
-    const custom = agentProfiles.filter((profile) => profile.backend === "codex").map((profile) => {
+    const custom = agentProfiles.map((profile) => {
       const backend = adapters.find((adapter) => adapter.id === profile.backend);
-      const authenticationReady = codexConnected;
+      const provider = authProviderForAdapter(authState, profile.backend);
+      const authenticationReady = provider?.status === "connected";
       return {
         id: profile.id,
         name: profile.name,
@@ -3500,24 +3611,26 @@ export function App() {
         agentRevisionId: profile.latestRevisionId,
         providerConnection: profile.providerConnection,
         available: profile.enabled && Boolean(backend?.available) && authenticationReady,
-        detail: profile.description || "自定义 Rux Agent",
+        detail: profile.description || "自定义 Agent",
         unavailableReason: !profile.enabled
           ? "这个自定义 Agent 已停用"
           : !backend?.available
-            ? "未找到可用的 Rux 本机组件"
+            ? authState
+              ? `未找到可用的 ${profile.backend === "claude-code" ? "Claude Code" : "Rux"} 本机组件`
+              : "请先在账户与登录中检测本机 Agent"
             : !authenticationReady
-              ? "请先在账户与登录中登录 Rux"
+              ? `请先在账户与登录中连接 ${profile.backend === "claude-code" ? "Claude Code" : "Rux"}`
               : "",
-        requiresLogin: Boolean(backend?.available) && !authenticationReady,
-        model: profile.model || codexSettings.model,
+        requiresLogin: Boolean(backend?.available) && provider?.status === "signed-out",
+        model: profile.model || (profile.backend === "codex" ? codexSettings.model : "Claude default"),
         modelSource: profile.modelSource,
         modelVerificationStatus: profile.modelVerificationStatus,
-        reasoningEffort: profile.reasoningEffort || codexSettings.reasoningEffort,
+        reasoningEffort: profile.reasoningEffort || (profile.backend === "codex" ? codexSettings.reasoningEffort : ""),
         permissionMode: profile.permissionMode,
       };
     });
     return [...builtIns.filter((item) => item.id !== "mock"), ...custom, ...builtIns.filter((item) => item.id === "mock")];
-  }, [adapters, agentProfiles, codexConnected, codexSettings]);
+  }, [adapters, agentProfiles, authState, codexSettings]);
 
   const appReady = !workspaceState.active.placeholder
     && !startupLoading
@@ -3562,7 +3675,8 @@ export function App() {
           && !(task.runs || []).length;
         const selectedId = task.agentProfileId || runtimeAdapterForTask(task);
         const selectedChoice = agentChoices.find((choice) => choice.id === selectedId);
-        if (!emptyTask || selectedChoice?.available || selectedChoice?.requiresLogin) return task;
+        const untouchedWorkspaceStarter = task.id === `workspace-${task.workspaceId}`;
+        if (!emptyTask || selectedChoice?.available || (selectedChoice?.requiresLogin && !untouchedWorkspaceStarter)) return task;
         changed = true;
         return {
           ...task,
@@ -4701,20 +4815,47 @@ export function App() {
     setAuthError("");
   };
 
+  const detectProviders = async () => {
+    const runtime = runtimeRef.current;
+    if (!runtime || authChecking || authLoginProvider) return;
+    setAuthChecking(true);
+    setAuthError("");
+    setAuthNotice("");
+    try {
+      const nextAuthState = await runtime.authStatus();
+      setAuthState(nextAuthState);
+      const agentResult = await runtime.listAgents({ refresh: true });
+      setAdapters(agentResult.adapters);
+      const connected = nextAuthState.providers.filter((provider) => provider.status === "connected").length;
+      const installed = nextAuthState.providers.filter((provider) => provider.installed).length;
+      setAuthNotice(connected
+        ? `检测完成：${connected} 个 Agent 已连接。`
+        : installed
+          ? `检测完成：找到 ${installed} 个 Agent，尚未连接。`
+          : "检测完成：未找到受支持的本机 Agent。可查看官方安装说明后重新检测。");
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setAuthChecking(false);
+    }
+  };
+
   const loginWithProvider = async (provider = "chatgpt") => {
     const runtime = runtimeRef.current;
-    if (!runtime || authLoginProvider) return;
+    if (!runtime || authLoginProvider || authChecking) return;
+    const providerName = provider === "claude-code" ? "Claude Code" : "Rux";
     setAuthLoginProvider(provider);
     setAuthError("");
-    setAuthNotice("浏览器授权进行中；完成后请返回 Rux。");
+    setAuthNotice(`${providerName} 的官方浏览器授权进行中；完成后请返回 Rux。`);
     try {
-      setAuthState(await runtime.login(provider));
-      setAuthNotice("Rux 已登录，可以开始对话与编码。");
-      setCodexCatalog({ loading: false, models: [], error: "" });
+      const result = await runtime.login(provider);
+      setAuthState((current) => mergeAuthState(current, result));
+      setAuthNotice(`${providerName} 已连接，可以创建或继续任务。`);
+      if (provider === "chatgpt") setCodexCatalog({ loading: false, models: [], error: "" });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (message.includes("已取消")) {
-        setAuthNotice("登录已取消。你可以随时重新开始。");
+        setAuthNotice(`${providerName} 登录已取消。你可以随时重新开始。`);
         setAuthError("");
       } else {
         setAuthNotice("");
@@ -4728,7 +4869,8 @@ export function App() {
   const cancelLoginWithProvider = async (provider = authLoginProvider) => {
     const runtime = runtimeRef.current;
     if (!runtime || !provider) return;
-    setAuthNotice("正在取消 Rux 登录…");
+    const providerName = provider === "claude-code" ? "Claude Code" : "Rux";
+    setAuthNotice(`正在取消 ${providerName} 登录…`);
     try {
       await runtime.cancelLogin(provider);
     } catch (error) {
@@ -4805,7 +4947,7 @@ export function App() {
     }
   };
 
-  const accountLabel = codexConnected ? "Rux 已连接" : "登录 Rux";
+  const accountLabel = "账户与登录";
 
   return (
     <div className={`app-shell codex-shell ${sidebarCollapsed ? "sidebar-is-collapsed" : ""}`}>
@@ -4853,7 +4995,7 @@ export function App() {
         taskActionError={taskActionError}
         onDismissTaskActionError={() => setTaskActionError("")}
         accountLabel={accountLabel}
-        accountConnected={codexConnected}
+        accountConnected={connectedProviderCount > 0}
         collapsed={sidebarCollapsed}
       />
 
@@ -4980,11 +5122,13 @@ export function App() {
       <AccountsDialog
         open={accountsOpen}
         state={authState}
-        codexAdapter={codexAdapter}
+        adapters={adapters}
+        checking={authChecking}
         loginProvider={authLoginProvider}
         error={authError}
         notice={authNotice}
         onClose={closeAccounts}
+        onDetect={() => void detectProviders()}
         onLogin={loginWithProvider}
         onCancelLogin={cancelLoginWithProvider}
         onOpenSettings={openSettings}

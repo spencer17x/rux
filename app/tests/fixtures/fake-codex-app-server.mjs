@@ -24,7 +24,9 @@ function isAuthenticated() {
 
 if (process.argv[2] === "login" && process.argv[3] === "status") {
   if (isAuthenticated()) {
-    process.stdout.write("Logged in using ChatGPT\n");
+    process.stdout.write(process.env.RUX_FAKE_CODEX_AUTH_METHOD === "api-key"
+      ? "Logged in using an API key\n"
+      : "Logged in using ChatGPT\n");
     process.exit(0);
   }
   process.stdout.write("Not logged in\n");
@@ -39,6 +41,16 @@ if (process.argv[2] === "login" && process.argv.length === 3) {
 if (!process.argv.includes("app-server")) {
   process.stderr.write("expected app-server\n");
   process.exit(2);
+}
+
+if (process.env.RUX_FAKE_CODEX_REQUIRE_CUSTOM_PROVIDER === "1") {
+  if (
+    process.env.OPENAI_BASE_URL !== "https://provider.example.invalid/v1"
+    || process.env.OPENAI_API_KEY !== "sk-proj-rux-fixture-secret-123456"
+  ) {
+    process.stderr.write("missing fake CLI-owned custom Provider configuration\n");
+    process.exit(93);
+  }
 }
 
 const scenario = process.env.RUX_FAKE_CODEX_SCENARIO ?? "stream";

@@ -192,7 +192,8 @@ export class ClaudeCodeAdapter {
     this.options = options;
   }
 
-  info(): AgentAdapterInfo {
+  info(refresh = false): AgentAdapterInfo {
+    if (refresh) this.adapterInfo = undefined;
     this.adapterInfo ??= inspectClaudeCode(this.options.executable);
     return this.adapterInfo;
   }

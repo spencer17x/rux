@@ -106,6 +106,6 @@ On macOS arm64, the packaged app is `app/release/mac-arm64/Rux.app`. Packaging i
 - Claude Code runs use the real local CLI adapter and normalized stream-json events.
 - Task, Message, and Run event history is persisted per authorized Workspace in a Main-owned SQLite store; orphaned running records are restored as stopped/interrupted.
 - RUX Agent is still a mock event-protocol adapter.
-- The current account surface presents explicit, user-triggered Rux login while delegating the action to the official `codex login` command. It does not automatically synchronize CLI login state; `auth.status` remains a compatibility/diagnostic Runtime method.
+- The account surface is an explicit Agent and Provider connection manager for Rux and Claude Code. It never inspects login state on startup or panel open; a user-triggered detection delegates read-only status to the official CLIs, and direct login actions delegate only to `codex login` or `claude auth login`. API keys, Base URLs, OAuth tokens, cloud-provider credentials, refresh, and logout remain CLI-owned.
 - Changes and Context still contain showcase data in parts of the renderer and must not be described as fully repository-backed until that wiring is completed.
 - macOS packages are currently unsigned and require Developer ID signing and notarization before distribution.

@@ -15,6 +15,7 @@ import { CodexRuntimeAdapter } from "./codex-runtime-adapter";
 import { GitChangesService, type GitRunBaseline } from "./git-service";
 import { TaskStore } from "./task-store";
 import {
+  agentListParamsSchema,
   agentModelListParamsSchema,
   agentProfileDeleteParamsSchema,
   agentProfileInputSchema,
@@ -348,9 +349,11 @@ async function handleRequest(input: unknown): Promise<void> {
         await authManager.cancel(authLoginParamsSchema.parse(request.params).provider);
         result = { ok: true };
         break;
-      case "agent.list":
-        result = { adapters: [claudeCode.info(), codex.info()] };
+      case "agent.list": {
+        const params = agentListParamsSchema.parse(request.params);
+        result = { adapters: [claudeCode.info(params.refresh), codex.info(params.refresh)] };
         break;
+      }
       case "agent.model.list":
         result = await codex.listModels(agentModelListParamsSchema.parse(request.params));
         break;

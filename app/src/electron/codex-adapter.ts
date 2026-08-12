@@ -137,7 +137,8 @@ export class CodexAdapter {
     this.executableOverride = options.executable;
   }
 
-  info(): CodexAdapterInfo {
+  info(refresh = false): CodexAdapterInfo {
+    if (refresh) this.adapterInfo = undefined;
     this.adapterInfo ??= inspectCodex(this.executableOverride);
     return this.adapterInfo;
   }

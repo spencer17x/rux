@@ -382,13 +382,14 @@ export class CodexAppServerAdapter {
     this.options = options;
   }
 
-  info(): AgentAdapterInfo {
+  info(refresh = false): AgentAdapterInfo {
+    if (refresh && !this.child) this.adapterInfo = undefined;
     this.adapterInfo ??= inspectCodex(this.options.executable);
     return this.adapterInfo;
   }
 
   async listModels(params: AgentModelListParams): Promise<AgentModelListResult> {
-    if (this.disposed) throw new Error("Rux Agent service is disposed");
+    if (this.disposed) throw new Error("Rux service is disposed");
     await this.ensureInitialized();
     const rawResult = await this.request("model/list", {
       ...(params.cursor !== undefined ? { cursor: params.cursor } : {}),
@@ -396,17 +397,17 @@ export class CodexAppServerAdapter {
       ...(params.includeHidden !== undefined ? { includeHidden: params.includeHidden } : {}),
     });
     if (!isRecord(rawResult) || !Array.isArray(rawResult.data)) {
-      throw new Error("Rux Agent service model/list returned an invalid response");
+      throw new Error("Rux service model/list returned an invalid response");
     }
     const models = rawResult.data.map((value, index) => {
       if (!isRecord(value)) {
-        throw new Error(`Rux Agent service model/list returned an invalid model at index ${index}`);
+        throw new Error(`Rux service model/list returned an invalid model at index ${index}`);
       }
       const supportedReasoningEfforts = Array.isArray(value.supportedReasoningEfforts)
         ? value.supportedReasoningEfforts.map((option, optionIndex) => {
             if (!isRecord(option)) {
               throw new Error(
-                `Rux Agent service model/list returned an invalid reasoning option at ${index}:${optionIndex}`,
+                `Rux service model/list returned an invalid reasoning option at ${index}:${optionIndex}`,
               );
             }
             return {
@@ -438,7 +439,7 @@ export class CodexAppServerAdapter {
     threadId: string;
     turnId: string;
   }> {
-    if (this.disposed) throw new Error("Rux Agent service is disposed");
+    if (this.disposed) throw new Error("Rux service is disposed");
     if (this.runs.has(params.runId)) throw new Error("Run ID is already active");
     const run: RunRecord = {
       params,
@@ -477,7 +478,7 @@ export class CodexAppServerAdapter {
       const threadResult = isRecord(rawThreadResult) ? rawThreadResult : {};
       const thread = isRecord(threadResult.thread) ? threadResult.thread : {};
       const threadId = stringValue(thread.id);
-      if (!threadId) throw new Error("Rux Agent service thread response omitted thread.id");
+      if (!threadId) throw new Error("Rux service thread response omitted thread.id");
       run.threadId = threadId;
       this.threadToRun.set(threadId, params.runId);
       this.emit({
@@ -512,7 +513,7 @@ export class CodexAppServerAdapter {
       const turnResult = isRecord(rawTurnResult) ? rawTurnResult : {};
       const turn = isRecord(turnResult.turn) ? turnResult.turn : {};
       const turnId = stringValue(turn.id);
-      if (!turnId) throw new Error("Rux Agent service turn response omitted turn.id");
+      if (!turnId) throw new Error("Rux service turn response omitted turn.id");
       run.turnId = turnId;
       if (run.cancelled) void this.cancel(params.runId);
       return { runId: params.runId, adapter: "codex", threadId, turnId };
@@ -637,7 +638,7 @@ export class CodexAppServerAdapter {
         child,
         this.expectedShutdown
           ? undefined
-          : new Error(`Rux Agent service exited with ${status}${detail ? `: ${detail}` : ""}`),
+          : new Error(`Rux service exited with ${status}${detail ? `: ${detail}` : ""}`),
       );
     });
   }
@@ -648,7 +649,7 @@ export class CodexAppServerAdapter {
       const timeoutMs = this.options.requestTimeoutMs ?? defaultRequestTimeoutMs;
       const timer = setTimeout(() => {
         this.pendingRpc.delete(requestKey(id));
-        rejectPromise(new Error(`Rux Agent service ${method} timed out after ${timeoutMs}ms`));
+        rejectPromise(new Error(`Rux service ${method} timed out after ${timeoutMs}ms`));
       }, timeoutMs);
       timer.unref();
       this.pendingRpc.set(requestKey(id), {
@@ -668,14 +669,14 @@ export class CodexAppServerAdapter {
   }
 
   private write(message: JsonRecord): void {
-    if (!this.child?.stdin?.writable) throw new Error("Rux Agent service stdin is unavailable");
+    if (!this.child?.stdin?.writable) throw new Error("Rux service stdin is unavailable");
     this.child.stdin.write(`${JSON.stringify(message)}\n`);
   }
 
   private consumeStdout(chunk: string): void {
     this.stdoutBuffer += chunk;
     if (Buffer.byteLength(this.stdoutBuffer, "utf8") > MAX_PROVIDER_JSONL_LINE_BYTES && !this.stdoutBuffer.includes("\n")) {
-      this.failProtocol("Rux Agent service exceeded the 4 MB JSONL line limit");
+      this.failProtocol("Rux service exceeded the 4 MB JSONL line limit");
       return;
     }
     let newline = this.stdoutBuffer.indexOf("\n");
@@ -683,7 +684,7 @@ export class CodexAppServerAdapter {
       const line = this.stdoutBuffer.slice(0, newline).trim();
       this.stdoutBuffer = this.stdoutBuffer.slice(newline + 1);
       if (Buffer.byteLength(line, "utf8") > MAX_PROVIDER_JSONL_LINE_BYTES) {
-        this.failProtocol("Rux Agent service exceeded the 4 MB JSONL line limit");
+        this.failProtocol("Rux service exceeded the 4 MB JSONL line limit");
         return;
       }
       if (line) this.handleLine(line);
@@ -707,7 +708,7 @@ export class CodexAppServerAdapter {
     } catch {
       this.emit({
         type: "codex.connection.warning",
-        message: "Rux Agent service returned an invalid JSONL message",
+        message: "Rux service returned an invalid JSONL message",
       });
       return;
     }
@@ -761,7 +762,7 @@ export class CodexAppServerAdapter {
       });
       this.emit({
         type: "codex.connection.warning",
-        message: `Unsupported Rux Agent service request: ${method}`,
+        message: `Unsupported Rux service request: ${method}`,
       });
       return;
     }
@@ -771,7 +772,7 @@ export class CodexAppServerAdapter {
         id,
         error: { code: -32600, message: "Duplicate outstanding Rux approval request id" },
       });
-      this.failProtocol("Rux Agent service reused an outstanding approval request id");
+      this.failProtocol("Rux service reused an outstanding approval request id");
       return;
     }
 
@@ -1266,7 +1267,7 @@ export class CodexAppServerAdapter {
       this.emit({
         type: "run.failed",
         runId,
-        error: redactSensitiveText(error ?? "Rux Agent service run failed", 16_000).text,
+        error: redactSensitiveText(error ?? "Rux service run failed", 16_000).text,
       });
     }
   }
@@ -1295,12 +1296,12 @@ export class CodexAppServerAdapter {
     this.initialization = undefined;
     for (const pending of this.pendingRpc.values()) {
       clearTimeout(pending.timer);
-      pending.reject(error ?? new Error("Rux Agent service stopped"));
+      pending.reject(error ?? new Error("Rux service stopped"));
     }
     this.pendingRpc.clear();
     for (const run of [...this.runs.values()]) {
       if (run.cancelled || this.expectedShutdown) this.finishRun(run, "cancelled");
-      else this.finishRun(run, "failed", error?.message ?? "Rux Agent service stopped unexpectedly");
+      else this.finishRun(run, "failed", error?.message ?? "Rux service stopped unexpectedly");
     }
     this.approvals.clear();
     if (error && !hadActiveRuns && !this.expectedShutdown) {

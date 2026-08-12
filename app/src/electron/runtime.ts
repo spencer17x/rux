@@ -9,6 +9,7 @@ import { CodexRuntimeAdapter } from "./codex-runtime-adapter";
 import { GitChangesService, type GitRunBaseline } from "./git-service";
 import { TaskStore } from "./task-store";
 import {
+  agentListParamsSchema,
   agentModelListParamsSchema,
   agentProfileDeleteParamsSchema,
   agentProfileInputSchema,
@@ -514,14 +515,15 @@ async function handleRequest(input: unknown): Promise<void> {
         result = { ok: true };
         break;
       }
-      case "agent.list":
+      case "agent.list": {
+        const params = agentListParamsSchema.parse(request.params);
         result = {
           adapters: [
-            claudeCode.info(),
-            codex.info(),
+            claudeCode.info(params.refresh),
+            codex.info(params.refresh),
             ...(mockEnabled ? [{
               id: "mock",
-              name: "Rux Agent",
+              name: "Rux Demo",
               available: true,
               version: "prototype",
               detail: "本地事件协议演示",
@@ -529,6 +531,7 @@ async function handleRequest(input: unknown): Promise<void> {
           ],
         };
         break;
+      }
       case "agent.model.list": {
         const params = agentModelListParamsSchema.parse(request.params);
         result = await codex.listModels(params);

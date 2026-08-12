@@ -151,6 +151,11 @@ export interface AgentAdapterInfo {
   detail?: string;
 }
 
+export interface AgentListParams {
+  /** Re-run executable discovery after an explicit user detection action. */
+  refresh?: boolean;
+}
+
 export interface CodexReasoningEffortOption {
   reasoningEffort: ReasoningEffort;
   description: string;
@@ -931,7 +936,7 @@ export interface RuntimeRequestMap {
     result: { ok: true };
   };
   "agent.list": {
-    params: Record<string, never>;
+    params: AgentListParams;
     result: { adapters: AgentAdapterInfo[] };
   };
   "agent.model.list": {
@@ -1291,6 +1296,10 @@ export const terminalDisposeParamsSchema = z.object({
 export const authLoginParamsSchema = z.object({
   provider: z.enum(authProviderIds),
 });
+
+export const agentListParamsSchema = z.object({
+  refresh: z.boolean().optional(),
+}).strict();
 
 export const agentModelListParamsSchema = z.object({
   adapter: z.literal("codex"),

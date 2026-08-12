@@ -55,7 +55,7 @@ P1 明确不包含：
 | --- | --- | --- |
 | Codex Run | 真实 CLI/App Server Adapter，支持事件、审批、模型目录和 Thread Resume | 复用并补齐统一 Connection、模型状态和恢复验收 |
 | Claude Code Run | 真实 CLI Adapter，支持结构化流事件、权限 Broker 和 Session Resume | 复用并补齐连接 UI、模型降级和历史会话接口 |
-| 认证 | Runtime 已有 `auth.status/login/cancel`；Renderer 当前主要呈现 Rux/ChatGPT 登录 | 重构为用户显式的多 Engine 检测与官方登录 |
+| 认证 | Renderer 已提供用户显式的 Rux/Claude Code 检测、状态修复与官方 CLI 登录；启动和打开面板均不自动检测 | P0-E1 已完成，后续只扩展新的 Engine/Provider |
 | Agent Profile | 本地非敏感 Profile Store；更新会覆盖同一 Profile | 升级为不可变 Agent Revision，Task 固定 Revision |
 | 模型 | Codex 有结构化目录；Claude/自定义配置没有统一目录 | 增加 Engine 默认、已验证和未验证模型状态 |
 | Task Store | Main 管理的 Workspace 级 SQLite，持久化 Task/Message/Run/Event | 版本化迁移，增加 Revision/Connection/Session Projection 数据 |
@@ -69,8 +69,8 @@ P1 明确不包含：
 | Epic | 当前状态 | 说明 |
 | --- | --- | --- |
 | P0-E0 | 已验证 | Runtime 协议 v3、Profile/Task Store v2、不可变 Revision、Connection 引用、原子迁移与 TUI 兼容已通过 P0-FND-001 至 008 自动化验收 |
-| P0-E1 | 进行中（已有基础） | Runtime 已有检测/登录边界，Renderer 语义和多 Engine 流程未完成 |
-| P0-E2 | 进行中（已有基础） | 已有非敏感 Agent Profile 和 Run 快照，尚未不可变版本化 |
+| P0-E1 | 已验证 | 显式双 Engine 检测、官方登录委托、缺失/未登录/已连接/错误状态及非敏感 Connection 边界已通过自动化和打包桌面验收 |
+| P0-E2 | 进行中（已有基础） | 不可变 Revision 与 Task 固定合同已完成，任务升级提示和完整桌面验收尚未退出 |
 | P0-E3 | 进行中（已有基础） | Codex 已有目录，通用模型状态与 Claude 降级未完成 |
 | P0-E4 | 进行中（已有基础） | 两个 Engine 均可恢复 Session，兼容规则与完整桌面验收未完成 |
 | P0-E5 | 未开始 | 需等待 P0-E0 至 P0-E4 退出 |
@@ -139,6 +139,8 @@ flowchart LR
 - API Key、Base URL 与云 Provider 继续由 CLI 持有；RUX 只保存稳定、非敏感的 CLI Connection 引用，并通过该 CLI 发起 Run。
 
 退出条件：P0-CONN-001 至 P0-CONN-012 全部通过。
+
+实现记录（2026-08-12）：P0-E1 已退出。自动化覆盖干净启动不探测、双 CLI 状态、OAuth 命令隔离、取消/超时、CLI API Key 与 Base URL 透传边界，以及敏感值不进入 Profile/SQLite；打包应用使用隔离 Fake CLI 验证了未检测、API Key 已连接、Claude 未连接、CLI 缺失和检测错误可重试状态。例行验收未启动真实 OAuth，也未改变开发者登录态。
 
 ### P0-E2：不可变 Agent Revision 与 Task 固定
 

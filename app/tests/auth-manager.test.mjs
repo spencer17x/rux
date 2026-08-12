@@ -20,7 +20,7 @@ test("parses Claude Code OAuth status without exposing account payload", () => {
   assert.deepEqual(result, {
     status: "connected",
     authMethod: "oauth",
-    detail: "Claude Code CLI 已登录",
+    detail: "Claude Code 已通过官方 CLI 连接",
   });
   assert.equal(JSON.stringify(result).includes("private@example.com"), false);
 });
@@ -28,7 +28,7 @@ test("parses Claude Code OAuth status without exposing account payload", () => {
 test("parses Claude Code signed-out status", () => {
   assert.deepEqual(parseClaudeAuthStatus('{"loggedIn":false}', 1), {
     status: "signed-out",
-    detail: "Claude Code CLI 尚未登录",
+    detail: "Claude Code CLI 已安装但尚未连接",
   });
 });
 
@@ -36,14 +36,32 @@ test("parses ChatGPT and API-key Codex login states", () => {
   assert.deepEqual(parseCodexAuthStatus("Logged in using ChatGPT", 0), {
     status: "connected",
     authMethod: "chatgpt",
-    detail: "Rux 已通过 ChatGPT 登录",
+    detail: "Rux 已通过 ChatGPT 连接",
   });
   assert.deepEqual(parseCodexAuthStatus("Logged in using an API key", 0), {
     status: "connected",
     authMethod: "api-key",
-    detail: "Rux 已登录",
+    detail: "Rux 已通过官方 CLI 的 API Key 配置连接",
   });
   assert.equal(parseCodexAuthStatus("Not logged in", 1).status, "signed-out");
+});
+
+test("normalizes Claude Code cloud Provider status without exposing its payload", () => {
+  const result = parseClaudeAuthStatus(JSON.stringify({
+    loggedIn: true,
+    authMethod: "api_key",
+    apiProvider: "awsBedrock",
+    accessToken: "sk-ant-this-must-not-leak",
+    account: { email: "private@example.com" },
+  }), 0);
+
+  assert.deepEqual(result, {
+    status: "connected",
+    authMethod: "cloud",
+    detail: "Claude Code 已通过官方 CLI 连接",
+  });
+  assert.equal(JSON.stringify(result).includes("private@example.com"), false);
+  assert.equal(JSON.stringify(result).includes("sk-ant-"), false);
 });
 
 test("keeps explicit compatibility status inspection for both fake CLIs", async () => {
@@ -73,8 +91,55 @@ else process.exit(2);
   try {
     const state = new AuthManager(temporaryRoot).status();
     assert.equal(state.providers.length, 2);
-    assert.equal(state.providers.find((item) => item.id === "chatgpt")?.status, "connected");
-    assert.equal(state.providers.find((item) => item.id === "claude-code")?.status, "signed-out");
+    const codex = state.providers.find((item) => item.id === "chatgpt");
+    const claude = state.providers.find((item) => item.id === "claude-code");
+    assert.equal(codex?.status, "connected");
+    assert.equal(codex?.providerConnection?.id, "cli:codex:default");
+    assert.equal(codex?.providerConnection?.engine, "codex");
+    assert.equal(claude?.status, "signed-out");
+    assert.equal(claude?.providerConnection?.id, "cli:claude-code:default");
+    assert.equal(claude?.providerConnection?.engine, "claude-code");
+  } finally {
+    if (previousOverride === undefined) delete process.env.CODEX_CLI_PATH;
+    else process.env.CODEX_CLI_PATH = previousOverride;
+    if (previousClaudeOverride === undefined) delete process.env.CLAUDE_CODE_PATH;
+    else process.env.CLAUDE_CODE_PATH = previousClaudeOverride;
+    await rm(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
+test("re-detects CLIs installed after an initial not-installed result", async () => {
+  const temporaryRoot = await mkdtemp(join(tmpdir(), "rux-auth-redetect-"));
+  const fakeCodex = join(temporaryRoot, "codex");
+  const fakeClaude = join(temporaryRoot, "claude");
+  const previousOverride = process.env.CODEX_CLI_PATH;
+  const previousClaudeOverride = process.env.CLAUDE_CODE_PATH;
+  process.env.CODEX_CLI_PATH = fakeCodex;
+  process.env.CLAUDE_CODE_PATH = fakeClaude;
+
+  try {
+    const manager = new AuthManager(temporaryRoot);
+    const missing = manager.status();
+    assert.deepEqual(missing.providers.map((provider) => provider.status), ["not-installed", "not-installed"]);
+
+    await writeFile(fakeCodex, `#!/usr/bin/env node
+const args = process.argv.slice(2).join(" ");
+if (args === "--version") console.log("codex-cli 9.9.9");
+else if (args === "login status") console.log("Logged in using an API key");
+else process.exit(2);
+`, "utf8");
+    await writeFile(fakeClaude, `#!/usr/bin/env node
+const args = process.argv.slice(2).join(" ");
+if (args === "--version") console.log("1.2.3 (Claude Code)");
+else if (args === "auth status --json") { console.log(JSON.stringify({ loggedIn: false })); process.exit(1); }
+else process.exit(2);
+`, "utf8");
+    await chmod(fakeCodex, 0o755);
+    await chmod(fakeClaude, 0o755);
+
+    const detected = manager.status();
+    assert.equal(detected.providers.find((provider) => provider.id === "chatgpt")?.authMethod, "api-key");
+    assert.equal(detected.providers.find((provider) => provider.id === "claude-code")?.status, "signed-out");
   } finally {
     if (previousOverride === undefined) delete process.env.CODEX_CLI_PATH;
     else process.env.CODEX_CLI_PATH = previousOverride;
@@ -118,8 +183,57 @@ process.exit(91);
     assert.equal(provider?.id, "chatgpt");
     assert.equal(provider?.status, "connected");
     assert.equal(provider?.authMethod, "chatgpt");
-    assert.equal(provider?.detail, "已通过 Rux 本机组件完成 ChatGPT 登录");
+    assert.equal(provider?.detail, "已通过官方 codex CLI 完成 ChatGPT 登录");
+    assert.equal(provider?.providerConnection?.id, "cli:codex:default");
     assert.equal(await readFile(tracePath, "utf8"), "codex login\n");
+  } finally {
+    if (previousOverride === undefined) delete process.env.CODEX_CLI_PATH;
+    else process.env.CODEX_CLI_PATH = previousOverride;
+    if (previousClaudeOverride === undefined) delete process.env.CLAUDE_CODE_PATH;
+    else process.env.CLAUDE_CODE_PATH = previousClaudeOverride;
+    if (previousTrace === undefined) delete process.env.RUX_AUTH_TEST_TRACE;
+    else process.env.RUX_AUTH_TEST_TRACE = previousTrace;
+    await rm(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
+test("delegates an explicit Claude login to only the official claude auth login command", async () => {
+  const temporaryRoot = await mkdtemp(join(tmpdir(), "rux-auth-claude-login-"));
+  const fakeCodex = join(temporaryRoot, "codex");
+  const fakeClaude = join(temporaryRoot, "claude");
+  const tracePath = join(temporaryRoot, "commands.log");
+  const previousOverride = process.env.CODEX_CLI_PATH;
+  const previousClaudeOverride = process.env.CLAUDE_CODE_PATH;
+  const previousTrace = process.env.RUX_AUTH_TEST_TRACE;
+
+  await writeFile(fakeCodex, `#!/usr/bin/env node
+const { appendFileSync } = require("node:fs");
+appendFileSync(process.env.RUX_AUTH_TEST_TRACE, \`codex \${process.argv.slice(2).join(" ")}\\n\`);
+process.exit(91);
+`, "utf8");
+  await writeFile(fakeClaude, `#!/usr/bin/env node
+const { appendFileSync } = require("node:fs");
+const args = process.argv.slice(2);
+appendFileSync(process.env.RUX_AUTH_TEST_TRACE, \`claude \${args.join(" ")}\\n\`);
+if (args.join(" ") === "auth login") process.exit(0);
+else process.exit(92);
+`, "utf8");
+  await chmod(fakeCodex, 0o755);
+  await chmod(fakeClaude, 0o755);
+  process.env.CODEX_CLI_PATH = fakeCodex;
+  process.env.CLAUDE_CODE_PATH = fakeClaude;
+  process.env.RUX_AUTH_TEST_TRACE = tracePath;
+
+  try {
+    const state = await new AuthManager(temporaryRoot).login("claude-code");
+    assert.equal(state.providers.length, 1);
+    const provider = state.providers[0];
+    assert.equal(provider?.id, "claude-code");
+    assert.equal(provider?.status, "connected");
+    assert.equal(provider?.authMethod, "oauth");
+    assert.equal(provider?.providerConnection?.id, "cli:claude-code:default");
+    assert.equal(provider?.detail, "已通过官方 Claude Code CLI 完成登录");
+    assert.equal(await readFile(tracePath, "utf8"), "claude auth login\n");
   } finally {
     if (previousOverride === undefined) delete process.env.CODEX_CLI_PATH;
     else process.env.CODEX_CLI_PATH = previousOverride;
