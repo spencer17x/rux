@@ -223,6 +223,8 @@ flowchart LR
 
 ### 5.16 模型目录由 Engine 驱动并支持运行验证
 
+实现状态（2026-08-12）：Desktop 已完成官方 Codex 目录来源/刷新时间、Engine 默认、同 Connection 验证历史、高级手动模型 ID、成功 Run 验证、错误分类与目录移除警告。原生 Provider 网关仍不在 MVP 范围内。
+
 - 模型目录以官方 Engine 提供的结构化列表或受支持 CLI 输出为最高优先级；RUX 不抓取配置文件、终端文本或凭据存储来推断模型。
 - Engine 无法提供目录时，选择器至少提供“使用 Engine 默认”，并显示该 Engine、Provider Connection 下曾成功运行的模型。
 - 高级用户可以输入自定义模型 ID；模型 ID 是非敏感配置，但必须按 `engine + connectionReference + modelId` 隔离，不能跨 Connection 推定可用。
@@ -546,11 +548,11 @@ Workspace 归属单独保存；嵌套 Workspace 使用规范化真实路径的�
 | Codex 执行 | 已接入真实 CLI/App Server 路径 | 保持并用于会话列表、读取与恢复 |
 | Task/Message/Run | 已按授权 Workspace 持久化到 Main 管理的 SQLite | 继续作为 RUX Projection |
 | Native Session 延续 | 已保存 Session ID，并可为后续 Run 恢复 | 补齐可见状态、异常与兼容性判断 |
-| 账户界面 | 当前仍以 RUX 登录表述并委托 `codex login` | 调整为无 RUX 账号前置的“Agent 与 Provider”语义 |
-| 登录状态同步 | 当前为兼容/诊断方法，不会自动同步 CLI 登录态 | 增加用户显式触发的统一检测流程 |
+| 账户界面 | 已采用无 RUX 账号前置的“Agent 与 Provider”语义，分别管理 Rux/Claude Code | 后续按同一 Connection 合同扩展 Engine |
+| 登录状态同步 | 已提供用户显式触发的统一检测；启动和打开面板均不自动读取状态 | 保持用户主动与 CLI 凭据边界 |
 | 模型目录 | Codex 已有结构化模型目录基础；其他 Engine 和自定义配置能力不一致 | 增加 Engine 优先目录、手动输入、运行验证和来源状态 |
 | RUX 原生 API Provider | 尚未实现；MVP 复用官方 CLI 配置 | P2 使用独立 Adapter、系统凭据库和不透明凭据引用 |
-| 自定义 Agent | 已有 Profile 与不可变 Run 快照基础，尚无完整 Revision 绑定体验 | 增加不可变 Agent Revision、Task 固定与显式升级分支 |
+| 自定义 Agent | 已有不可变 Revision、Task/Run 固定、版本提示与“使用新版创建新任务”分支 | P1 增加可预览确认的跨 Agent Context Handoff |
 | Context Handoff | 尚未实现跨 Agent 的结构化交接 | 增加事实包、可选摘要、预览编辑、确认和来源追踪 |
 | 外部会话导入 | 尚未实现 | P1 使用官方接口实现工作区级手动接入 |
 | 会话 Workspace 归属 | 尚未实现外部会话发现与嵌套归属 | 增加真实路径最长匹配、全局身份去重和待归属流程 |

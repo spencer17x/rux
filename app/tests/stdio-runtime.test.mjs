@@ -171,6 +171,8 @@ test("standalone JSONL Runtime runs Codex and custom Agent profiles over stdio",
     message.kind === "response" && message.id === "agent-models");
   assert.equal(models.ok, true);
   assert.equal(models.result.adapter, "codex");
+  assert.equal(models.result.source, "engine-catalog");
+  assert.equal(Number.isNaN(Date.parse(models.result.fetchedAt)), false);
   assert.equal(models.result.models[0].model, "fake-model");
   assert.equal(models.result.models[0].defaultReasoningEffort, "medium");
   assert.equal(models.result.nextCursor, "models-page-2");
@@ -227,6 +229,34 @@ test("standalone JSONL Runtime runs Codex and custom Agent profiles over stdio",
     message.kind === "response" && message.id === "profile-create");
   assert.equal(created.ok, true);
   assert.equal(created.result.providerConnection.id, "cli:codex:default");
+
+  child.stdin.write(`${JSON.stringify({
+    kind: "request",
+    id: "profile-update",
+    method: "agent.profile.update",
+    params: {
+      id: created.result.id,
+      patch: {
+        instructions: "Use the second immutable policy.",
+        permissionMode: "dontAsk",
+      },
+    },
+  })}\n`);
+  const updated = await waitFor(messages, (message) =>
+    message.kind === "response" && message.id === "profile-update");
+  assert.equal(updated.ok, true);
+  assert.equal(updated.result.revisionNumber, 2);
+  assert.notEqual(updated.result.latestRevisionId, created.result.latestRevisionId);
+
+  child.stdin.write(`${JSON.stringify({
+    kind: "request",
+    id: "profile-delete",
+    method: "agent.profile.delete",
+    params: { id: created.result.id },
+  })}\n`);
+  const deleted = await waitFor(messages, (message) =>
+    message.kind === "response" && message.id === "profile-delete");
+  assert.equal(deleted.ok, true);
 
   child.stdin.write(`${JSON.stringify({
     kind: "request",
@@ -295,12 +325,39 @@ test("standalone JSONL Runtime runs Codex and custom Agent profiles over stdio",
   assert.match(assistant.event.text, /Always review the evidence first/);
   assert.match(assistant.event.text, /RUX_CONTEXT_SENTINEL/);
   assert.match(assistant.event.text, /Only report the result/);
+  assert.doesNotMatch(assistant.event.text, /second immutable policy/);
   assert.ok(messages.some((message) =>
     message.kind === "event" && message.event.type === "run.metadata" && message.event.sessionId === "thread-runtime-1"));
   const verification = messages.find((message) =>
     message.kind === "event" && message.event.type === "verification.recorded" && message.event.runId === "stdio-run");
   assert.equal(verification.event.verification.status, "passed");
   assert.equal(verification.event.verification.cwd, realpathSync(workspace));
+
+  child.stdin.write(`${JSON.stringify({
+    kind: "request",
+    id: "run-latest-deleted-definition",
+    method: "run.start",
+    params: {
+      runId: "stdio-run-latest",
+      adapter: "codex",
+      prompt: "Use the latest retained Revision.",
+      permissionMode: "dontAsk",
+      profileId: created.result.id,
+      agentRevisionId: updated.result.latestRevisionId,
+      contextFiles: [],
+    },
+  })}\n`);
+  await waitFor(messages, (message) =>
+    message.kind === "event"
+      && message.event.type === "run.completed"
+      && message.event.runId === "stdio-run-latest");
+  const latestSnapshot = messages.find((message) =>
+    message.kind === "event"
+      && message.event.type === "run.agent-snapshot"
+      && message.event.runId === "stdio-run-latest");
+  assert.equal(latestSnapshot.event.profile.id, updated.result.latestRevisionId);
+  assert.equal(latestSnapshot.event.profile.instructions, "Use the second immutable policy.");
+  assert.equal(latestSnapshot.event.profile.permissionMode, "dontAsk");
   const persistedProviderState = [
     readFileSync(join(stateRoot, "agent-profiles.json")),
     readFileSync(join(stateRoot, "rux-task-state.sqlite3")),

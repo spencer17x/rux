@@ -180,6 +180,8 @@ export interface AgentModelListParams {
 
 export interface AgentModelListResult {
   adapter: "codex";
+  source: "engine-catalog";
+  fetchedAt: string;
   models: CodexModelInfo[];
   nextCursor?: string | null;
 }
@@ -1325,6 +1327,8 @@ export const codexModelInfoSchema = z.object({
 
 export const agentModelListResultSchema = z.object({
   adapter: z.literal("codex"),
+  source: z.literal("engine-catalog"),
+  fetchedAt: z.iso.datetime(),
   models: z.array(codexModelInfoSchema).max(500),
   nextCursor: z.string().min(1).max(4_096).nullable().optional(),
 }).strict();

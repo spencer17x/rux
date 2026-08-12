@@ -3482,6 +3482,33 @@ select:focus-visible {
   font-size: 12px;
 }
 
+.codex-shell .composer-manual-model {
+  display: grid;
+  gap: 5px;
+  color: #6f7173;
+  font-size: 12px;
+}
+
+.codex-shell .composer-manual-model > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+}
+
+.codex-shell .composer-manual-model input {
+  min-width: 0;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid #dededf;
+  border-radius: 7px;
+  font-size: 12px;
+}
+
+.codex-shell .composer-manual-model small {
+  color: #8b8d8f;
+  font-size: 10px;
+}
+
 .codex-shell .composer-options-popover p {
   display: flex;
   align-items: center;
@@ -6646,7 +6673,8 @@ select:focus-visible {
   padding: 11px 16px;
 }
 
-.rux-general-card select {
+.rux-general-card select,
+.rux-general-card input {
   width: 100%;
   height: 32px;
   padding: 0 28px 0 10px;
@@ -6657,7 +6685,8 @@ select:focus-visible {
   font-size: 11px;
 }
 
-.rux-general-card select:disabled {
+.rux-general-card select:disabled,
+.rux-general-card input:disabled {
   cursor: not-allowed;
   opacity: 0.5;
 }
@@ -7802,8 +7831,19 @@ select:focus-visible {
   font-size: 10.5px;
 }
 
+.agent-revision-save-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 9px 0 0;
+  color: #77727f;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
 .codex-shell .agent-options select,
-.codex-shell .dialog-context-line select {
+.codex-shell .dialog-context-line select,
+.codex-shell .dialog-context-line input {
   max-width: 220px;
   height: 30px;
   padding: 0 8px;
@@ -9083,6 +9123,73 @@ select:focus-visible {
   font-size: 12px;
 }
 
+.codex-shell .agent-revision-notice {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 20px;
+  padding: 10px 11px;
+  border: 1px solid #dedbe8;
+  border-radius: 11px;
+  color: #44414d;
+  background: #f8f7fb;
+}
+
+.codex-shell .agent-revision-notice-icon {
+  display: inline-flex;
+  width: 30px;
+  height: 30px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9px;
+  color: #686079;
+  background: #eeebf5;
+}
+
+.codex-shell .agent-revision-notice > span:nth-child(2) {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.codex-shell .agent-revision-notice strong {
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 630;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.codex-shell .agent-revision-notice small {
+  color: #77727f;
+  font-size: 10.5px;
+  line-height: 1.4;
+}
+
+.codex-shell .agent-revision-notice button {
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid #d4d0df;
+  border-radius: 8px;
+  color: #4d465c;
+  background: #fff;
+  font-size: 10.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.codex-shell .agent-revision-notice button:hover:not(:disabled) {
+  border-color: #c5bfd4;
+  background: #f3f0f8;
+}
+
+.codex-shell .agent-revision-notice button:disabled {
+  cursor: not-allowed;
+  opacity: 0.52;
+}
+
 .codex-shell .account-error > span {
   min-width: 0;
   flex: 1;
@@ -9098,6 +9205,15 @@ select:focus-visible {
 }
 
 @media (max-width: 560px) {
+  .codex-shell .agent-revision-notice {
+    grid-template-columns: 30px minmax(0, 1fr);
+  }
+
+  .codex-shell .agent-revision-notice button {
+    grid-column: 2;
+    justify-self: start;
+  }
+
   .codex-shell .composer-agent-select {
     max-width: 92px;
   }

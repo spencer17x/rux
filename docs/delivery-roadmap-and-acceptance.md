@@ -56,7 +56,7 @@ P1 明确不包含：
 | Codex Run | 真实 CLI/App Server Adapter，支持事件、审批、模型目录和 Thread Resume | 复用并补齐统一 Connection、模型状态和恢复验收 |
 | Claude Code Run | 真实 CLI Adapter，支持结构化流事件、权限 Broker 和 Session Resume | 复用并补齐连接 UI、模型降级和历史会话接口 |
 | 认证 | Renderer 已提供用户显式的 Rux/Claude Code 检测、状态修复与官方 CLI 登录；启动和打开面板均不自动检测 | P0-E1 已完成，后续只扩展新的 Engine/Provider |
-| Agent Profile | 本地非敏感 Profile Store；更新会覆盖同一 Profile | 升级为不可变 Agent Revision，Task 固定 Revision |
+| Agent Profile | Profile Store 以 Definition 指向追加式不可变 Revision；Task/Run 固定具体 Revision | P0-E2 已完成，P1 再扩展跨 Agent Handoff |
 | 模型 | Codex 有结构化目录；Claude/自定义配置没有统一目录 | 增加 Engine 默认、已验证和未验证模型状态 |
 | Task Store | Main 管理的 Workspace 级 SQLite，持久化 Task/Message/Run/Event | 版本化迁移，增加 Revision/Connection/Session Projection 数据 |
 | RUX 会话延续 | Renderer 保存 `sessionId`，Codex/Claude Adapter 可恢复 | 收紧兼容条件、错误恢复和桌面证据 |
@@ -70,8 +70,8 @@ P1 明确不包含：
 | --- | --- | --- |
 | P0-E0 | 已验证 | Runtime 协议 v3、Profile/Task Store v2、不可变 Revision、Connection 引用、原子迁移与 TUI 兼容已通过 P0-FND-001 至 008 自动化验收 |
 | P0-E1 | 已验证 | 显式双 Engine 检测、官方登录委托、缺失/未登录/已连接/错误状态及非敏感 Connection 边界已通过自动化和打包桌面验收 |
-| P0-E2 | 进行中（已有基础） | 不可变 Revision 与 Task 固定合同已完成，任务升级提示和完整桌面验收尚未退出 |
-| P0-E3 | 进行中（已有基础） | Codex 已有目录，通用模型状态与 Claude 降级未完成 |
+| P0-E2 | 已验证 | Definition 编辑追加 Revision，Task/Run 固定旧版本；新版提示只创建固定最新版的空白新任务，删除 Definition 仍保留历史 Revision |
+| P0-E3 | 已完成 | 官方目录来源/刷新时间、Engine 默认、Connection 隔离的验证历史、手动模型和错误分类已实现并测试 |
 | P0-E4 | 进行中（已有基础） | 两个 Engine 均可恢复 Session，兼容规则与完整桌面验收未完成 |
 | P0-E5 | 未开始 | 需等待 P0-E0 至 P0-E4 退出 |
 | P1-E0 至 P1-E6 | 未开始 | 不应在 P0 数据合同稳定前提前接入 UI |
@@ -158,7 +158,11 @@ flowchart LR
 
 退出条件：P0-AGT-001 至 P0-AGT-010 全部通过。
 
+实现记录（2026-08-12）：P0-E2 已退出。Agent 编辑器明确展示当前 Revision，并在保存前说明会追加新版本；旧 Task 检测到最新版后显示非阻塞提示，唯一升级动作创建空白新 Task 并固定 `latestRevisionId`，不复制消息、Run、Context 或 Native Session。自动化同时验证 Definition 更新/删除后旧 Revision 和新 Revision 均可由 Runtime 精确执行。
+
 ### P0-E3：模型目录与运行验证
+
+状态：已完成（2026-08-12）。模型状态由持久化 Run 历史按 `Engine + ProviderConnectionRef` 确定性派生，不读取 CLI 配置或凭据。
 
 目标：统一模型选择体验，同时对无法可靠发现的模型保持诚实。
 

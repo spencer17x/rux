@@ -143,7 +143,7 @@ export function createMockRuntime() {
     },
 
     async listAgentModels() {
-      return { adapter: "codex", models: [], nextCursor: null };
+      return { adapter: "codex", source: "engine-catalog", fetchedAt: new Date().toISOString(), models: [], nextCursor: null };
     },
 
     async login() {

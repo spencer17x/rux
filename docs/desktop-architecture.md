@@ -59,6 +59,8 @@ Every Run repeats the actual Revision, Connection, and model state and may persi
 
 Session resume is compatible only when adapter, Profile, Agent Revision, and Provider Connection all match. An existing Task cannot silently switch Agent after it has messages or Runs; a new Task is required.
 
+Renderer compares a custom Task's fixed `agentRevisionId` with its live Definition's `latestRevisionId`. A mismatch produces a non-blocking notice; the action creates a blank Task fixed to the latest Revision and deliberately copies no messages, Runs, selected Context, or native Session id. P1 Context Handoff will own any later, explicit transfer of work. If a Definition is deleted, it disappears from new-task selection while a synthetic historical choice keeps the existing Task bound to its retained Revision for review and compatible continuation.
+
 ## Task Store v1 to v2 migration and validation
 
 SQLite migration upgrades `PRAGMA user_version` and every Workspace JSON row in one `BEGIN IMMEDIATE` transaction. A failure parsing or migrating any row rolls back the version and all row writes.
@@ -82,7 +84,7 @@ Before save/load, Task Store validation rejects:
 - Claude Code and Codex Runs use real local adapters; Rux Demo remains development/Web-preview only.
 - Protocol v3, Agent Profile Store v2, Task Store v2, Desktop Runtime, stdio Runtime, Renderer fallback, and Rust TUI share the Revision/Connection contract.
 - `账户与登录` is an explicit Agent/Provider connection surface for Rux and Claude Code. Opening the app or panel performs no CLI inspection; missing CLIs link to official installation guidance, while API Key, Base URL, cloud Provider, OAuth storage, refresh, and logout remain CLI-owned.
-- Codex has a structured model catalog. Cross-Engine verified-model history and automatic post-Run model verification remain P0-E3 work.
+- Codex model discovery uses official App Server `model/list` with explicit catalog source and fetch time. Engines without a catalog expose Engine default plus advanced model IDs; successful Runs create verified history scoped to the same Engine and non-secret Connection reference. Only explicit model-not-found/incompatibility failures mark a model unavailable.
 - External Codex/Claude conversation discovery, import, Projection Revisions, and context handoff remain P1 work; this architecture does not claim background conversation synchronization.
 - Parts of Changes and Context remain showcase-backed in the Renderer and must not be presented as fully repository-backed until that wiring is complete.
 - macOS packages remain unsigned until Developer ID signing and notarization are configured.

@@ -428,6 +428,8 @@ export class CodexAppServerAdapter {
     });
     return agentModelListResultSchema.parse({
       adapter: "codex",
+      source: "engine-catalog",
+      fetchedAt: new Date().toISOString(),
       models,
       ...(Object.hasOwn(rawResult, "nextCursor") ? { nextCursor: rawResult.nextCursor } : {}),
     });

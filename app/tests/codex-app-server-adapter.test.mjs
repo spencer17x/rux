@@ -297,9 +297,10 @@ test("lists the Codex model catalog with bounded pagination metadata", async (t)
     limit: 1,
     includeHidden: false,
   });
-  assert.deepEqual(first, {
-    adapter: "codex",
-    models: [{
+  assert.equal(first.adapter, "codex");
+  assert.equal(first.source, "engine-catalog");
+  assert.equal(Number.isNaN(Date.parse(first.fetchedAt)), false);
+  assert.deepEqual(first.models, [{
       id: "fake-model",
       model: "fake-model",
       displayName: "Fake Model",
@@ -311,9 +312,8 @@ test("lists the Codex model catalog with bounded pagination metadata", async (t)
         { reasoningEffort: "medium", description: "Balanced" },
         { reasoningEffort: "high", description: "Deeper" },
       ],
-    }],
-    nextCursor: "models-page-2",
-  });
+    }]);
+  assert.equal(first.nextCursor, "models-page-2");
 
   const second = await adapter.listModels({
     adapter: "codex",

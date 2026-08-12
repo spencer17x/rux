@@ -228,3 +228,35 @@ test("renderer keeps Agent setup actionable and resumes the selected task sessio
   assert.match(rendererSource, /composerInputRef\.current\?\.focus\(\)/);
   assert.doesNotMatch(rendererSource, /selectedTask\.messages\[0\]\?\.text \|\| selectedTask\.title/);
 });
+
+test("renderer keeps Tasks pinned to immutable Agent Revisions and branches upgrades", async () => {
+  const rendererSource = await readFile(path.join(root, "src/App.jsx"), "utf8");
+
+  assert.match(rendererSource, /function agentRevisionUpdateForTask\(task, profiles\)/);
+  assert.match(rendererSource, /profile\.latestRevisionId === task\.agentRevisionId/);
+  assert.match(rendererSource, /此任务继续固定使用 Revision/);
+  assert.match(rendererSource, /使用新版创建新任务/);
+  assert.match(rendererSource, /const createTaskWithLatestAgent = \(\) =>/);
+  assert.match(rendererSource, /agentRevisionId: choice\.agentRevisionId/);
+  assert.match(rendererSource, /messages: \[\],\s+plan: \[\],\s+activity: \[\],\s+runs: \[\]/);
+  assert.match(rendererSource, /保存会创建 Revision/);
+  assert.match(rendererSource, /已删除 Definition 的历史 Revision/);
+
+  const upgradeStart = rendererSource.indexOf("const createTaskWithLatestAgent = () =>");
+  const upgradeEnd = rendererSource.indexOf("\n  const selectTask =", upgradeStart);
+  const upgradeSource = rendererSource.slice(upgradeStart, upgradeEnd);
+  assert.doesNotMatch(upgradeSource, /selectedTask\.messages|selectedTask\.runs|selectedTask\.contextFiles|sessionId/);
+  assert.doesNotMatch(upgradeSource, /map\(\(task\).*agentRevisionId/);
+});
+
+test("renderer exposes truthful model source, manual verification, and catalog-removal states", async () => {
+  const renderer = await readFile(path.join(root, "src", "App.jsx"), "utf8");
+  const modelState = await readFile(path.join(root, "src", "model-state.js"), "utf8");
+  assert.match(renderer, /官方 Engine 目录/);
+  assert.match(renderer, /高级模型 ID/);
+  assert.match(renderer, /首次运行后验证/);
+  assert.match(renderer, /已不在最新官方目录中，不会自动替换/);
+  assert.match(renderer, /\^codex default\$.*Rux default/);
+  assert.match(modelState, /providerConnection\?\.id !== connectionId/);
+  assert.match(modelState, /model\[_ -\]not\[_ -\]found/);
+});

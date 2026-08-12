@@ -81,6 +81,12 @@ import {
 import { createRuntimeClient } from "./runtime.js";
 import { TerminalView } from "./TerminalView.jsx";
 import {
+  catalogModelMissing,
+  modelSelectionState,
+  modelStateAfterRun,
+  verifiedModelHistory,
+} from "./model-state.js";
+import {
   agentRevisionIdFor,
   builtInAgentRevisionId,
   defaultModelState,
@@ -230,10 +236,20 @@ function reasoningEffortLabel(value) {
   return labels[value] || value || "模型默认";
 }
 
+function modelStateLabel(source, status) {
+  if (status === "unavailable") return "模型不可用";
+  if (source === "engine-default") return "由 Engine 选择 · 无需验证";
+  if (source === "engine-catalog") return "官方模型目录 · 无需验证";
+  if (source === "verified-history") return "此连接已验证";
+  if (status === "verified") return "此连接已验证";
+  if (status === "unverified") return "手动模型 ID · 首次运行后验证";
+  return "模型来源未知";
+}
+
 const uiPreferencesKey = "rux.ui-preferences.v1";
 const legacyShowcaseTaskIds = new Set(["desktop-workbench", "prd", "market", "adapter"]);
 const defaultCodexSettings = {
-  model: "Codex default",
+  model: "Rux default",
   reasoningEffort: "",
   permissionMode: "acceptEdits",
 };
@@ -264,8 +280,8 @@ function createWorkspaceStarterTask(workspace, codexSettings = defaultCodexSetti
     agentRevisionId: builtInAgentRevisionId("codex"),
     providerConnection: defaultProviderConnectionForAdapter("codex"),
     permissionMode: codexSettings.permissionMode || "acceptEdits",
-    model: codexSettings.model || "Codex default",
-    ...defaultModelState(codexSettings.model || "Codex default"),
+    model: codexSettings.model || "Rux default",
+    ...defaultModelState(codexSettings.model || "Rux default"),
     ...(codexSettings.reasoningEffort ? { reasoningEffort: codexSettings.reasoningEffort } : {}),
     branch: workspace.branch,
     elapsed: "—",
@@ -300,6 +316,24 @@ function formatDuration(durationMs) {
 
 function isoNow() {
   return new Date().toISOString();
+}
+
+function agentRevisionNumber(revisionId) {
+  const match = typeof revisionId === "string" ? revisionId.match(/@(\d+)$/) : null;
+  return match ? Number(match[1]) : undefined;
+}
+
+function agentRevisionUpdateForTask(task, profiles) {
+  if (!task?.agentProfileId || !task.agentRevisionId) return null;
+  const profile = profiles.find((item) => item.id === task.agentProfileId);
+  if (!profile || profile.latestRevisionId === task.agentRevisionId) return null;
+  return {
+    profile,
+    currentRevisionNumber: task.agentRevisionSnapshot?.revisionNumber
+      || agentRevisionNumber(task.agentRevisionId),
+    latestRevisionNumber: profile.revisionNumber
+      || agentRevisionNumber(profile.latestRevisionId),
+  };
 }
 
 function normalizePersistedTask(task, workspaceId = task.workspaceId) {
@@ -345,9 +379,9 @@ function normalizePersistedTask(task, workspaceId = task.workspaceId) {
     providerConnection: migrateEmptyWorkspaceStarter
       ? defaultProviderConnectionForAdapter("codex")
       : providerConnection,
-    ...taskModelState,
+    ...(migrateEmptyWorkspaceStarter ? defaultModelState("Rux default") : taskModelState),
     ...(adapter === "codex" ? { agent: ruxAgentLabel(task.agent || "Rux") } : {}),
-    ...(migrateEmptyWorkspaceStarter ? { agent: "Rux", model: "Codex default" } : {}),
+    ...(migrateEmptyWorkspaceStarter ? { agent: "Rux", model: "Rux default" } : {}),
     permissionMode: task.permissionMode || "acceptEdits",
     contextFiles: Array.isArray(task.contextFiles) ? task.contextFiles : [],
     createdAt: task.createdAt || now,
@@ -605,6 +639,8 @@ function recordRuntimeEvent(task, event) {
   } else if (event.type === "run.failed") {
     nextRun = { ...nextRun, status: "failed", finishedAt: now, error: event.error };
   }
+
+  nextRun = { ...nextRun, ...modelStateAfterRun(nextRun, event) };
 
   return {
     ...task,
@@ -1274,7 +1310,7 @@ function ChangedFilesCard({ state, onOpenChanges, onRestoreChanges }) {
   );
 }
 
-function TaskTimeline({ task, streamingMessages = [], changes, onOpenChanges, onRestoreChanges, onOpenRun, onWaitingAction, onPermissionDecision, permissionBusy, permissionError, taskActionError, onDismissTaskActionError, workspacePlaceholder = false }) {
+function TaskTimeline({ task, streamingMessages = [], changes, onOpenChanges, onRestoreChanges, onOpenRun, onWaitingAction, onPermissionDecision, permissionBusy, permissionError, taskActionError, onDismissTaskActionError, agentRevisionUpdate, onCreateTaskWithLatestAgent, workspacePlaceholder = false }) {
   const isWaiting = task.status === "waiting";
   const isCompleted = task.status === "completed";
   const hasOutcome = task.status === "completed" || task.status === "failed";
@@ -1345,6 +1381,18 @@ function TaskTimeline({ task, streamingMessages = [], changes, onOpenChanges, on
             <span>{taskActionError}</span>
             <button type="button" className="icon-button" onClick={onDismissTaskActionError} aria-label="关闭任务错误"><X size={14} /></button>
           </div>
+        ) : null}
+        {agentRevisionUpdate ? (
+          <section className="agent-revision-notice" aria-label="Agent 有新 Revision">
+            <span className="agent-revision-notice-icon"><Copy size={15} /></span>
+            <span>
+              <strong>{agentRevisionUpdate.profile.name} 已有 Revision {agentRevisionUpdate.latestRevisionNumber}</strong>
+              <small>此任务继续固定使用 Revision {agentRevisionUpdate.currentRevisionNumber || "旧版本"}；消息、Run 和 Native Session 不会自动迁移。</small>
+            </span>
+            <button type="button" onClick={onCreateTaskWithLatestAgent} disabled={!agentRevisionUpdate.available} title={agentRevisionUpdate.available ? "基于最新版 Agent 创建空白任务" : agentRevisionUpdate.unavailableReason}>
+              使用新版创建新任务
+            </button>
+          </section>
         ) : null}
         {hasOutcome && elapsed && elapsed !== "—" ? (
           <button type="button" className="run-duration-row" onClick={onOpenRun}>
@@ -1482,9 +1530,10 @@ function TaskTimeline({ task, streamingMessages = [], changes, onOpenChanges, on
   );
 }
 
-function Composer({ task, draft, onDraft, onSend, onAgentChange, onModelChange, onReasoningEffortChange, onPermissionChange, onOpenAccounts, focusRef, agentChoices, codexModels, canRun = true }) {
+function Composer({ task, draft, onDraft, onSend, onAgentChange, onModelChange, onReasoningEffortChange, onPermissionChange, onOpenAccounts, focusRef, agentChoices, codexModels, codexCatalog, canRun = true }) {
   const [optionsOpen, setOptionsOpen] = useState(false);
   const [dictating, setDictating] = useState(false);
+  const [manualModel, setManualModel] = useState(task.model || "");
   const composerRef = useRef(null);
   const textareaRef = useRef(null);
   const isActive = task.status === "running" || task.status === "blocked";
@@ -1499,8 +1548,9 @@ function Composer({ task, draft, onDraft, onSend, onAgentChange, onModelChange, 
   };
   const modelOptions = Array.from(new Set([
     task.model,
+    ...(selectedAgentChoice?.verifiedModels || []).map((item) => item.model),
     ...(runtimeAdapterForTask(task) === "codex"
-      ? ["Codex default", ...(codexModels || []).map((model) => model.model)]
+      ? ["Rux default", ...(codexModels || []).map((model) => model.model)]
       : runtimeAdapterForTask(task) === "claude-code" ? ["Claude default"] : ["Rux prototype"]),
   ].filter(Boolean)));
   const reasoningOptions = runtimeAdapterForTask(task) === "codex"
@@ -1533,6 +1583,12 @@ function Composer({ task, draft, onDraft, onSend, onAgentChange, onModelChange, 
       document.removeEventListener("keydown", closeOnEscape, true);
     };
   }, [optionsOpen]);
+
+  useEffect(() => {
+    if (optionsOpen) setManualModel(task.model || "");
+  }, [optionsOpen, task.id, task.model]);
+
+  const missingFromCatalog = runtimeAdapterForTask(task) === "codex" && catalogModelMissing(task, codexCatalog);
 
   return (
     <div className="composer-dock">
@@ -1598,6 +1654,11 @@ function Composer({ task, draft, onDraft, onSend, onAgentChange, onModelChange, 
                 {reasoningOptions.map((option) => <option key={option.reasoningEffort} value={option.reasoningEffort}>{reasoningEffortLabel(option.reasoningEffort)}</option>)}
               </select></label>
             ) : null}
+            <div className="composer-manual-model">
+              <span>高级模型 ID</span>
+              <div><input value={manualModel} onChange={(event) => setManualModel(event.target.value)} placeholder="由 Engine 支持的模型 ID" disabled={!canRun || isActive} /><button type="button" className="secondary-button" disabled={!manualModel.trim() || manualModel.trim() === task.model || !canRun || isActive} onClick={() => onModelChange(manualModel.trim())}>应用</button></div>
+              <small>{modelStateLabel(task.modelSource, task.modelVerificationStatus)}</small>
+            </div>
             <p><CircleDot size={11} /> 本地 · <GitBranch size={11} /> {task.branch} · {permissionLabel(task.permissionMode)}</p>
           </div>
         ) : null}
@@ -1606,6 +1667,11 @@ function Composer({ task, draft, onDraft, onSend, onAgentChange, onModelChange, 
         <div className="composer-context-row" role="alert">
           <span className="composer-agent-warning"><CircleAlert size={11} /> {selectedAgentUnavailableReason}</span>
           <button type="button" className="secondary-button" onClick={onOpenAccounts}>账户与登录</button>
+        </div>
+      ) : null}
+      {missingFromCatalog ? (
+        <div className="composer-context-row" role="status">
+          <span className="composer-agent-warning"><CircleAlert size={11} /> {ruxModelLabel(task.model)} 已不在最新官方目录中，不会自动替换</span>
         </div>
       ) : null}
     </div>
@@ -2741,7 +2807,7 @@ function NewTaskDialog({ open, onClose, onCreate, onOpenAccounts, agentChoices, 
   const [prompt, setPrompt] = useState("");
   const [agentId, setAgentId] = useState("codex");
   const [permissionMode, setPermissionMode] = useState(codexSettings.permissionMode || "acceptEdits");
-  const [model, setModel] = useState(codexSettings.model || "Codex default");
+  const [model, setModel] = useState(codexSettings.model || "Rux default");
   const [reasoningEffort, setReasoningEffort] = useState(codexSettings.reasoningEffort || "");
   const [contextOpen, setContextOpen] = useState(false);
   const [contextFiles, setContextFiles] = useState([]);
@@ -2756,8 +2822,9 @@ function NewTaskDialog({ open, onClose, onCreate, onOpenAccounts, agentChoices, 
   const selectedModel = model || selectedChoice?.model || "";
   const modelOptions = Array.from(new Set([
     selectedModel,
+    ...(selectedChoice?.verifiedModels || []).map((item) => item.model),
     ...(selectedChoice?.adapter === "codex"
-      ? ["Codex default", ...(codexModels || []).map((item) => item.model)]
+      ? ["Rux default", ...(codexModels || []).map((item) => item.model)]
       : []),
   ].filter(Boolean)));
   const reasoningOptions = selectedChoice?.adapter === "codex"
@@ -2771,7 +2838,7 @@ function NewTaskDialog({ open, onClose, onCreate, onOpenAccounts, agentChoices, 
       || agentChoices[0];
     setAgentId(choice?.id || "codex");
     setPermissionMode(choice?.permissionMode || codexSettings.permissionMode || "acceptEdits");
-    setModel(choice?.model || codexSettings.model || "Codex default");
+    setModel(choice?.model || codexSettings.model || "Rux default");
     setReasoningEffort(choice?.reasoningEffort || "");
   }, [open]);
 
@@ -2792,7 +2859,8 @@ function NewTaskDialog({ open, onClose, onCreate, onOpenAccounts, agentChoices, 
     setContextError("");
     try {
       await onValidateContext(contextFiles);
-      onCreate(prompt, { ...selectedChoice, model: selectedModel, reasoningEffort }, permissionMode, contextFiles);
+      const modelState = modelSelectionState(selectedChoice.adapter, selectedModel, codexModels, selectedChoice.verifiedModels);
+      onCreate(prompt, { ...selectedChoice, model: selectedModel, reasoningEffort, ...modelState }, permissionMode, contextFiles);
       setPrompt("");
       setContextFiles([]);
       setContextOpen(false);
@@ -2892,9 +2960,8 @@ function NewTaskDialog({ open, onClose, onCreate, onOpenAccounts, agentChoices, 
           <label><ShieldCheck size={13} /><select aria-label="新任务 Permission" value={permissionMode} onChange={(event) => setPermissionMode(event.target.value)}>
             {permissionOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
           </select></label>
-          <label><Bot size={13} /><select aria-label="新任务模型" value={selectedModel} onChange={(event) => { setModel(event.target.value); setReasoningEffort(""); }}>
-            {modelOptions.map((option) => <option key={option} value={option}>{ruxModelLabel(option)}</option>)}
-          </select></label>
+          <label><Bot size={13} /><input list="new-task-model-options" aria-label="新任务模型或高级模型 ID" value={selectedModel} onChange={(event) => { setModel(event.target.value); setReasoningEffort(""); }} /></label>
+          <datalist id="new-task-model-options">{modelOptions.map((option) => <option key={option} value={option}>{ruxModelLabel(option)}</option>)}</datalist>
           {selectedChoice?.adapter === "codex" ? <label><SlidersHorizontal size={13} /><select aria-label="新任务推理强度" value={reasoningEffort} onChange={(event) => setReasoningEffort(event.target.value)}>
             <option value="">模型默认</option>
             {reasoningOptions.map((option) => <option key={option.reasoningEffort} value={option.reasoningEffort}>{reasoningEffortLabel(option.reasoningEffort)}</option>)}
@@ -3059,7 +3126,10 @@ function CodexSettingsDialog({ open, connected, catalog, settings, onClose, onRe
   if (!open) return null;
 
   const models = catalog.models || [];
-  const selectedModel = draft.model || "Codex default";
+  const selectedModel = draft.model || "Rux default";
+  const refreshedAt = catalog.refreshedAt
+    ? new Date(catalog.refreshedAt).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })
+    : "尚未刷新";
   const reasoningOptions = codexReasoningOptions(models, selectedModel);
   const selectedReasoningSupported = !draft.reasoningEffort
     || reasoningOptions.some((option) => option.reasoningEffort === draft.reasoningEffort);
@@ -3148,11 +3218,9 @@ function CodexSettingsDialog({ open, connected, catalog, settings, onClose, onRe
                 {catalog.error ? <div className="account-error" role="alert"><CircleAlert size={15} /><span>{catalog.error}</span><button type="button" className="secondary-button" onClick={onReload}>重试</button></div> : null}
                 <div className="rux-settings-card rux-general-card">
                   <label>
-                    <span><strong>默认模型</strong><small>用于当前任务和之后创建的 Rux 任务</small></span>
-                    <select value={selectedModel} onChange={(event) => applyDraft({ ...draft, model: event.target.value, reasoningEffort: "" })} disabled={catalog.loading}>
-                      <option value="Codex default">Rux 默认</option>
-                      {models.map((model) => <option key={model.id} value={model.model}>{ruxModelLabel(model.displayName || model.model)}{model.isDefault ? "（默认）" : ""}</option>)}
-                    </select>
+                    <span><strong>默认模型</strong><small>可选择官方目录，或输入高级模型 ID</small></span>
+                    <input list="rux-settings-models" value={selectedModel} onChange={(event) => applyDraft({ ...draft, model: event.target.value, reasoningEffort: "" })} disabled={catalog.loading} aria-label="默认模型或高级模型 ID" />
+                    <datalist id="rux-settings-models"><option value="Rux default">Rux 默认</option>{models.map((model) => <option key={model.id} value={model.model}>{ruxModelLabel(model.displayName || model.model)}{model.isDefault ? "（默认）" : ""}</option>)}</datalist>
                   </label>
                   <label>
                     <span><strong>推理强度</strong><small>只显示所选模型支持的值</small></span>
@@ -3163,7 +3231,7 @@ function CodexSettingsDialog({ open, connected, catalog, settings, onClose, onRe
                     </select>
                   </label>
                   <div className="rux-settings-action-row">
-                    <span><strong>模型目录</strong><small>从本机 Rux 服务获取最新模型列表</small></span>
+                    <span><strong>模型目录</strong><small>官方 Engine 目录 · {refreshedAt}</small></span>
                     <button type="button" className="secondary-button" onClick={onReload} disabled={!connected || catalog.loading}>{catalog.loading ? <LoaderCircle size={14} className="status-running" /> : <RefreshCw size={14} />}刷新模型</button>
                   </div>
                   <div className="rux-settings-boundary"><ShieldCheck size={15} /><span><strong>权限边界</strong><small>设置会自动保存。Rux 的所有写入仍限制在当前工作区内。</small></span></div>
@@ -3293,7 +3361,7 @@ function AgentsDialog({ open, profiles, adapters, busy, error, onClose, onSave, 
             <button type="button" className={!editingId ? "is-selected" : ""} onClick={reset}><Plus size={15} /><span><strong>新建 Agent</strong><small>创建可复用配置</small></span></button>
             {profiles.map((profile) => (
               <button type="button" className={editingId === profile.id ? "is-selected" : ""} key={profile.id} onClick={() => editProfile(profile)}>
-                <Bot size={15} /><span><strong>{ruxAgentLabel(profile.name)}</strong><small>{ruxAdapterLabel(profile.backend)} · {profile.enabled ? "启用" : "停用"}</small></span>
+                <Bot size={15} /><span><strong>{ruxAgentLabel(profile.name)}</strong><small>{ruxAdapterLabel(profile.backend)} · Revision {profile.revisionNumber} · {profile.enabled ? "启用" : "停用"}</small></span>
               </button>
             ))}
           </aside>
@@ -3313,6 +3381,7 @@ function AgentsDialog({ open, profiles, adapters, busy, error, onClose, onSave, 
               <label><span>Tool IDs（逗号分隔）</span><input value={draft.toolIds} onChange={(event) => update("toolIds", event.target.value)} /></label>
             </div>
             <label className="agent-enabled-toggle"><input type="checkbox" checked={draft.enabled} onChange={(event) => update("enabled", event.target.checked)} /><span>在 Agent 选择器中启用</span></label>
+            {editingId ? <p className="agent-revision-save-note"><History size={13} />保存会创建 Revision {(profiles.find((profile) => profile.id === editingId)?.revisionNumber || 0) + 1}；已存在的任务继续固定原 Revision。</p> : null}
             <footer>
               {editingId ? <button type="button" className="secondary-button" onClick={duplicate} disabled={busy}><Copy size={14} /> 复制</button> : null}
               {editingId ? <button type="button" className="danger-ghost-button" onClick={() => {
@@ -3375,11 +3444,15 @@ export function App() {
   const [authLoginProvider, setAuthLoginProvider] = useState(null);
   const [authError, setAuthError] = useState("");
   const [authNotice, setAuthNotice] = useState("");
-  const [codexSettings, setCodexSettings] = useState(() => ({
-    ...defaultCodexSettings,
-    ...(uiPreferences.codexSettings || {}),
-  }));
-  const [codexCatalog, setCodexCatalog] = useState({ loading: false, models: [], error: "" });
+  const [codexSettings, setCodexSettings] = useState(() => {
+    const saved = uiPreferences.codexSettings || {};
+    return {
+      ...defaultCodexSettings,
+      ...saved,
+      model: /^codex default$/i.test(saved.model || "") ? "Rux default" : saved.model || defaultCodexSettings.model,
+    };
+  });
+  const [codexCatalog, setCodexCatalog] = useState({ loading: false, models: [], error: "", source: "", refreshedAt: "" });
   const [streamingMessagesByTask, setStreamingMessagesByTask] = useState({});
   const [taskActionError, setTaskActionError] = useState("");
   const [permissionBusy, setPermissionBusy] = useState("");
@@ -3574,6 +3647,8 @@ export function App() {
     const builtIns = adapters.filter((adapter) => ["codex", "claude-code", "mock"].includes(adapter.id)).map((adapter) => {
       const provider = authProviderForAdapter(authState, adapter.id);
       const authenticationReady = adapter.id === "mock" || provider?.status === "connected";
+      const providerConnection = provider?.providerConnection || defaultProviderConnectionForAdapter(adapter.id);
+      const verifiedModels = verifiedModelHistory(tasks, adapter.id, providerConnection.id);
       const defaultModel = adapter.id === "codex"
         ? codexSettings.model
         : adapter.id === "claude-code" ? "Claude default" : "Rux prototype";
@@ -3592,9 +3667,10 @@ export function App() {
             : "",
         requiresLogin: adapter.id !== "mock" && adapter.available && provider?.status === "signed-out",
         agentRevisionId: builtInAgentRevisionId(adapter.id),
-        providerConnection: provider?.providerConnection || defaultProviderConnectionForAdapter(adapter.id),
+        providerConnection,
         model: defaultModel,
-        ...defaultModelState(defaultModel),
+        ...modelSelectionState(adapter.id, defaultModel, codexCatalog.models, verifiedModels),
+        verifiedModels,
         reasoningEffort: adapter.id === "codex" ? codexSettings.reasoningEffort : "",
         permissionMode: adapter.id === "codex" ? codexSettings.permissionMode : "acceptEdits",
       };
@@ -3603,6 +3679,7 @@ export function App() {
       const backend = adapters.find((adapter) => adapter.id === profile.backend);
       const provider = authProviderForAdapter(authState, profile.backend);
       const authenticationReady = provider?.status === "connected";
+      const verifiedModels = verifiedModelHistory(tasks, profile.backend, profile.providerConnection.id);
       return {
         id: profile.id,
         name: profile.name,
@@ -3625,19 +3702,61 @@ export function App() {
         model: profile.model || (profile.backend === "codex" ? codexSettings.model : "Claude default"),
         modelSource: profile.modelSource,
         modelVerificationStatus: profile.modelVerificationStatus,
+        verifiedModels,
         reasoningEffort: profile.reasoningEffort || (profile.backend === "codex" ? codexSettings.reasoningEffort : ""),
         permissionMode: profile.permissionMode,
       };
     });
     return [...builtIns.filter((item) => item.id !== "mock"), ...custom, ...builtIns.filter((item) => item.id === "mock")];
-  }, [adapters, agentProfiles, authState, codexSettings]);
+  }, [adapters, agentProfiles, authState, codexCatalog.models, codexSettings, tasks]);
+
+  const taskAgentChoices = useMemo(() => {
+    if (!selectedTask.agentProfileId) return agentChoices;
+    const existing = agentChoices.find((choice) => choice.id === selectedTask.agentProfileId);
+    if (existing) return agentChoices;
+    const backend = adapters.find((adapter) => adapter.id === runtimeAdapterForTask(selectedTask));
+    const provider = authProviderForAdapter(authState, runtimeAdapterForTask(selectedTask));
+    const available = Boolean(backend?.available) && provider?.status === "connected";
+    return [...agentChoices, {
+      id: selectedTask.agentProfileId,
+      name: selectedTask.agent,
+      adapter: runtimeAdapterForTask(selectedTask),
+      profileId: selectedTask.agentProfileId,
+      agentRevisionId: selectedTask.agentRevisionId,
+      providerConnection: selectedTask.providerConnection,
+      available,
+      detail: `已删除 Definition 的历史 Revision ${agentRevisionNumber(selectedTask.agentRevisionId) || ""}`.trim(),
+      unavailableReason: !backend?.available
+        ? "这个历史 Agent 的本机组件不可用"
+        : provider?.status !== "connected" ? "请先在账户与登录中连接对应 Provider" : "",
+      requiresLogin: Boolean(backend?.available) && provider?.status === "signed-out",
+      model: selectedTask.model,
+      modelSource: selectedTask.modelSource,
+      modelVerificationStatus: selectedTask.modelVerificationStatus,
+      verifiedModels: verifiedModelHistory(tasks, runtimeAdapterForTask(selectedTask), selectedTask.providerConnection?.id),
+      reasoningEffort: selectedTask.reasoningEffort || "",
+      permissionMode: selectedTask.permissionMode || "acceptEdits",
+      historical: true,
+    }];
+  }, [adapters, agentChoices, authState, selectedTask, tasks]);
+
+  const selectedAgentRevisionUpdate = useMemo(() => {
+    const update = agentRevisionUpdateForTask(selectedTask, agentProfiles);
+    if (!update) return null;
+    const latestChoice = agentChoices.find((choice) => choice.id === update.profile.id);
+    return {
+      ...update,
+      available: Boolean(latestChoice?.available),
+      unavailableReason: latestChoice?.unavailableReason || "最新版 Agent 当前不可用",
+    };
+  }, [agentChoices, agentProfiles, selectedTask]);
 
   const appReady = !workspaceState.active.placeholder
     && !startupLoading
     && !startupError
     && !persistenceError
     && hydratedWorkspaceId === workspaceState.active.id;
-  const selectedAgentReady = Boolean(agentChoices.find((choice) =>
+  const selectedAgentReady = Boolean(taskAgentChoices.find((choice) =>
     choice.id === (selectedTask.agentProfileId || runtimeAdapterForTask(selectedTask)))?.available);
 
   async function loadCodexModels() {
@@ -3647,14 +3766,18 @@ export function App() {
     try {
       const collected = [];
       let cursor = null;
+      let refreshedAt = "";
+      let source = "";
       for (let page = 0; page < 10; page += 1) {
         const result = await runtime.listAgentModels({ adapter: "codex", limit: 100, ...(cursor ? { cursor } : {}) });
         collected.push(...(result.models || []));
+        refreshedAt = result.fetchedAt || refreshedAt;
+        source = result.source || source;
         cursor = result.nextCursor || null;
         if (!cursor) break;
       }
       const unique = [...new Map(collected.map((model) => [model.id, model])).values()];
-      setCodexCatalog({ loading: false, models: unique, error: "" });
+      setCodexCatalog({ loading: false, models: unique, error: "", source, refreshedAt });
     } catch (error) {
       setCodexCatalog((state) => ({
         ...state,
@@ -3958,8 +4081,13 @@ export function App() {
         const completedRun = task.runs?.find((run) => run.id === event.runId);
         const hasFailureEvidence = task.activity.some((item) => item.state === "error")
           || completedRun?.verifications?.some((verification) => verification.status === "failed");
+        const verifiedModelUpdate = completedRun?.modelVerificationStatus === "verified"
+          && ["manual", "verified-history"].includes(completedRun.modelSource)
+          ? { modelSource: "verified-history", modelVerificationStatus: "verified" }
+          : {};
         return {
           ...task,
+          ...verifiedModelUpdate,
           status: hasFailureEvidence ? "failed" : "completed",
           updatedAt: "现在",
           elapsed: formatDuration(event.durationMs) || task.elapsed,
@@ -3974,6 +4102,9 @@ export function App() {
         const eventRun = task.runs?.find((run) => run.id === event.runId);
         return {
           ...task,
+          ...(eventRun?.modelVerificationStatus === "unavailable"
+            ? { modelVerificationStatus: "unavailable" }
+            : {}),
           status: "failed",
           updatedAt: "现在",
           preview: "运行失败",
@@ -4255,6 +4386,56 @@ export function App() {
     setNewTaskOpen(false);
     setSidebarOpen(false);
     launchRun(id, prompt, task, `m-${id}`, preflight);
+  };
+
+  const createTaskWithLatestAgent = () => {
+    if (!selectedAgentRevisionUpdate || workspaceState.active.placeholder) return;
+    if (["running", "blocked"].includes(selectedTask.status)) {
+      setTaskActionError("请先停止当前 Run，再基于新版 Agent 创建新任务。");
+      return;
+    }
+    const choice = agentChoices.find((item) => item.id === selectedAgentRevisionUpdate.profile.id);
+    if (!choice?.available) {
+      setTaskActionError(choice?.unavailableReason || "最新版 Agent 当前不可用，请先检查 Provider 连接。");
+      return;
+    }
+    const id = `task-${Date.now()}`;
+    const createdAt = isoNow();
+    const revisionNumber = selectedAgentRevisionUpdate.latestRevisionNumber || choice.agentRevisionId;
+    const task = {
+      id,
+      workspaceId: selectedTask.workspaceId,
+      title: `${selectedTask.title.slice(0, 80)} · Revision ${revisionNumber}`,
+      preview: `使用 ${choice.name} 最新 Revision 创建的空白任务`,
+      status: "waiting",
+      updatedAt: "现在",
+      updatedAtIso: createdAt,
+      createdAt,
+      agent: choice.name,
+      adapter: choice.adapter,
+      agentProfileId: choice.profileId,
+      agentRevisionId: choice.agentRevisionId,
+      providerConnection: choice.providerConnection,
+      permissionMode: choice.permissionMode || "acceptEdits",
+      model: choice.model,
+      modelSource: choice.modelSource,
+      modelVerificationStatus: choice.modelVerificationStatus,
+      ...(choice.reasoningEffort ? { reasoningEffort: choice.reasoningEffort } : {}),
+      contextFiles: [],
+      branch: selectedTask.branch || workspaceState.active.branch,
+      elapsed: "—",
+      tokens: "—",
+      messages: [],
+      plan: [],
+      activity: [],
+      runs: [],
+    };
+    setTaskActionError("");
+    setTasks((items) => [task, ...items.filter((item) => item.id !== `workspace-${selectedTask.workspaceId}`)]);
+    setSelectedTaskId(id);
+    setInspectorOpen(false);
+    setSidebarOpen(false);
+    window.setTimeout(() => composerInputRef.current?.focus(), 0);
   };
 
   const selectTask = (id) => {
@@ -4543,7 +4724,8 @@ export function App() {
       if (task.id !== selectedTask.id) return task;
       const supported = codexReasoningOptions(codexCatalog.models, model)
         .some((option) => option.reasoningEffort === task.reasoningEffort);
-      const modelState = defaultModelState(model);
+      const verifiedModels = verifiedModelHistory(items, runtimeAdapterForTask(task), task.providerConnection?.id);
+      const modelState = modelSelectionState(runtimeAdapterForTask(task), model, codexCatalog.models, verifiedModels);
       return {
         ...task,
         model,
@@ -4568,7 +4750,7 @@ export function App() {
 
   const saveCodexSettings = (nextSettings) => {
     const normalized = {
-      model: nextSettings.model || "Codex default",
+      model: nextSettings.model || "Rux default",
       reasoningEffort: nextSettings.reasoningEffort || "",
       permissionMode: permissionOptions.some((option) => option.id === nextSettings.permissionMode)
         ? nextSettings.permissionMode
@@ -4578,15 +4760,16 @@ export function App() {
     const updatedAtIso = isoNow();
     setTasks((items) => items.map((task) => {
       if (task.id !== selectedTask.id || runtimeAdapterForTask(task) !== "codex" || ["running", "blocked"].includes(task.status)) return task;
+      const verifiedModels = verifiedModelHistory(items, "codex", task.providerConnection?.id);
       return {
         ...task,
         model: normalized.model,
+        ...modelSelectionState("codex", normalized.model, codexCatalog.models, verifiedModels),
         permissionMode: normalized.permissionMode,
         reasoningEffort: normalized.reasoningEffort || undefined,
         updatedAtIso,
       };
     }));
-    setSettingsOpen(false);
     setTaskActionError("");
   };
 
@@ -5054,6 +5237,8 @@ export function App() {
             permissionError={permissionError}
             taskActionError={taskActionError}
             onDismissTaskActionError={() => setTaskActionError("")}
+            agentRevisionUpdate={selectedAgentRevisionUpdate}
+            onCreateTaskWithLatestAgent={createTaskWithLatestAgent}
             workspacePlaceholder={workspaceState.active.placeholder}
           />
           <Composer
@@ -5067,8 +5252,9 @@ export function App() {
             onPermissionChange={changeSelectedPermission}
             onOpenAccounts={openAccounts}
             focusRef={composerInputRef}
-            agentChoices={agentChoices}
+            agentChoices={taskAgentChoices}
             codexModels={codexCatalog.models}
+            codexCatalog={codexCatalog}
             canRun={appReady}
           />
         </section>

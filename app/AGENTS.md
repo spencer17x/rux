@@ -12,6 +12,8 @@ Keep the sidebar footer actions explicit and separate. The `当前项目` row ow
 
 Keep the account menu focused on authentication and Rux settings. Do not add social invitation actions or decorative pet controls.
 
+Keep model selection honest and compact. The primary Composer selector may show Engine default, official catalog models, and verified history for the current Connection; advanced manual IDs belong in the disclosed run settings. Show source/verification state there, and warn without silently replacing a saved catalog model that disappears after refresh.
+
 Render Rux settings as a full-height two-pane surface that follows the accepted Codex settings reference: a 240 px pale navigation rail with a labelled return action and search, plus a centered white settings canvas with section headings and rounded grouped rows. Keep every enabled setting wired to a real Rux behavior, keep unavailable categories visibly disabled, and never add the Pet category from the reference.
 
 When implementing from a selected generated mock, treat that image as the source of truth for layout, component anatomy, density, spacing, color, typography, visible content, and hierarchy.
