@@ -87,6 +87,25 @@ test("latest compatible Session ignores newer incompatible history", () => {
   assert.equal(latestCompatibleSessionLink(fixedTask)?.nativeSessionId, "thread-1");
 });
 
+test("an imported continue Task resumes its pinned native Session before it has any Runs", () => {
+  const imported = task({
+    runs: [],
+    importedSession: {
+      identityKey: "a".repeat(64),
+      source: "codex-import",
+      mode: "continue",
+      status: "linked",
+      projectionId: "projection-1",
+      currentRevisionId: "revision-1",
+      sessionLink: link,
+      importedAt: "2026-08-12T00:00:00.000Z",
+      lastReadAt: "2026-08-12T00:00:00.000Z",
+    },
+  });
+  assert.equal(latestCompatibleSessionLink(imported)?.nativeSessionId, "thread-1");
+  assert.equal(latestCompatibleSessionLink({ ...imported, importedSession: { ...imported.importedSession, mode: "view" } }), undefined);
+});
+
 test("resume failure is explicit and remains tied to the attempted Session", () => {
   const failed = run({ status: "failed", resumeFrom: link, resumeFailure: "thread not found", error: "thread not found" });
   const recovery = resumeFailureForTask(task({ status: "failed", runs: [failed] }));

@@ -23,6 +23,7 @@ import {
   Clock3,
   Code2,
   Copy,
+  Eye,
   FileCode2,
   FilePlus2,
   Folder,
@@ -110,6 +111,20 @@ const statusLabel = {
   waiting: "待开始",
   stopped: "已停止",
 };
+
+function sessionDiscoveryErrorMessage(error, engine) {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message.includes("SESSION_CAPABILITY_UNAVAILABLE")) {
+    return engine === "claude-code"
+      ? "本机 Claude Agent SDK 尚未提供会话浏览能力。Rux 不会改读 Claude Code 内部 Transcript；安装受支持 SDK 后可重试。"
+      : "当前 Rux CLI 不支持会话浏览接口，请更新官方 CLI 后重试。";
+  }
+  if (message.includes("SESSION_CANCELLED")) return "会话查找已取消。";
+  if (message.includes("SESSION_TIMEOUT")) return "会话查找超时，请稍后重试。";
+  if (message.includes("SESSION_WORKSPACE_UNAUTHORIZED")) return "当前项目不在 Runtime 的授权 Workspace 集合中，请重新打开项目。";
+  const normalized = message.replace(/^Error invoking remote method '[^']+': Error:\s*/, "");
+  return normalized.replace(/^SESSION_[A-Z_]+:\s*/, "") || "无法查找 Agent 会话。";
+}
 
 const welcomeWorkspace = {
   id: "welcome",
@@ -678,9 +693,16 @@ function recordRuntimeEvent(task, event) {
   }
 
   nextRun = { ...nextRun, ...modelStateAfterRun(nextRun, event) };
+  const importedResumeUnavailable = event.type === "run.failed"
+    && Boolean(task.importedSession)
+    && Boolean(nextRun.resumeFailure)
+    && !nextRun.events.some((record) => record.type === "run.metadata");
 
   return {
     ...task,
+    ...(importedResumeUnavailable
+      ? { importedSession: { ...task.importedSession, status: "native-unavailable" } }
+      : {}),
     ...(event.type === "run.agent-snapshot" && event.profile.id === taskRevisionId
       ? { agentRevisionSnapshot: event.profile }
       : {}),
@@ -826,6 +848,7 @@ function Sidebar({
   onOpenAccounts,
   onOpenSettings,
   onOpenAgents,
+  onOpenSessionDiscovery,
   onOpenEnvironment,
   onOpenChanges,
   onRenameTask,
@@ -988,6 +1011,10 @@ function Sidebar({
         <button type="button" onClick={onOpenAgents}>
           <AtSign size={18} />
           <span>Agents</span>
+        </button>
+        <button type="button" onClick={onOpenSessionDiscovery} disabled={activeWorkspace.placeholder} title={activeWorkspace.placeholder ? "请先打开项目" : undefined}>
+          <History size={18} />
+          <span>导入 Agent 会话</span>
         </button>
       </div>
 
@@ -1347,7 +1374,7 @@ function ChangedFilesCard({ state, onOpenChanges, onRestoreChanges }) {
   );
 }
 
-function TaskTimeline({ task, streamingMessages = [], changes, onOpenChanges, onRestoreChanges, onOpenRun, onWaitingAction, onPermissionDecision, permissionBusy, permissionError, taskActionError, onDismissTaskActionError, agentRevisionUpdate, onCreateTaskWithLatestAgent, onRetrySession, onCreateFreshTask, workspacePlaceholder = false }) {
+function TaskTimeline({ task, streamingMessages = [], changes, onOpenChanges, onRestoreChanges, onOpenRun, onWaitingAction, onPermissionDecision, permissionBusy, permissionError, taskActionError, onDismissTaskActionError, agentRevisionUpdate, onCreateTaskWithLatestAgent, onRetrySession, onCreateFreshTask, onRefreshSession, onOpenSessionVersions, onOpenHandoff, sessionSyncBusy = false, workspacePlaceholder = false }) {
   const isWaiting = task.status === "waiting";
   const isCompleted = task.status === "completed";
   const hasOutcome = task.status === "completed" || task.status === "failed";
@@ -1413,12 +1440,24 @@ function TaskTimeline({ task, streamingMessages = [], changes, onOpenChanges, on
   return (
     <div className="timeline-scroll">
       <div className="timeline-content">
+        {!workspacePlaceholder && !task.importedSession && task.messages.length ? <div className="task-context-actions"><button type="button" onClick={onOpenHandoff}><GitCompareArrows size={13} />复制为新任务</button></div> : null}
         {taskActionError ? (
           <div className="account-error" role="alert">
             <CircleAlert size={15} />
             <span>{taskActionError}</span>
             <button type="button" className="icon-button" onClick={onDismissTaskActionError} aria-label="关闭任务错误"><X size={14} /></button>
           </div>
+        ) : null}
+        {task.importedSession ? (
+          <section className="agent-revision-notice session-imported-notice" aria-label="导入的 Agent 会话">
+            <span className="agent-revision-notice-icon"><History size={15} /></span>
+            <span><strong>{task.importedSession.status === "native-unavailable" ? "原会话不可用，本地投影仍可查看" : task.importedSession.mode === "continue" ? "已关联原生会话" : "本地只读投影"}</strong><small>{task.importedSession.source === "codex-import" ? "Codex 导入" : "Claude Code 导入"} · 内容保存在 Rux，本地删除不会影响 Provider 原会话。</small></span>
+            <div className="session-imported-actions">
+              <button type="button" onClick={onOpenHandoff}><GitCompareArrows size={13} />复制为新任务</button>
+              <button type="button" onClick={onRefreshSession} disabled={sessionSyncBusy}>{sessionSyncBusy ? <LoaderCircle size={13} className="status-running" /> : <RefreshCw size={13} />}刷新原生会话</button>
+              <button type="button" onClick={onOpenSessionVersions} disabled={sessionSyncBusy}><History size={13} />版本</button>
+            </div>
+          </section>
         ) : null}
         {sessionRecovery ? (
           <section className="session-recovery-card" role="alert" aria-label="Native Session 恢复失败">
@@ -3170,6 +3209,142 @@ function AccountsDialog({ open, state, adapters, checking, loginProvider, error,
   );
 }
 
+function SessionDiscoveryDialog({ open, workspace, engine, state, previewState, importedTasks, onEngine, onDiscover, onCancel, onPreview, onImport, onClose, onOpenWorkspace }) {
+  const dialogRef = useDialogFocus(open, onClose);
+  if (!open) return null;
+  const groups = [
+    ["current", "当前项目", "这些会话的规范化工作目录属于当前项目。"],
+    ["migrationSuggestions", "归属迁移建议", "发现了更具体的已授权项目；Rux 不会静默移动已有归属。"],
+    ["unassigned", "待归属", "缺少或无法解析工作目录，目前只保留元数据。"],
+    ["authorizationRequired", "需要项目授权", "工作目录在授权范围之外；先打开项目才能继续。"],
+  ];
+  const hasResults = groups.some(([key]) => state.result?.[key]?.length);
+  const busy = state.status === "loading" || previewState.status === "loading" || previewState.status === "importing";
+  const importedBindingFor = (item) => importedTasks.find((task) => task.importedSession?.identityKey === item.identityKey)?.importedSession;
+  const importedStatusLabel = (binding) => binding?.status === "linked" ? "已关联" : binding?.status === "native-unavailable" ? "原会话不可用" : binding ? "仅查看" : "";
+  return (
+    <div className="dialog-backdrop account-dialog-backdrop session-discovery-backdrop" role="presentation" onMouseDown={(event) => {
+      if (event.target === event.currentTarget && !busy) onClose();
+    }}>
+      <section ref={dialogRef} tabIndex={-1} className="account-dialog session-discovery-dialog" role="dialog" aria-modal="true" aria-labelledby="session-discovery-title">
+        <header className="account-dialog-header">
+          <div>
+            <span className="account-dialog-icon"><History size={18} /></span>
+            <span>
+              <h2 id="session-discovery-title">导入 Agent 会话</h2>
+              <p>{workspace.name} · 只在你点击后读取非敏感会话元数据</p>
+            </span>
+          </div>
+          <button type="button" className="icon-button" onClick={busy ? onCancel : onClose} aria-label={busy ? "取消会话操作" : "关闭导入 Agent 会话"}>
+            <X size={17} />
+          </button>
+        </header>
+        <div className="account-dialog-body session-discovery-body">
+          <section className="session-discovery-controls" aria-label="会话发现设置">
+            <div className="session-engine-tabs" role="radiogroup" aria-label="选择 Agent Engine">
+              <button type="button" role="radio" aria-checked={engine === "codex"} className={engine === "codex" ? "is-active" : ""} onClick={() => onEngine("codex")} disabled={busy}>Rux</button>
+              <button type="button" role="radio" aria-checked={engine === "claude-code"} className={engine === "claude-code" ? "is-active" : ""} onClick={() => onEngine("claude-code")} disabled={busy}>Claude Code</button>
+            </div>
+            <button data-dialog-initial-focus type="button" className="primary-button" onClick={state.status === "loading" ? onCancel : onDiscover} disabled={!window.rux || (busy && state.status !== "loading")} aria-label={state.status === "loading" ? "取消查找会话" : `查找 ${engine === "codex" ? "Rux" : "Claude Code"} 会话`}>
+              {state.status === "loading" ? <><LoaderCircle size={14} className="status-running" />取消查找</> : <><Search size={14} />查找会话</>}
+            </button>
+          </section>
+          <div className="session-discovery-privacy"><ShieldCheck size={15} /><span><strong>首次发现不会读取完整对话</strong><small>Rux 仅通过官方接口获取标题、时间、模型、目录与消息数量；不会后台扫描。</small></span></div>
+          {state.error ? <div className="account-error" role="alert"><CircleAlert size={15} /><span>{state.error}</span></div> : null}
+          {state.status === "idle" ? <div className="session-discovery-empty"><History size={28} /><strong>尚未查找本机会话</strong><p>选择 Engine 后点击“查找会话”。打开此窗口本身不会访问任何历史。</p></div> : null}
+          {state.status === "loading" ? <div className="session-discovery-empty" role="status"><LoaderCircle size={28} className="status-running" /><strong>正在读取会话元数据…</strong><p>不会读取完整 Transcript；你可以随时取消。</p></div> : null}
+          {state.status === "done" && !hasResults ? <div className="session-discovery-empty" role="status"><Search size={28} /><strong>当前范围没有可显示的会话</strong><p>Rux 已隐藏属于其他已授权项目的会话。</p></div> : null}
+          {state.status === "done" ? groups.map(([key, title, description]) => {
+            const items = state.result?.[key] || [];
+            if (!items.length) return null;
+            return (
+              <section className={`session-discovery-group is-${key}`} key={key} aria-label={title}>
+                <header><span><strong>{title}</strong><small>{description}</small></span><em>{items.length}</em></header>
+                <div className="session-discovery-list">
+                  {items.map((item) => (
+                    <article className="session-discovery-item" key={item.identityKey}>
+                      <span className="session-provider-mark"><Bot size={16} /></span>
+                      <span className="session-discovery-copy">
+                        <strong>{item.metadata.title || item.metadata.summary || "未命名会话"}</strong>
+                        <small>{[
+                          item.metadata.updatedAt ? new Date(item.metadata.updatedAt).toLocaleString("zh-CN") : null,
+                          item.metadata.model,
+                          Number.isFinite(item.metadata.messageCount) ? `${item.metadata.messageCount} 条消息` : null,
+                        ].filter(Boolean).join(" · ") || "官方接口未提供时间、模型或消息数"}</small>
+                        {item.metadata.cwd ? <code title={item.metadata.cwd}>{item.metadata.cwd}</code> : null}
+                        {item.attribution.reason ? <p>{item.attribution.reason}</p> : null}
+                      </span>
+                      {importedBindingFor(item) ? <span className="session-metadata-only">{importedStatusLabel(importedBindingFor(item))}</span> : null}
+                      {key === "authorizationRequired" ? <button type="button" className="secondary-button" onClick={onOpenWorkspace}>打开项目…</button> : key === "current" ? (
+                        <button type="button" className="secondary-button" onClick={() => onPreview(item)} disabled={["loading", "importing"].includes(previewState.status)}>
+                          {previewState.status === "loading" && previewState.item?.identityKey === item.identityKey ? <LoaderCircle size={13} className="status-running" /> : <Eye size={13} />}预览
+                        </button>
+                      ) : null}
+                    </article>
+                  ))}
+                </div>
+              </section>
+            );
+          }) : null}
+          {previewState.error ? <div className="account-error" role="alert"><CircleAlert size={15} /><span>{previewState.error}</span></div> : null}
+          {previewState.preview ? (
+            <section className="session-import-preview" aria-label="会话导入预览">
+              <header><span><strong>{previewState.preview.metadata.title || "未命名会话"}</strong><small>已读取 {previewState.preview.messages.length} 条规范化消息{previewState.preview.truncated ? "（达到本地预览上限）" : ""}</small></span><em>{previewState.preview.resume.status === "available" ? "可继续" : "仅查看"}</em></header>
+              <div className="session-import-warning"><CircleAlert size={15} /><span><strong>完整内容将复制到 Rux 本地，且可能包含敏感信息</strong><small>原生会话仍可能被其他客户端写入。导入不会删除、归档或修改 Provider 侧会话；若要隔离后续工作，可稍后通过上下文交接创建新任务。</small></span></div>
+              <div className="session-import-message-list">
+                {previewState.preview.messages.slice(0, 12).map((message) => <article key={message.id} className={`is-${message.role}`}><strong>{message.role === "user" ? "你" : message.role === "assistant" ? "Agent" : message.role === "system" ? "System" : "Tool"}</strong><p>{message.content.map((part) => part.type === "text" ? part.text : part.type === "tool-call" ? `[工具调用: ${part.name}]` : part.type === "tool-result" ? "[工具结果]" : `[暂不支持的内容类型: ${part.providerType}]`).join("\n\n") || "（空消息）"}</p></article>)}
+                {previewState.preview.messages.length > 12 ? <small>其余 {previewState.preview.messages.length - 12} 条将在确认后写入本地 Projection。</small> : null}
+              </div>
+              <footer>
+                <button type="button" className="secondary-button" onClick={() => onImport("view")} disabled={previewState.status === "importing"}>仅导入查看</button>
+                <button type="button" className="primary-button" onClick={() => onImport("continue")} disabled={previewState.status === "importing" || previewState.preview.resume.status !== "available"}>{previewState.status === "importing" ? <LoaderCircle size={14} className="status-running" /> : <Play size={14} />}导入并继续</button>
+              </footer>
+            </section>
+          ) : null}
+        </div>
+        <footer className="account-dialog-footer"><CircleHelp size={15} /><p>发现阶段只读元数据；点“预览”才读取内容，点导入后才在一个本地事务中创建 Projection 与 Task。</p></footer>
+      </section>
+    </div>
+  );
+}
+
+function SessionSyncDialog({ state, onClose, onRebuild, onRestore }) {
+  const dialogRef = useDialogFocus(state.open, onClose);
+  if (!state.open) return null;
+  const diff = state.result?.diff;
+  const labels = { added: "新增", modified: "修改", deleted: "删除", moved: "重排", uncertain: "不确定匹配" };
+  return (
+    <div className="dialog-backdrop account-dialog-backdrop" role="presentation">
+      <section ref={dialogRef} tabIndex={-1} className="account-dialog session-sync-dialog" role="dialog" aria-modal="true" aria-labelledby="session-sync-title">
+        <header className="account-dialog-header"><div><span className="account-dialog-icon"><RefreshCw size={18} /></span><span><h2 id="session-sync-title">原生会话刷新与版本</h2><p>只在用户操作时读取；本地版本恢复不会写回 Provider</p></span></div><button type="button" className="icon-button" onClick={onClose} disabled={state.loading} aria-label="关闭会话版本"><X size={17} /></button></header>
+        <div className="account-dialog-body session-sync-body">
+          {state.error ? <div className="account-error" role="alert"><CircleAlert size={15} /><span>{state.error}</span></div> : null}
+          {state.loading ? <div className="session-discovery-empty"><LoaderCircle size={25} className="status-running" /><strong>正在处理本地 Projection…</strong></div> : null}
+          {diff ? <section className={`session-sync-diff is-${diff.status}`}><header><span><strong>{diff.status === "unchanged" ? "原生会话没有变化" : diff.status === "append-only" ? "已安全追加新消息" : "发现外部差异，当前版本未改变"}</strong><small>+{diff.additions} 新增 · {diff.modifications} 修改 · {diff.deletions} 删除 · {diff.moves} 重排 · {diff.uncertainMatches} 不确定</small></span>{state.result?.candidateRevisionId ? <button type="button" className="primary-button" onClick={() => onRebuild(state.result.candidateRevisionId)}>确认按原生会话重建</button> : null}</header>{diff.changes?.length ? <div className="session-sync-change-list">{diff.changes.map((change, index) => <article key={`${change.kind}-${change.messageId || index}`}><em>{labels[change.kind]}</em><span><strong>{change.role || "消息"} · {change.previousIndex === undefined ? "—" : change.previousIndex + 1} → {change.nextIndex === undefined ? "—" : change.nextIndex + 1}</strong><p>{change.preview}</p></span></article>)}</div> : null}</section> : null}
+          <section className="session-revision-list"><header><strong>本地 Projection Revisions</strong><small>{state.revisions?.revisions?.length || 0} 个不可变版本</small></header>{(state.revisions?.revisions || []).map((revision) => <article key={revision.id}><span><strong>Revision {revision.ordinal}{revision.current ? " · 当前" : ""}</strong><small>{revision.messageCount} 条消息 · {new Date(revision.createdAt).toLocaleString("zh-CN")}</small></span>{!revision.current ? <button type="button" className="secondary-button" onClick={() => onRestore(revision.id)}>恢复此本地版本</button> : null}</article>)}</section>
+          {(state.revisions?.audits || []).length ? <section className="session-audit-list"><strong>刷新审计</strong>{state.revisions.audits.slice(0, 12).map((audit) => <small key={audit.id}>{new Date(audit.occurredAt).toLocaleString("zh-CN")} · {audit.action} · {audit.result} · {audit.fromRevisionId.split("-").at(-1)}{audit.toRevisionId ? ` → ${audit.toRevisionId.split("-").at(-1)}` : ""}</small>)}</section> : null}
+        </div>
+        <footer className="account-dialog-footer"><ShieldCheck size={15} /><p>修改、删除、重排和不确定匹配不会自动覆盖当前 Projection；重建与恢复都保留旧 Revision、Run、审批和 Task 元数据。</p></footer>
+      </section>
+    </div>
+  );
+}
+
+function ContextHandoffDialog({ state, agents, onChange, onPreview, onGenerateSummary, onCommit, onClose }) {
+  const dialogRef = useDialogFocus(state.open, onClose);
+  if (!state.open) return null;
+  const facts = state.preview?.facts;
+  return <div className="dialog-backdrop account-dialog-backdrop" role="presentation"><section ref={dialogRef} tabIndex={-1} className="account-dialog handoff-dialog" role="dialog" aria-modal="true" aria-labelledby="handoff-title">
+    <header className="account-dialog-header"><div><span className="account-dialog-icon"><GitCompareArrows size={18} /></span><span><h2 id="handoff-title">复制为新任务</h2><p>先审查确定性事实包，确认后才创建目标 Task</p></span></div><button type="button" className="icon-button" onClick={onClose} aria-label="关闭 Context Handoff"><X size={17} /></button></header>
+    <div className="account-dialog-body handoff-body">
+      <label className="handoff-field"><span>目标 Agent 与 Provider</span><select value={state.targetAgentId} onChange={(event) => onChange({ targetAgentId: event.target.value, preview: null, agentSummary: "", agentSummaryGenerationId: "", summaryProvenance: null })}>{agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name} · {agent.providerConnection.label}</option>)}</select></label>
+      <section className="handoff-selection"><header><strong>本地事实来源</strong><small>只使用当前 Task 已持久化的消息与 Run-owned 文件证据</small></header><div className="handoff-message-select">{state.source.messages.map((message) => <label key={message.id}><input type="checkbox" checked={state.messageIds.includes(message.id)} onChange={() => onChange({ messageIds: state.messageIds.includes(message.id) ? state.messageIds.filter((id) => id !== message.id) : [...state.messageIds, message.id], preview: null, agentSummary: "", agentSummaryGenerationId: "", summaryProvenance: null })} /><span><strong>{message.role === "user" ? "你" : "Agent"}</strong><small>{message.text.slice(0, 160)}</small></span></label>)}</div>{state.source.files.length ? <div className="handoff-file-select">{state.source.files.map((file) => <label key={file.path}><input type="checkbox" checked={state.filePaths.includes(file.path)} onChange={() => onChange({ filePaths: state.filePaths.includes(file.path) ? state.filePaths.filter((path) => path !== file.path) : [...state.filePaths, file.path], preview: null, agentSummary: "", agentSummaryGenerationId: "", summaryProvenance: null })} /><code>{file.path}</code></label>)}</div> : <small>当前没有可引用的持久化 Run-owned 文件变更；不会使用展示数据补齐。</small>}</section>
+      {state.error ? <div className="account-error" role="alert"><CircleAlert size={15} /><span>{state.error}</span></div> : null}
+      {facts ? <section className="handoff-preview"><header><strong>确定性事实包</strong><small>{facts.messages.length} 条消息 · {facts.files.length} 个文件 · {facts.incomplete.length} 个未完成项</small></header>{!state.preview.sourceAgentAvailable ? <p className="handoff-note">来源 Agent 不可用；仍可仅使用以下事实包交接。</p> : null}<div className="handoff-field"><span className="handoff-summary-heading"><span>可选叙事摘要</span><button type="button" className="secondary-button" aria-label="让来源 Agent 生成交接摘要" onClick={onGenerateSummary} disabled={state.loading || !state.preview.sourceAgentAvailable}>{state.loading ? "来源 Agent 正在生成…" : "让来源 Agent 生成"}</button></span>{state.summaryProvenance ? <small className="handoff-summary-provenance">由 {state.summaryProvenance.sourceAdapter === "codex" ? "Rux" : "Claude Code"} 的固定 Revision 临时生成 · 未保存原生会话 · 可编辑或移除</small> : <small>可自行填写，或显式调用来源 Agent 生成；留空不会影响交接。</small>}<textarea aria-label="可选叙事摘要" value={state.agentSummary} onChange={(event) => onChange({ agentSummary: event.target.value })} placeholder="摘要只用于帮助目标 Agent 理解事实包，不替代下方确定性事实。" /></div><label className="handoff-field"><span>补充约束</span><textarea value={state.constraints} onChange={(event) => onChange({ constraints: event.target.value })} placeholder="例如：先只做方案，不修改文件。" /></label><footer><span><ShieldCheck size={14} />确认前不会调用目标 Agent，也不会创建 Native Session。</span><button type="button" className="primary-button" onClick={onCommit} disabled={state.loading}>确认并创建新任务</button></footer></section> : <button type="button" className="primary-button handoff-preview-button" onClick={onPreview} disabled={state.loading || !state.targetAgentId}>{state.loading ? "正在生成…" : "生成交接预览"}</button>}
+    </div>
+  </section></div>;
+}
+
 function CodexSettingsDialog({ open, connected, catalog, settings, onClose, onReload, onSave, onOpenAccounts }) {
   const [draft, setDraft] = useState(settings);
   const [query, setQuery] = useState("");
@@ -3495,6 +3670,12 @@ export function App() {
   const [agentProfileBusy, setAgentProfileBusy] = useState(false);
   const [agentProfileError, setAgentProfileError] = useState("");
   const [accountsOpen, setAccountsOpen] = useState(false);
+  const [sessionDiscoveryOpen, setSessionDiscoveryOpen] = useState(false);
+  const [sessionDiscoveryEngine, setSessionDiscoveryEngine] = useState("codex");
+  const [sessionDiscoveryState, setSessionDiscoveryState] = useState({ status: "idle", operationId: "", result: null, error: "" });
+  const [sessionPreviewState, setSessionPreviewState] = useState({ status: "idle", operationId: "", item: null, preview: null, error: "" });
+  const [sessionSyncState, setSessionSyncState] = useState({ open: false, loading: false, error: "", result: null, revisions: null });
+  const [handoffState, setHandoffState] = useState({ open: false, loading: false, error: "", targetAgentId: "", messageIds: [], filePaths: [], agentSummary: "", agentSummaryGenerationId: "", summaryProvenance: null, constraints: "", preview: null, source: { messages: [], files: [] } });
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [authState, setAuthState] = useState(null);
   const [authChecking, setAuthChecking] = useState(false);
@@ -4217,6 +4398,12 @@ export function App() {
     }
     if (!String(prompt || "").trim()) {
       return { ok: false, error: "请先在输入框中描述你想完成的任务。" };
+    }
+    if (taskSnapshot.importedSession?.mode === "view") {
+      return { ok: false, error: "这是仅查看的导入会话。若要继续，请重新导入并选择“导入并继续”，或通过上下文交接创建新任务。" };
+    }
+    if (taskSnapshot.importedSession?.status === "native-unavailable") {
+      return { ok: false, error: "原生会话当前不可用。本地 Projection 仍可查看；请先刷新确认，或通过上下文交接创建新任务。" };
     }
     if (!taskSnapshot.agentRevisionId || !taskSnapshot.providerConnection?.id) {
       return { ok: false, error: "这个任务缺少可验证的 Agent Revision 或 Provider Connection，请新建任务。" };
@@ -5106,8 +5293,203 @@ export function App() {
     setSettingsOpen(false);
     setNewTaskOpen(false);
     setAgentsOpen(false);
+    setSessionDiscoveryOpen(false);
     setSidebarOpen(false);
     setAuthError("");
+  };
+
+  const openSessionDiscovery = () => {
+    if (workspaceState.active.placeholder) {
+      void chooseWorkspace();
+      return;
+    }
+    setSessionDiscoveryOpen(true);
+    setAccountsOpen(false);
+    setSettingsOpen(false);
+    setNewTaskOpen(false);
+    setAgentsOpen(false);
+    setSidebarOpen(false);
+    setSessionDiscoveryState({ status: "idle", operationId: "", result: null, error: "" });
+    setSessionPreviewState({ status: "idle", operationId: "", item: null, preview: null, error: "" });
+  };
+
+  const discoverSessions = async () => {
+    const runtime = runtimeRef.current;
+    if (!runtime || sessionDiscoveryState.status === "loading") return;
+    const operationId = globalThis.crypto?.randomUUID?.() ?? `session-discovery-${Date.now()}`;
+    setSessionPreviewState({ status: "idle", operationId: "", item: null, preview: null, error: "" });
+    setSessionDiscoveryState({ status: "loading", operationId, result: null, error: "" });
+    try {
+      const result = await runtime.discoverSessions({
+        operationId,
+        engine: sessionDiscoveryEngine,
+        providerConnection: defaultProviderConnectionForAdapter(sessionDiscoveryEngine),
+        activeWorkspaceId: workspaceState.active.id,
+        limit: 100,
+      });
+      setSessionDiscoveryState((state) => state.operationId === operationId
+        ? { status: "done", operationId: "", result, error: "" }
+        : state);
+    } catch (error) {
+      setSessionDiscoveryState((state) => state.operationId === operationId
+        ? { status: "error", operationId: "", result: null, error: sessionDiscoveryErrorMessage(error, sessionDiscoveryEngine) }
+        : state);
+    }
+  };
+
+  const cancelSessionDiscovery = () => {
+    const operationId = sessionDiscoveryState.operationId;
+    if (operationId) void runtimeRef.current?.cancelSessionDiscovery(operationId).catch(() => undefined);
+    const previewOperationId = sessionPreviewState.operationId;
+    if (previewOperationId) void runtimeRef.current?.cancelSessionDiscovery(previewOperationId).catch(() => undefined);
+    setSessionDiscoveryState({ status: "idle", operationId: "", result: null, error: "" });
+    setSessionPreviewState({ status: "idle", operationId: "", item: null, preview: null, error: "" });
+  };
+
+  const previewDiscoveredSession = async (item) => {
+    const runtime = runtimeRef.current;
+    if (!runtime || ["loading", "importing"].includes(sessionPreviewState.status)) return;
+    const operationId = globalThis.crypto?.randomUUID?.() ?? `session-preview-${Date.now()}`;
+    setSessionPreviewState({ status: "loading", operationId, item, preview: null, error: "" });
+    try {
+      const preview = await runtime.previewSession({
+        operationId,
+        engine: sessionDiscoveryEngine,
+        providerConnection: defaultProviderConnectionForAdapter(sessionDiscoveryEngine),
+        activeWorkspaceId: workspaceState.active.id,
+        nativeSessionId: item.metadata.nativeSessionId,
+        limit: 100,
+      });
+      setSessionPreviewState((state) => state.operationId === operationId
+        ? { status: "done", operationId: "", item, preview, error: "" }
+        : state);
+    } catch (error) {
+      setSessionPreviewState((state) => state.operationId === operationId
+        ? { status: "error", operationId: "", item, preview: null, error: sessionDiscoveryErrorMessage(error, sessionDiscoveryEngine) }
+        : state);
+    }
+  };
+
+  const importDiscoveredSession = async (mode) => {
+    const runtime = runtimeRef.current;
+    const item = sessionPreviewState.item;
+    if (!runtime || !item || !sessionPreviewState.preview || sessionPreviewState.status === "importing") return;
+    const operationId = globalThis.crypto?.randomUUID?.() ?? `session-import-${Date.now()}`;
+    setSessionPreviewState((state) => ({ ...state, status: "importing", operationId, error: "" }));
+    try {
+      const result = await runtime.importSession({
+        operationId,
+        engine: sessionDiscoveryEngine,
+        providerConnection: defaultProviderConnectionForAdapter(sessionDiscoveryEngine),
+        activeWorkspaceId: workspaceState.active.id,
+        nativeSessionId: item.metadata.nativeSessionId,
+        limit: 100,
+        mode,
+      });
+      setTasks((items) => [result.task, ...items.filter((task) => task.id !== result.task.id && task.id !== `workspace-${workspaceState.active.id}`)]);
+      setSelectedTaskId(result.task.id);
+      setSessionDiscoveryOpen(false);
+      setSessionDiscoveryState({ status: "idle", operationId: "", result: null, error: "" });
+      setSessionPreviewState({ status: "idle", operationId: "", item: null, preview: null, error: "" });
+    } catch (error) {
+      setSessionPreviewState((state) => ({ ...state, status: "error", operationId: "", error: sessionDiscoveryErrorMessage(error, sessionDiscoveryEngine) }));
+    }
+  };
+
+  const loadSessionRevisions = async (task = selectedTask) => {
+    if (!task?.importedSession) return;
+    setSessionSyncState((state) => ({ ...state, open: true, loading: true, error: "" }));
+    try {
+      const revisions = await runtimeRef.current.listSessionRevisions({ taskId: task.id });
+      setSessionSyncState((state) => ({ ...state, open: true, loading: false, revisions, error: "" }));
+    } catch (error) {
+      setSessionSyncState((state) => ({ ...state, open: true, loading: false, error: sessionDiscoveryErrorMessage(error, task.adapter) }));
+    }
+  };
+
+  const refreshImportedSession = async () => {
+    if (!selectedTask?.importedSession || sessionSyncState.loading) return;
+    const operationId = globalThis.crypto?.randomUUID?.() ?? `session-refresh-${Date.now()}`;
+    setSessionSyncState((state) => ({ ...state, open: true, loading: true, error: "", result: null }));
+    try {
+      const result = await runtimeRef.current.refreshSession({ taskId: selectedTask.id, operationId });
+      setTasks((items) => items.map((task) => task.id === result.task.id ? result.task : task));
+      const revisions = await runtimeRef.current.listSessionRevisions({ taskId: selectedTask.id });
+      setSessionSyncState({ open: true, loading: false, error: "", result, revisions });
+    } catch (error) {
+      setSessionSyncState((state) => ({ ...state, open: true, loading: false, error: sessionDiscoveryErrorMessage(error, selectedTask.adapter) }));
+    }
+  };
+
+  const rebuildImportedSession = async (candidateRevisionId) => {
+    if (!selectedTask?.importedSession || !window.confirm("按原生会话重建当前本地 Projection？旧 Revision、Rux Run、审批和 Task 元数据会保留，Provider 原会话不会被修改。")) return;
+    setSessionSyncState((state) => ({ ...state, loading: true, error: "" }));
+    try {
+      const result = await runtimeRef.current.rebuildSession({ taskId: selectedTask.id, candidateRevisionId, confirmed: true });
+      setTasks((items) => items.map((task) => task.id === result.task.id ? result.task : task));
+      const revisions = await runtimeRef.current.listSessionRevisions({ taskId: selectedTask.id });
+      setSessionSyncState({ open: true, loading: false, error: "", result, revisions });
+    } catch (error) {
+      setSessionSyncState((state) => ({ ...state, loading: false, error: sessionDiscoveryErrorMessage(error, selectedTask.adapter) }));
+    }
+  };
+
+  const restoreImportedRevision = async (revisionId) => {
+    if (!selectedTask?.importedSession || !window.confirm("恢复这个本地 Projection Revision？这不会修改原生会话，当前版本也会继续保留。")) return;
+    setSessionSyncState((state) => ({ ...state, loading: true, error: "" }));
+    try {
+      const result = await runtimeRef.current.restoreSessionRevision({ taskId: selectedTask.id, revisionId, confirmed: true });
+      setTasks((items) => items.map((task) => task.id === result.task.id ? result.task : task));
+      const revisions = await runtimeRef.current.listSessionRevisions({ taskId: selectedTask.id });
+      setSessionSyncState({ open: true, loading: false, error: "", result, revisions });
+    } catch (error) {
+      setSessionSyncState((state) => ({ ...state, loading: false, error: sessionDiscoveryErrorMessage(error, selectedTask.adapter) }));
+    }
+  };
+
+  const openContextHandoff = () => {
+    const latestRun = selectedTask.runs?.at(-1);
+    const messages = selectedTask.messages.slice(-20);
+    const files = latestRun?.gitPatch?.files || [];
+    const fallbackTarget = agentChoices.find((choice) => choice.id !== (selectedTask.agentProfileId || runtimeAdapterForTask(selectedTask))) || agentChoices[0];
+    setHandoffState({ open: true, loading: false, error: "", targetAgentId: fallbackTarget?.id || "", messageIds: messages.map((message) => message.id), filePaths: files.map((file) => file.path), agentSummary: "", agentSummaryGenerationId: "", summaryProvenance: null, constraints: "", preview: null, source: { messages, files } });
+  };
+
+  const previewContextHandoff = async () => {
+    setHandoffState((state) => ({ ...state, loading: true, error: "" }));
+    try {
+      const current = handoffState;
+      const preview = await runtimeRef.current.previewHandoff({ sourceTaskId: selectedTask.id, targetAgentId: current.targetAgentId, messageIds: current.messageIds, filePaths: current.filePaths });
+      setHandoffState((state) => ({ ...state, loading: false, preview }));
+    } catch (error) {
+      setHandoffState((state) => ({ ...state, loading: false, error: error instanceof Error ? error.message : String(error) }));
+    }
+  };
+
+  const generateContextHandoffSummary = async () => {
+    const current = handoffState;
+    if (!current.preview) return;
+    setHandoffState((state) => ({ ...state, loading: true, error: "" }));
+    try {
+      const generated = await runtimeRef.current.generateHandoffSummary({ sourceTaskId: selectedTask.id, targetAgentId: current.targetAgentId, messageIds: current.messageIds, filePaths: current.filePaths, fingerprint: current.preview.fingerprint });
+      setHandoffState((state) => ({ ...state, loading: false, agentSummary: generated.summary, agentSummaryGenerationId: generated.generationId, summaryProvenance: generated.provenance }));
+    } catch (error) {
+      setHandoffState((state) => ({ ...state, loading: false, error: error instanceof Error ? error.message : String(error) }));
+    }
+  };
+
+  const commitContextHandoff = async () => {
+    const current = handoffState;
+    if (!current.preview || !window.confirm("确认创建新的 Task 并固定目标 Agent Revision？此操作不会修改来源 Task，也不会立即调用目标 Agent 或创建 Native Session。")) return;
+    setHandoffState((state) => ({ ...state, loading: true, error: "" }));
+    try {
+      const result = await runtimeRef.current.commitHandoff({ sourceTaskId: selectedTask.id, targetAgentId: current.targetAgentId, messageIds: current.messageIds, filePaths: current.filePaths, fingerprint: current.preview.fingerprint, agentSummary: current.agentSummary || undefined, agentSummaryGenerationId: current.agentSummary && current.agentSummaryGenerationId ? current.agentSummaryGenerationId : undefined, constraints: current.constraints || undefined, confirmed: true });
+      setTasks((items) => [result.targetTask, ...items.map((task) => task.id === result.sourceTask.id ? result.sourceTask : task).filter((task) => task.id !== result.targetTask.id)]);
+      setSelectedTaskId(result.targetTask.id);
+      setHandoffState((state) => ({ ...state, open: false, loading: false }));
+    } catch (error) {
+      setHandoffState((state) => ({ ...state, loading: false, error: error instanceof Error ? error.message : String(error) }));
+    }
   };
 
   const detectProviders = async () => {
@@ -5282,6 +5664,7 @@ export function App() {
         onOpenAccounts={openAccounts}
         onOpenSettings={openSettings}
         onOpenAgents={() => { setAgentsOpen(true); setSidebarOpen(false); setAgentProfileError(""); }}
+        onOpenSessionDiscovery={openSessionDiscovery}
         onOpenEnvironment={openEnvironment}
         onOpenChanges={() => openChanges()}
         onRenameTask={renameTask}
@@ -5353,6 +5736,10 @@ export function App() {
             onCreateTaskWithLatestAgent={createTaskWithLatestAgent}
             onRetrySession={retryFailedSession}
             onCreateFreshTask={createFreshTaskAfterSessionFailure}
+            onRefreshSession={() => void refreshImportedSession()}
+            onOpenSessionVersions={() => void loadSessionRevisions()}
+            onOpenHandoff={openContextHandoff}
+            sessionSyncBusy={sessionSyncState.loading}
             workspacePlaceholder={workspaceState.active.placeholder}
           />
           <Composer
@@ -5369,7 +5756,7 @@ export function App() {
             agentChoices={taskAgentChoices}
             codexModels={codexCatalog.models}
             codexCatalog={codexCatalog}
-            canRun={appReady}
+            canRun={appReady && selectedTask.importedSession?.mode !== "view"}
           />
         </section>
 
@@ -5432,6 +5819,46 @@ export function App() {
         onLogin={loginWithProvider}
         onCancelLogin={cancelLoginWithProvider}
         onOpenSettings={openSettings}
+      />
+      <SessionDiscoveryDialog
+        open={sessionDiscoveryOpen}
+        workspace={workspaceState.active}
+        engine={sessionDiscoveryEngine}
+        state={sessionDiscoveryState}
+        previewState={sessionPreviewState}
+        importedTasks={workspaceTasks}
+        onEngine={(engine) => {
+          setSessionDiscoveryEngine(engine);
+          setSessionDiscoveryState({ status: "idle", operationId: "", result: null, error: "" });
+          setSessionPreviewState({ status: "idle", operationId: "", item: null, preview: null, error: "" });
+        }}
+        onDiscover={() => void discoverSessions()}
+        onCancel={cancelSessionDiscovery}
+        onPreview={(item) => void previewDiscoveredSession(item)}
+        onImport={(mode) => void importDiscoveredSession(mode)}
+        onClose={() => {
+          if (sessionDiscoveryState.status === "loading") cancelSessionDiscovery();
+          setSessionDiscoveryOpen(false);
+        }}
+        onOpenWorkspace={() => {
+          setSessionDiscoveryOpen(false);
+          void chooseWorkspace();
+        }}
+      />
+      <SessionSyncDialog
+        state={sessionSyncState}
+        onClose={() => setSessionSyncState((state) => ({ ...state, open: false }))}
+        onRebuild={(revisionId) => void rebuildImportedSession(revisionId)}
+        onRestore={(revisionId) => void restoreImportedRevision(revisionId)}
+      />
+      <ContextHandoffDialog
+        state={handoffState}
+        agents={agentChoices.filter((agent) => agent.id !== "mock")}
+        onChange={(patch) => setHandoffState((state) => ({ ...state, ...patch }))}
+        onPreview={() => void previewContextHandoff()}
+        onGenerateSummary={() => void generateContextHandoffSummary()}
+        onCommit={() => void commitContextHandoff()}
+        onClose={() => setHandoffState((state) => ({ ...state, open: false }))}
       />
       <CodexSettingsDialog
         open={settingsOpen}

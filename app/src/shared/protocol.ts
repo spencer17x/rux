@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const RUX_PROTOCOL_VERSION = 3 as const;
+export const RUX_PROTOCOL_VERSION = 5 as const;
 
 export const IPC_CHANNELS = {
   request: "rux:runtime:request",
@@ -12,6 +12,14 @@ export const IPC_CHANNELS = {
   workspaceOpen: "rux:workspace:open",
   taskStateLoad: "rux:task-state:load",
   taskStateSave: "rux:task-state:save",
+  sessionImport: "rux:session:import",
+  sessionRefresh: "rux:session:refresh",
+  sessionRebuild: "rux:session:rebuild",
+  sessionRevisionList: "rux:session:revision-list",
+  sessionRevisionRestore: "rux:session:revision-restore",
+  handoffPreview: "rux:handoff:preview",
+  handoffSummaryGenerate: "rux:handoff:summary-generate",
+  handoffCommit: "rux:handoff:commit",
 } as const;
 
 export const runtimeMethods = [
@@ -26,10 +34,17 @@ export const runtimeMethods = [
   "terminal.dispose",
   "agent.list",
   "agent.model.list",
+  "session.list",
+  "session.discover",
+  "session.preview",
+  "session.read",
+  "session.resume.check",
+  "session.cancel",
   "agent.profile.list",
   "agent.profile.create",
   "agent.profile.update",
   "agent.profile.delete",
+  "handoff.summary.generate",
   "run.start",
   "run.cancel",
   "permission.decide",
@@ -53,7 +68,10 @@ export const runtimeMethods = [
 ] as const;
 
 export type RuntimeMethod = (typeof runtimeMethods)[number];
-export type RendererRuntimeMethod = Exclude<RuntimeMethod, "runtime.shutdown">;
+export type RendererRuntimeMethod = Exclude<
+  RuntimeMethod,
+  "runtime.shutdown" | "session.list" | "session.read" | "session.resume.check" | "handoff.summary.generate"
+>;
 
 export interface RuntimeStatus {
   protocolVersion: typeof RUX_PROTOCOL_VERSION;
@@ -363,6 +381,267 @@ export interface NativeSessionLink {
   agentRevisionId: string;
   workspaceId: string;
   nativeSessionId: string;
+}
+
+export const sessionEngines = ["codex", "claude-code"] as const;
+export type SessionEngine = (typeof sessionEngines)[number];
+export const sessionResumeStatuses = ["available", "unavailable", "unknown"] as const;
+export type SessionResumeStatus = (typeof sessionResumeStatuses)[number];
+export const sessionMessageRoles = ["user", "assistant", "tool", "system"] as const;
+export type SessionMessageRole = (typeof sessionMessageRoles)[number];
+
+/** Provider-native identity discovered through a supported Engine API. */
+export interface SessionIdentity {
+  engine: SessionEngine;
+  providerConnectionId: string;
+  nativeSessionId: string;
+}
+
+export interface SessionMetadata extends SessionIdentity {
+  title?: string;
+  summary?: string;
+  cwd?: string;
+  model?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  messageCount?: number;
+  resumeStatus: SessionResumeStatus;
+}
+
+export type SessionContentPart =
+  | { type: "text"; text: string }
+  | { type: "tool-call"; name: string; callId?: string; input?: string }
+  | { type: "tool-result"; callId?: string; output?: string; isError?: boolean }
+  | { type: "unsupported"; providerType: string };
+
+export interface SessionMessage {
+  id: string;
+  role: SessionMessageRole;
+  createdAt?: string;
+  content: SessionContentPart[];
+}
+
+export interface SessionLink {
+  source: SessionIdentity;
+  taskId: string;
+  workspaceId: string;
+  linkedAt: string;
+}
+
+export interface SessionProjection {
+  id: string;
+  source: SessionIdentity;
+  taskId: string;
+  workspaceId: string;
+  mode: SessionImportMode;
+  status: ImportedSessionStatus;
+  latestRevisionId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SessionProjectionRevision {
+  id: string;
+  projectionId: string;
+  ordinal: number;
+  sourceUpdatedAt?: string;
+  messageIds: string[];
+  metadata: SessionMetadata;
+  messages: SessionMessage[];
+  contentHash: string;
+  createdAt: string;
+}
+
+export interface SessionListParams {
+  operationId: string;
+  engine: SessionEngine;
+  providerConnection: ProviderConnectionRef;
+  cursor?: string | null;
+  limit?: number;
+}
+
+export interface SessionListResult {
+  engine: SessionEngine;
+  sessions: SessionMetadata[];
+  nextCursor?: string | null;
+}
+
+export const sessionAttributionStatuses = [
+  "current-workspace",
+  "unassigned",
+  "authorization-required",
+  "migration-suggested",
+] as const;
+export type SessionAttributionStatus = (typeof sessionAttributionStatuses)[number];
+
+export interface SessionAttribution {
+  status: SessionAttributionStatus;
+  workspaceId?: string;
+  workspaceName?: string;
+  previousWorkspaceId?: string;
+  previousWorkspaceName?: string;
+  reason?: string;
+}
+
+export interface DiscoveredSession {
+  identityKey: string;
+  metadata: SessionMetadata;
+  attribution: SessionAttribution;
+}
+
+export interface SessionDiscoverParams extends SessionListParams {
+  activeWorkspaceId: string;
+}
+
+export interface SessionDiscoverResult {
+  engine: SessionEngine;
+  current: DiscoveredSession[];
+  unassigned: DiscoveredSession[];
+  authorizationRequired: DiscoveredSession[];
+  migrationSuggestions: DiscoveredSession[];
+  nextCursor?: string | null;
+}
+
+export const sessionImportModes = ["view", "continue"] as const;
+export type SessionImportMode = (typeof sessionImportModes)[number];
+export const importedSessionStatuses = ["linked", "read-only", "native-unavailable"] as const;
+export type ImportedSessionStatus = (typeof importedSessionStatuses)[number];
+
+export interface SessionPreviewParams extends SessionReadParams {
+  activeWorkspaceId: string;
+}
+
+export interface SessionPreviewResult extends SessionReadResult {
+  identityKey: string;
+  resume: SessionResumeCheckResult;
+}
+
+export interface SessionImportParams extends SessionPreviewParams {
+  mode: SessionImportMode;
+}
+
+export interface ImportedSessionBinding {
+  identityKey: string;
+  source: "codex-import" | "claude-code-import";
+  mode: SessionImportMode;
+  status: ImportedSessionStatus;
+  projectionId: string;
+  currentRevisionId: string;
+  sessionLink: NativeSessionLink;
+  importedAt: string;
+  lastReadAt: string;
+}
+
+export interface SessionImportResult {
+  task: PersistedTask;
+  binding: ImportedSessionBinding;
+  projection: SessionProjection;
+  revision: SessionProjectionRevision;
+  created: boolean;
+}
+
+export const sessionProjectionChangeKinds = ["added", "modified", "deleted", "moved", "uncertain"] as const;
+export type SessionProjectionChangeKind = (typeof sessionProjectionChangeKinds)[number];
+
+export interface SessionProjectionChange {
+  kind: SessionProjectionChangeKind;
+  messageId?: string;
+  previousIndex?: number;
+  nextIndex?: number;
+  role?: SessionMessageRole;
+  preview: string;
+}
+
+export const sessionProjectionDiffStatuses = ["unchanged", "append-only", "external-differences"] as const;
+export type SessionProjectionDiffStatus = (typeof sessionProjectionDiffStatuses)[number];
+
+export interface SessionProjectionDiff {
+  status: SessionProjectionDiffStatus;
+  additions: number;
+  modifications: number;
+  deletions: number;
+  moves: number;
+  uncertainMatches: number;
+  changes: SessionProjectionChange[];
+}
+
+export interface SessionProjectionAudit {
+  id: string;
+  projectionId: string;
+  action: "refresh" | "rebuild" | "restore";
+  result: "unchanged" | "appended" | "differences" | "rebuilt" | "restored" | "failed";
+  engine: SessionEngine;
+  nativeSessionId: string;
+  fromRevisionId: string;
+  toRevisionId?: string;
+  occurredAt: string;
+}
+
+export interface SessionRefreshParams {
+  taskId: string;
+  operationId: string;
+}
+
+export interface SessionRefreshResult {
+  task: PersistedTask;
+  diff: SessionProjectionDiff;
+  currentRevisionId: string;
+  candidateRevisionId?: string;
+  audit: SessionProjectionAudit;
+}
+
+export interface SessionRebuildParams {
+  taskId: string;
+  candidateRevisionId: string;
+  confirmed: boolean;
+}
+
+export interface SessionRevisionListParams { taskId: string; }
+export interface SessionRevisionSummary {
+  id: string;
+  ordinal: number;
+  messageCount: number;
+  createdAt: string;
+  sourceUpdatedAt?: string;
+  current: boolean;
+}
+export interface SessionRevisionListResult {
+  currentRevisionId: string;
+  revisions: SessionRevisionSummary[];
+  audits: SessionProjectionAudit[];
+}
+
+export interface SessionRevisionRestoreParams {
+  taskId: string;
+  revisionId: string;
+  confirmed: boolean;
+}
+
+export interface SessionReadParams extends SessionListParams {
+  nativeSessionId: string;
+}
+
+export interface SessionReadResult {
+  metadata: SessionMetadata;
+  messages: SessionMessage[];
+  nextCursor?: string | null;
+  truncated: boolean;
+}
+
+export interface SessionResumeCheckParams {
+  operationId: string;
+  engine: SessionEngine;
+  providerConnection: ProviderConnectionRef;
+  nativeSessionId: string;
+}
+
+export interface SessionResumeCheckResult extends SessionIdentity {
+  status: SessionResumeStatus;
+  reason?: string;
+}
+
+export interface SessionCancelParams {
+  operationId: string;
 }
 
 export interface RunCancelParams {
@@ -799,6 +1078,46 @@ export interface PersistedPlanStep {
   state: PersistedPlanState;
 }
 
+export interface HandoffTarget {
+  agentId: string;
+  agentName: string;
+  adapter: RunAdapter;
+  agentProfileId?: string;
+  agentRevisionId: string;
+  providerConnection: ProviderConnectionRef;
+  model: string;
+  modelSource: ModelSource;
+  modelVerificationStatus: ModelVerificationStatus;
+  reasoningEffort?: ReasoningEffort;
+  permissionMode: PermissionMode;
+}
+
+export interface ContextHandoffFactBundle {
+  sourceTask: { id: string; title: string; workspaceId: string; agentRevisionId: string };
+  messages: Array<{ id: string; role: "user" | "assistant"; text: string; createdAt?: string }>;
+  latestRun?: { id: string; status: PersistedRunStatus; prompt: string; result?: string; finishedAt?: string };
+  files: Array<{ path: string; status: Exclude<GitChangeKind, "renamed" | "copied" | "unmerged">; additions: number; deletions: number; runId: string; snapshotId: string }>;
+  incomplete: string[];
+}
+
+export interface ContextHandoffSnapshot {
+  id: string;
+  sourceTaskId: string;
+  targetTaskId: string;
+  workspaceId: string;
+  target: HandoffTarget;
+  facts: ContextHandoffFactBundle;
+  agentSummary?: string;
+  agentSummaryProvenance?: HandoffSummaryProvenance;
+  constraints?: string;
+  createdAt: string;
+}
+
+export interface HandoffRelation {
+  snapshotId: string;
+  taskId: string;
+}
+
 export interface PersistedRunEvent {
   id: string;
   sequence: number;
@@ -898,6 +1217,66 @@ export interface PersistedTask {
   activity: RunActivity[];
   runs: PersistedRun[];
   reviewAcceptances?: GitReviewAcceptance[];
+  importedSession?: ImportedSessionBinding;
+  handoffSource?: HandoffRelation;
+  handoffTargets?: HandoffRelation[];
+}
+
+export interface HandoffPreviewParams {
+  sourceTaskId: string;
+  targetAgentId: string;
+  messageIds: string[];
+  filePaths: string[];
+}
+
+export interface HandoffPreviewResult {
+  target: HandoffTarget;
+  facts: ContextHandoffFactBundle;
+  sourceAgentAvailable: boolean;
+  fingerprint: string;
+}
+
+export interface HandoffSummaryGenerateParams extends HandoffPreviewParams {
+  fingerprint: string;
+}
+
+export interface HandoffSummaryProvenance {
+  sourceAgentRevisionId: string;
+  sourceAdapter: Exclude<RunAdapter, "mock">;
+  generatedAt: string;
+  isolated: true;
+  nativeSessionPersisted: false;
+}
+
+export interface HandoffSummaryGenerateResult {
+  generationId: string;
+  summary: string;
+  provenance: HandoffSummaryProvenance;
+}
+
+export interface HandoffSummaryRuntimeParams {
+  operationId: string;
+  adapter: Exclude<RunAdapter, "mock">;
+  prompt: string;
+  model?: string;
+  reasoningEffort?: ReasoningEffort;
+  profileId?: string;
+  agentRevisionId: string;
+  providerConnection: ProviderConnectionRef;
+}
+
+export interface HandoffCommitParams extends HandoffPreviewParams {
+  fingerprint: string;
+  agentSummary?: string;
+  agentSummaryGenerationId?: string;
+  constraints?: string;
+  confirmed: true;
+}
+
+export interface HandoffCommitResult {
+  sourceTask: PersistedTask;
+  targetTask: PersistedTask;
+  snapshot: ContextHandoffSnapshot;
 }
 
 export interface WorkspaceTaskState {
@@ -961,6 +1340,30 @@ export interface RuntimeRequestMap {
     params: AgentModelListParams;
     result: AgentModelListResult;
   };
+  "session.list": {
+    params: SessionListParams;
+    result: SessionListResult;
+  };
+  "session.discover": {
+    params: SessionDiscoverParams;
+    result: SessionDiscoverResult;
+  };
+  "session.preview": {
+    params: SessionPreviewParams;
+    result: SessionPreviewResult;
+  };
+  "session.read": {
+    params: SessionReadParams;
+    result: SessionReadResult;
+  };
+  "session.resume.check": {
+    params: SessionResumeCheckParams;
+    result: SessionResumeCheckResult;
+  };
+  "session.cancel": {
+    params: SessionCancelParams;
+    result: { ok: true };
+  };
   "agent.profile.list": {
     params: Record<string, never>;
     result: { profiles: AgentProfile[] };
@@ -976,6 +1379,10 @@ export interface RuntimeRequestMap {
   "agent.profile.delete": {
     params: AgentProfileDeleteParams;
     result: { ok: true };
+  };
+  "handoff.summary.generate": {
+    params: HandoffSummaryRuntimeParams;
+    result: HandoffSummaryGenerateResult;
   };
   "run.start": {
     params: RunStartParams;
@@ -1274,6 +1681,14 @@ export interface RuxDesktopApi {
   openWorkspaceLocation(target?: WorkspaceOpenTarget): Promise<WorkspaceOpenResult>;
   loadTaskState(workspaceId?: string): Promise<WorkspaceTaskState>;
   saveTaskState(state: WorkspaceTaskState): Promise<TaskStateSaveResult>;
+  importSession(params: SessionImportParams): Promise<SessionImportResult>;
+  refreshSession(params: SessionRefreshParams): Promise<SessionRefreshResult>;
+  rebuildSession(params: SessionRebuildParams): Promise<SessionRefreshResult>;
+  listSessionRevisions(params: SessionRevisionListParams): Promise<SessionRevisionListResult>;
+  restoreSessionRevision(params: SessionRevisionRestoreParams): Promise<SessionRefreshResult>;
+  previewHandoff(params: HandoffPreviewParams): Promise<HandoffPreviewResult>;
+  generateHandoffSummary(params: HandoffSummaryGenerateParams): Promise<HandoffSummaryGenerateResult>;
+  commitHandoff(params: HandoffCommitParams): Promise<HandoffCommitResult>;
   request<M extends RendererRuntimeMethod>(
     method: M,
     params: RuntimeRequestMap[M]["params"],
@@ -1424,6 +1839,237 @@ export const providerConnectionRefSchema = z.object({
     });
   }
 });
+
+const sessionOperationIdSchema = z.string().trim().min(1).max(120);
+const sessionNativeIdSchema = z.string().trim().min(1).max(500);
+const sessionCursorSchema = z.string().min(1).max(4_096).nullable().optional();
+
+export const sessionIdentitySchema = z.object({
+  engine: z.enum(sessionEngines),
+  providerConnectionId: z.string().trim().min(1).max(240),
+  nativeSessionId: sessionNativeIdSchema,
+}).strict();
+
+export const sessionMetadataSchema = sessionIdentitySchema.extend({
+  title: z.string().max(500).optional(),
+  summary: z.string().max(4_000).optional(),
+  cwd: z.string().max(4_096).optional(),
+  model: z.string().max(240).optional(),
+  createdAt: z.iso.datetime({ offset: true }).optional(),
+  updatedAt: z.iso.datetime({ offset: true }).optional(),
+  messageCount: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
+  resumeStatus: z.enum(sessionResumeStatuses),
+}).strict();
+
+export const sessionContentPartSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("text"), text: z.string().max(262_144) }).strict(),
+  z.object({
+    type: z.literal("tool-call"),
+    name: z.string().trim().min(1).max(240),
+    callId: z.string().max(500).optional(),
+    input: z.string().max(262_144).optional(),
+  }).strict(),
+  z.object({
+    type: z.literal("tool-result"),
+    callId: z.string().max(500).optional(),
+    output: z.string().max(262_144).optional(),
+    isError: z.boolean().optional(),
+  }).strict(),
+  z.object({
+    type: z.literal("unsupported"),
+    providerType: z.string().trim().min(1).max(240),
+  }).strict(),
+]);
+
+export const sessionMessageSchema = z.object({
+  id: z.string().trim().min(1).max(500),
+  role: z.enum(sessionMessageRoles),
+  createdAt: z.iso.datetime({ offset: true }).optional(),
+  content: z.array(sessionContentPartSchema).max(1_000),
+}).strict();
+
+const sessionConnectorBaseParamsSchema = z.object({
+  operationId: sessionOperationIdSchema,
+  engine: z.enum(sessionEngines),
+  providerConnection: providerConnectionRefSchema,
+}).strict().superRefine((params, context) => {
+  if (params.providerConnection.kind !== "official-cli" || params.providerConnection.engine !== params.engine) {
+    context.addIssue({
+      code: "custom",
+      path: ["providerConnection"],
+      message: "Session discovery requires the matching official CLI Connection",
+    });
+  }
+});
+
+export const sessionListParamsSchema = sessionConnectorBaseParamsSchema.safeExtend({
+  cursor: sessionCursorSchema,
+  limit: z.number().int().min(1).max(100).default(50),
+});
+
+export const sessionDiscoverParamsSchema = sessionListParamsSchema.safeExtend({
+  activeWorkspaceId: z.string().trim().min(1).max(240),
+});
+
+export const sessionReadParamsSchema = sessionListParamsSchema.safeExtend({
+  nativeSessionId: sessionNativeIdSchema,
+});
+
+export const sessionPreviewParamsSchema = sessionReadParamsSchema.safeExtend({
+  activeWorkspaceId: z.string().trim().min(1).max(240),
+});
+
+export const sessionImportParamsSchema = sessionPreviewParamsSchema.safeExtend({
+  mode: z.enum(sessionImportModes),
+});
+
+export const sessionResumeCheckParamsSchema = sessionConnectorBaseParamsSchema.safeExtend({
+  nativeSessionId: sessionNativeIdSchema,
+});
+
+export const sessionCancelParamsSchema = z.object({
+  operationId: sessionOperationIdSchema,
+}).strict();
+
+export const sessionListResultSchema = z.object({
+  engine: z.enum(sessionEngines),
+  sessions: z.array(sessionMetadataSchema).max(100),
+  nextCursor: sessionCursorSchema,
+}).strict();
+
+export const sessionAttributionSchema = z.object({
+  status: z.enum(sessionAttributionStatuses),
+  workspaceId: z.string().trim().min(1).max(240).optional(),
+  workspaceName: z.string().trim().min(1).max(240).optional(),
+  previousWorkspaceId: z.string().trim().min(1).max(240).optional(),
+  previousWorkspaceName: z.string().trim().min(1).max(240).optional(),
+  reason: z.string().max(2_000).optional(),
+}).strict();
+
+export const discoveredSessionSchema = z.object({
+  identityKey: z.string().regex(/^[a-f0-9]{64}$/),
+  metadata: sessionMetadataSchema,
+  attribution: sessionAttributionSchema,
+}).strict();
+
+export const sessionDiscoverResultSchema = z.object({
+  engine: z.enum(sessionEngines),
+  current: z.array(discoveredSessionSchema).max(100),
+  unassigned: z.array(discoveredSessionSchema).max(100),
+  authorizationRequired: z.array(discoveredSessionSchema).max(100),
+  migrationSuggestions: z.array(discoveredSessionSchema).max(100),
+  nextCursor: sessionCursorSchema,
+}).strict();
+
+export const sessionReadResultSchema = z.object({
+  metadata: sessionMetadataSchema,
+  messages: z.array(sessionMessageSchema).max(200),
+  nextCursor: sessionCursorSchema,
+  truncated: z.boolean(),
+}).strict();
+
+export const sessionResumeCheckResultSchema = sessionIdentitySchema.extend({
+  status: z.enum(sessionResumeStatuses),
+  reason: z.string().max(2_000).optional(),
+}).strict();
+
+export const sessionPreviewResultSchema = sessionReadResultSchema.extend({
+  messages: z.array(sessionMessageSchema).max(20_000),
+  identityKey: z.string().regex(/^[a-f0-9]{64}$/),
+  resume: sessionResumeCheckResultSchema,
+}).strict();
+
+export const sessionLinkSchema = z.object({
+  source: sessionIdentitySchema,
+  taskId: z.string().trim().min(1).max(240),
+  workspaceId: z.string().trim().min(1).max(240),
+  linkedAt: z.iso.datetime({ offset: true }),
+}).strict();
+
+export const sessionProjectionSchema = z.object({
+  id: z.string().trim().min(1).max(240),
+  source: sessionIdentitySchema,
+  taskId: z.string().trim().min(1).max(240),
+  workspaceId: z.string().trim().min(1).max(240),
+  mode: z.enum(sessionImportModes),
+  status: z.enum(importedSessionStatuses),
+  latestRevisionId: z.string().trim().min(1).max(240),
+  createdAt: z.iso.datetime({ offset: true }),
+  updatedAt: z.iso.datetime({ offset: true }),
+}).strict();
+
+export const sessionProjectionRevisionSchema = z.object({
+  id: z.string().trim().min(1).max(240),
+  projectionId: z.string().trim().min(1).max(240),
+  ordinal: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  sourceUpdatedAt: z.iso.datetime({ offset: true }).optional(),
+  messageIds: z.array(z.string().trim().min(1).max(500)).max(100_000),
+  metadata: sessionMetadataSchema,
+  messages: z.array(sessionMessageSchema).max(20_000),
+  contentHash: z.string().regex(/^[a-f0-9]{64}$/),
+  createdAt: z.iso.datetime({ offset: true }),
+}).strict();
+
+export const importedSessionBindingSchema = z.object({
+  identityKey: z.string().regex(/^[a-f0-9]{64}$/),
+  source: z.enum(["codex-import", "claude-code-import"]),
+  mode: z.enum(sessionImportModes),
+  status: z.enum(importedSessionStatuses),
+  projectionId: z.string().trim().min(1).max(240),
+  currentRevisionId: z.string().trim().min(1).max(240),
+  sessionLink: nativeSessionLinkSchema,
+  importedAt: z.iso.datetime({ offset: true }),
+  lastReadAt: z.iso.datetime({ offset: true }),
+}).strict();
+
+export const sessionProjectionChangeSchema = z.object({
+  kind: z.enum(sessionProjectionChangeKinds),
+  messageId: z.string().trim().min(1).max(500).optional(),
+  previousIndex: z.number().int().nonnegative().max(20_000).optional(),
+  nextIndex: z.number().int().nonnegative().max(20_000).optional(),
+  role: z.enum(sessionMessageRoles).optional(),
+  preview: z.string().max(1_000),
+}).strict();
+
+export const sessionProjectionDiffSchema = z.object({
+  status: z.enum(sessionProjectionDiffStatuses),
+  additions: z.number().int().nonnegative(),
+  modifications: z.number().int().nonnegative(),
+  deletions: z.number().int().nonnegative(),
+  moves: z.number().int().nonnegative(),
+  uncertainMatches: z.number().int().nonnegative(),
+  changes: z.array(sessionProjectionChangeSchema).max(200),
+}).strict();
+
+export const sessionProjectionAuditSchema = z.object({
+  id: z.string().trim().min(1).max(240),
+  projectionId: z.string().trim().min(1).max(240),
+  action: z.enum(["refresh", "rebuild", "restore"]),
+  result: z.enum(["unchanged", "appended", "differences", "rebuilt", "restored", "failed"]),
+  engine: z.enum(sessionEngines),
+  nativeSessionId: sessionNativeIdSchema,
+  fromRevisionId: z.string().trim().min(1).max(240),
+  toRevisionId: z.string().trim().min(1).max(240).optional(),
+  occurredAt: z.iso.datetime({ offset: true }),
+}).strict();
+
+export const sessionRefreshParamsSchema = z.object({
+  taskId: z.string().trim().min(1).max(240),
+  operationId: sessionOperationIdSchema,
+}).strict();
+
+export const sessionRebuildParamsSchema = z.object({
+  taskId: z.string().trim().min(1).max(240),
+  candidateRevisionId: z.string().trim().min(1).max(240),
+  confirmed: z.literal(true),
+}).strict();
+
+export const sessionRevisionListParamsSchema = z.object({ taskId: z.string().trim().min(1).max(240) }).strict();
+export const sessionRevisionRestoreParamsSchema = z.object({
+  taskId: z.string().trim().min(1).max(240),
+  revisionId: z.string().trim().min(1).max(240),
+  confirmed: z.literal(true),
+}).strict();
 
 export const modelSourceSchema = z.enum(modelSources);
 export const modelVerificationStatusSchema = z.enum(modelVerificationStatuses);
@@ -1995,6 +2641,75 @@ export const persistedRunSchema = z.object({
   });
 });
 
+export const handoffTargetSchema = z.object({
+  agentId: z.string().min(1).max(120),
+  agentName: z.string().min(1).max(240),
+  adapter: z.enum(runAdapters),
+  agentProfileId: z.string().min(1).max(120).optional(),
+  agentRevisionId: agentRevisionIdentifierSchema,
+  providerConnection: providerConnectionRefSchema,
+  model: z.string().min(1).max(240),
+  modelSource: modelSourceSchema,
+  modelVerificationStatus: modelVerificationStatusSchema,
+  reasoningEffort: reasoningEffortSchema.optional(),
+  permissionMode: z.enum(permissionModes),
+}).strict();
+
+export const contextHandoffFactBundleSchema = z.object({
+  sourceTask: z.object({
+    id: z.string().min(1).max(240),
+    title: z.string().min(1).max(10_000),
+    workspaceId: persistedWorkspaceIdSchema,
+    agentRevisionId: agentRevisionIdentifierSchema,
+  }).strict(),
+  messages: z.array(z.object({
+    id: z.string().min(1).max(300),
+    role: z.enum(["user", "assistant"]),
+    text: z.string().max(100_000),
+    createdAt: persistedIsoDateSchema.optional(),
+  }).strict()).max(500),
+  latestRun: z.object({
+    id: z.string().min(1).max(120),
+    status: z.enum(persistedRunStatuses),
+    prompt: z.string().max(100_000),
+    result: z.string().max(100_000).optional(),
+    finishedAt: persistedIsoDateSchema.optional(),
+  }).strict().optional(),
+  files: z.array(z.object({
+    path: z.string().min(1).max(4_096),
+    status: z.enum(["added", "modified", "deleted", "type-changed", "unknown"]),
+    additions: z.number().int().nonnegative(),
+    deletions: z.number().int().nonnegative(),
+    runId: z.string().min(1).max(120),
+    snapshotId: z.string().min(1).max(240),
+  }).strict()).max(500),
+  incomplete: z.array(z.string().min(1).max(10_000)).max(1_000),
+}).strict();
+
+export const contextHandoffSnapshotSchema = z.object({
+  id: z.string().min(1).max(240),
+  sourceTaskId: z.string().min(1).max(240),
+  targetTaskId: z.string().min(1).max(240),
+  workspaceId: persistedWorkspaceIdSchema,
+  target: handoffTargetSchema,
+  facts: contextHandoffFactBundleSchema,
+  agentSummary: z.string().max(100_000).optional(),
+  agentSummaryProvenance: z.object({
+    sourceAgentRevisionId: agentRevisionIdentifierSchema,
+    sourceAdapter: z.enum(["codex", "claude-code"]),
+    generatedAt: persistedIsoDateSchema,
+    isolated: z.literal(true),
+    nativeSessionPersisted: z.literal(false),
+  }).strict().optional(),
+  constraints: z.string().max(100_000).optional(),
+  createdAt: persistedIsoDateSchema,
+}).strict();
+
+export const handoffRelationSchema = z.object({
+  snapshotId: z.string().min(1).max(240),
+  taskId: z.string().min(1).max(240),
+}).strict();
+
 export const persistedTaskSchema = z.object({
   id: z.string().min(1).max(240),
   workspaceId: persistedWorkspaceIdSchema,
@@ -2026,6 +2741,9 @@ export const persistedTaskSchema = z.object({
   activity: z.array(persistedRunActivitySchema).max(20_000),
   runs: z.array(persistedRunSchema).max(2_000).default([]),
   reviewAcceptances: z.array(gitReviewAcceptanceSchema).max(2_000).default([]),
+  importedSession: importedSessionBindingSchema.optional(),
+  handoffSource: handoffRelationSchema.optional(),
+  handoffTargets: z.array(handoffRelationSchema).max(2_000).default([]),
 }).strict().superRefine((task, context) => {
   if (task.providerConnection.engine !== task.adapter) {
     context.addIssue({ code: "custom", path: ["providerConnection", "engine"], message: "Task Connection Engine must match its adapter" });
@@ -2049,6 +2767,15 @@ export const persistedTaskSchema = z.object({
       }
     }
   });
+  if (task.importedSession) {
+    const link = task.importedSession.sessionLink;
+    if (link.workspaceId !== task.workspaceId || link.engine !== task.adapter) {
+      context.addIssue({ code: "custom", path: ["importedSession", "sessionLink"], message: "Imported Native Session must match its Task Engine and Workspace" });
+    }
+    if (link.providerConnectionId !== task.providerConnection.id || link.agentRevisionId !== task.agentRevisionId) {
+      context.addIssue({ code: "custom", path: ["importedSession", "sessionLink"], message: "Imported Native Session must match its Task Connection and Agent Revision" });
+    }
+  }
   task.reviewAcceptances.forEach((acceptance, index) => {
     if (!acceptance.runId || !acceptance.runPatchSnapshotId) return;
     const run = task.runs.find((candidate) => candidate.id === acceptance.runId);
@@ -2092,6 +2819,94 @@ export const persistedTaskSchema = z.object({
     }
   });
 });
+
+export const sessionImportResultSchema = z.object({
+  task: persistedTaskSchema,
+  binding: importedSessionBindingSchema,
+  projection: sessionProjectionSchema,
+  revision: sessionProjectionRevisionSchema,
+  created: z.boolean(),
+}).strict();
+
+export const sessionRefreshResultSchema = z.object({
+  task: persistedTaskSchema,
+  diff: sessionProjectionDiffSchema,
+  currentRevisionId: z.string().trim().min(1).max(240),
+  candidateRevisionId: z.string().trim().min(1).max(240).optional(),
+  audit: sessionProjectionAuditSchema,
+}).strict();
+
+export const sessionRevisionSummarySchema = z.object({
+  id: z.string().trim().min(1).max(240),
+  ordinal: z.number().int().positive(),
+  messageCount: z.number().int().nonnegative(),
+  createdAt: z.iso.datetime({ offset: true }),
+  sourceUpdatedAt: z.iso.datetime({ offset: true }).optional(),
+  current: z.boolean(),
+}).strict();
+
+export const sessionRevisionListResultSchema = z.object({
+  currentRevisionId: z.string().trim().min(1).max(240),
+  revisions: z.array(sessionRevisionSummarySchema).max(10_000),
+  audits: z.array(sessionProjectionAuditSchema).max(10_000),
+}).strict();
+
+export const handoffPreviewParamsSchema = z.object({
+  sourceTaskId: z.string().min(1).max(240),
+  targetAgentId: z.string().min(1).max(120),
+  messageIds: z.array(z.string().min(1).max(300)).max(500),
+  filePaths: z.array(z.string().min(1).max(4_096)).max(500),
+}).strict();
+
+export const handoffPreviewResultSchema = z.object({
+  target: handoffTargetSchema,
+  facts: contextHandoffFactBundleSchema,
+  sourceAgentAvailable: z.boolean(),
+  fingerprint: z.string().length(64),
+}).strict();
+
+export const handoffSummaryGenerateParamsSchema = handoffPreviewParamsSchema.safeExtend({
+  fingerprint: z.string().length(64),
+});
+
+export const handoffSummaryProvenanceSchema = z.object({
+  sourceAgentRevisionId: agentRevisionIdentifierSchema,
+  sourceAdapter: z.enum(["codex", "claude-code"]),
+  generatedAt: persistedIsoDateSchema,
+  isolated: z.literal(true),
+  nativeSessionPersisted: z.literal(false),
+}).strict();
+
+export const handoffSummaryGenerateResultSchema = z.object({
+  generationId: z.string().min(1).max(240),
+  summary: z.string().trim().min(1).max(100_000),
+  provenance: handoffSummaryProvenanceSchema,
+}).strict();
+
+export const handoffSummaryRuntimeParamsSchema = z.object({
+  operationId: z.string().min(1).max(240),
+  adapter: z.enum(["codex", "claude-code"]),
+  prompt: z.string().min(1).max(100_000),
+  model: z.string().min(1).max(240).optional(),
+  reasoningEffort: reasoningEffortSchema.optional(),
+  profileId: z.string().min(1).max(120).optional(),
+  agentRevisionId: agentRevisionIdentifierSchema,
+  providerConnection: providerConnectionRefSchema,
+}).strict();
+
+export const handoffCommitParamsSchema = handoffPreviewParamsSchema.safeExtend({
+  fingerprint: z.string().length(64),
+  agentSummary: z.string().max(100_000).optional(),
+  agentSummaryGenerationId: z.string().min(1).max(240).optional(),
+  constraints: z.string().max(100_000).optional(),
+  confirmed: z.literal(true),
+});
+
+export const handoffCommitResultSchema = z.object({
+  sourceTask: persistedTaskSchema,
+  targetTask: persistedTaskSchema,
+  snapshot: contextHandoffSnapshotSchema,
+}).strict();
 
 export const workspaceTaskStateSchema = z.object({
   version: z.literal(2),

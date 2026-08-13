@@ -146,6 +146,30 @@ export function createMockRuntime() {
       return { adapter: "codex", source: "engine-catalog", fetchedAt: new Date().toISOString(), models: [], nextCursor: null };
     },
 
+    async discoverSessions() {
+      throw new Error("会话发现仅在 Rux 桌面应用中可用");
+    },
+
+    async previewSession() {
+      throw new Error("会话预览仅在 Rux 桌面应用中可用");
+    },
+
+    async importSession() {
+      throw new Error("会话导入仅在 Rux 桌面应用中可用");
+    },
+
+    async refreshSession() { throw new Error("会话刷新仅在 Rux 桌面应用中可用"); },
+    async rebuildSession() { throw new Error("会话重建仅在 Rux 桌面应用中可用"); },
+    async listSessionRevisions() { throw new Error("会话版本仅在 Rux 桌面应用中可用"); },
+    async restoreSessionRevision() { throw new Error("会话版本恢复仅在 Rux 桌面应用中可用"); },
+    async previewHandoff() { throw new Error("Context Handoff 仅在 Rux 桌面应用中可用"); },
+    async generateHandoffSummary() { throw new Error("Context Handoff 摘要生成仅在 Rux 桌面应用中可用"); },
+    async commitHandoff() { throw new Error("Context Handoff 仅在 Rux 桌面应用中可用"); },
+
+    async cancelSessionDiscovery() {
+      return { ok: true };
+    },
+
     async login() {
       throw new Error("Rux 登录仅在 Rux 桌面应用中可用");
     },
@@ -368,6 +392,30 @@ function createDesktopRuntime(api) {
 
     listAgentModels(params = { adapter: "codex" }) {
       return api.request("agent.model.list", params);
+    },
+
+    discoverSessions(params) {
+      return api.request("session.discover", params);
+    },
+
+    previewSession(params) {
+      return api.request("session.preview", params);
+    },
+
+    importSession(params) {
+      return api.importSession(params);
+    },
+
+    refreshSession(params) { return api.refreshSession(params); },
+    rebuildSession(params) { return api.rebuildSession(params); },
+    listSessionRevisions(params) { return api.listSessionRevisions(params); },
+    restoreSessionRevision(params) { return api.restoreSessionRevision(params); },
+    previewHandoff(params) { return api.previewHandoff(params); },
+    generateHandoffSummary(params) { return api.generateHandoffSummary(params); },
+    commitHandoff(params) { return api.commitHandoff(params); },
+
+    cancelSessionDiscovery(operationId) {
+      return api.request("session.cancel", { operationId });
     },
 
     authStatus() {

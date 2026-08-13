@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
-import { migrateWorkspaceTaskStateV1, TaskStore } from "../src/electron/task-store.ts";
+import { compareSessionProjection, migrateWorkspaceTaskStateV1, TaskStore } from "../src/electron/task-store.ts";
 import {
   gitRunReviewAcceptanceSchema,
   workspaceTaskStateSchema,
@@ -244,7 +244,7 @@ test("upgrades an existing unversioned database without losing stored state", as
     assert.equal(loaded.tasks[0].messages[0].text, "Keep this after restart");
 
     const migrated = new DatabaseSync(databasePath);
-    assert.equal(migrated.prepare("PRAGMA user_version").get().user_version, 2);
+    assert.equal(migrated.prepare("PRAGMA user_version").get().user_version, 5);
     const migratedState = JSON.parse(migrated.prepare(`
         SELECT state_json FROM workspace_task_state WHERE workspace_id = ?
       `).get(original.workspaceId).state_json);
@@ -275,16 +275,16 @@ test("rejects a database from a future schema version without mutating it", asyn
       INSERT INTO workspace_task_state (workspace_id, state_json, updated_at)
       VALUES (?, ?, ?)
     `).run(original.workspaceId, serialized, original.updatedAt);
-    future.exec("PRAGMA user_version = 3");
+    future.exec("PRAGMA user_version = 6");
     future.close();
 
     assert.throws(
       () => createTaskStore(databasePath),
-      /schema version 3 is newer than supported version 2/,
+      /schema version 6 is newer than supported version 5/,
     );
 
     const unchanged = new DatabaseSync(databasePath);
-    assert.equal(unchanged.prepare("PRAGMA user_version").get().user_version, 3);
+    assert.equal(unchanged.prepare("PRAGMA user_version").get().user_version, 6);
     assert.equal(
       unchanged.prepare(`
         SELECT state_json FROM workspace_task_state WHERE workspace_id = ?
@@ -402,6 +402,49 @@ test("persists Task, Message, Run, and event data across store reopen", async ()
     assert.equal(loaded.tasks[0].runs[0].gitBaseline.id, "baseline-1");
     assert.equal(loaded.tasks[0].runs[0].gitPatch.files[0].path, "src/index.ts");
     assert.equal(loaded.tasks[0].runs[0].sessionLink.nativeSessionId, "claude-session-1");
+  } finally {
+    await rm(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
+test("creates an immutable confirmed Context Handoff without changing the source Task", async () => {
+  const temporaryRoot = await mkdtemp(join(tmpdir(), "rux-task-store-handoff-"));
+  const databasePath = join(temporaryRoot, "state.sqlite3");
+  try {
+    const store = createTaskStore(databasePath);
+    const state = taskState("workspace-a");
+    state.tasks[0].plan = [{ label: "Finish review", state: "pending" }];
+    store.save(state);
+    const target = {
+      agentId: "codex", agentName: "Rux", adapter: "codex",
+      agentRevisionId: "builtin:codex@1",
+      providerConnection: { id: "cli:codex:default", kind: "official-cli", engine: "codex", label: "Codex CLI default" },
+      model: "Rux default", modelSource: "engine-default", modelVerificationStatus: "not-required", permissionMode: "acceptEdits",
+    };
+    const selection = { workspaceId: "workspace-a", sourceTaskId: "task-workspace-a", target, messageIds: ["message-1"], filePaths: ["src/index.ts"], sourceAgentAvailable: false };
+    const preview = store.previewContextHandoff(selection);
+    assert.equal(preview.facts.messages.length, 1);
+    assert.equal(preview.facts.files[0].snapshotId, "f".repeat(64));
+    assert.deepEqual(preview.facts.incomplete, ["Finish review"]);
+    assert.equal(preview.sourceAgentAvailable, false);
+    assert.equal(store.load("workspace-a").tasks.length, 1, "preview must not create a Task");
+
+    const provenance = { sourceAgentRevisionId: state.tasks[0].agentRevisionId, sourceAdapter: "claude-code", generatedAt: savedAt, isolated: true, nativeSessionPersisted: false };
+    const committed = store.commitContextHandoff({ ...selection, fingerprint: preview.fingerprint, agentSummary: "Agent generated, user reviewed.", agentSummaryProvenance: provenance, constraints: "Do not edit yet." });
+    assert.equal(committed.targetTask.agentRevisionId, "builtin:codex@1");
+    assert.equal(committed.targetTask.runs.length, 0);
+    assert.equal(committed.targetTask.handoffSource.taskId, committed.sourceTask.id);
+    assert.equal(committed.sourceTask.handoffTargets[0].taskId, committed.targetTask.id);
+    assert.match(committed.targetTask.messages[0].text, /Agent-generated summary \(reviewed by user\)/);
+    assert.equal(store.getContextHandoff(committed.snapshot.id).agentSummary, "Agent generated, user reviewed.");
+    assert.deepEqual(store.getContextHandoff(committed.snapshot.id).agentSummaryProvenance, provenance);
+
+    const changed = store.load("workspace-a");
+    changed.tasks.find((task) => task.id === committed.sourceTask.id).messages[0].text = "source changed later";
+    store.save(changed);
+    assert.equal(store.getContextHandoff(committed.snapshot.id).facts.messages[0].text, "Keep this after restart");
+    assert.throws(() => store.commitContextHandoff({ ...selection, fingerprint: preview.fingerprint }), /changed/);
+    store.close();
   } finally {
     await rm(temporaryRoot, { recursive: true, force: true });
   }
@@ -794,6 +837,163 @@ test("merges stale cross-client snapshots without dropping messages, run events,
   } finally {
     desktopStore.close();
     tuiStore.close();
+    await rm(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
+test("imports an external Session atomically, normalizes content, and deduplicates repeated imports", async () => {
+  const temporaryRoot = await mkdtemp(join(tmpdir(), "rux-session-import-"));
+  const databasePath = join(temporaryRoot, "state.sqlite3");
+  const preview = {
+    identityKey: "a".repeat(64),
+    metadata: {
+      engine: "codex",
+      providerConnectionId: "cli:codex:default",
+      nativeSessionId: "thread-import-1",
+      title: "Imported task",
+      model: "gpt-5",
+      resumeStatus: "available",
+    },
+    messages: [
+      { id: "native-user", role: "user", createdAt: savedAt, content: [{ type: "text", text: "Inspect this" }] },
+      { id: "native-tool", role: "tool", content: [{ type: "tool-call", name: "shell", input: "pwd" }, { type: "unsupported", providerType: "image" }] },
+    ],
+    truncated: false,
+    resume: { engine: "codex", providerConnectionId: "cli:codex:default", nativeSessionId: "thread-import-1", status: "available" },
+  };
+  try {
+    const store = createTaskStore(databasePath, () => savedAt);
+    const first = store.importExternalSession({ workspaceId: "workspace-a", workspaceBranch: "main", preview, mode: "continue" });
+    assert.equal(first.created, true);
+    assert.equal(first.task.importedSession.sessionLink.nativeSessionId, "thread-import-1");
+    assert.match(first.task.messages[1].text, /\[工具调用: shell\]/);
+    assert.match(first.task.messages[1].text, /\[暂不支持的内容类型: image\]/);
+
+    const state = store.load("workspace-a");
+    state.tasks[0].messages.push({ id: "rux-owned", role: "user", text: "local note", time: "现在", createdAt: savedAt });
+    store.save(state);
+    const repeated = store.importExternalSession({ workspaceId: "workspace-a", workspaceBranch: "main", preview, mode: "continue" });
+    assert.equal(repeated.created, false);
+    assert.equal(repeated.revision.id, first.revision.id);
+    assert.equal(store.load("workspace-a").tasks.length, 1);
+    assert.equal(store.load("workspace-a").tasks[0].messages.some((message) => message.id === "rux-owned"), true);
+    const invalidPreview = structuredClone(preview);
+    invalidPreview.identityKey = "b".repeat(64);
+    invalidPreview.metadata.nativeSessionId = "x".repeat(501);
+    invalidPreview.resume.nativeSessionId = invalidPreview.metadata.nativeSessionId;
+    assert.throws(() => store.importExternalSession({ workspaceId: "workspace-a", workspaceBranch: "main", preview: invalidPreview, mode: "view" }));
+    assert.equal(store.load("workspace-a").tasks.length, 1, "a failed import must roll back its Task write");
+    store.close();
+
+    const reopened = createTaskStore(databasePath, () => savedAt);
+    assert.equal(reopened.load("workspace-a").tasks[0].importedSession.projectionId, first.projection.id);
+    reopened.close();
+
+    const database = new DatabaseSync(databasePath);
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM session_projection").get().count, 1);
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM session_projection_revision").get().count, 1);
+    database.close();
+  } finally {
+    await rm(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
+test("allows an unavailable native Session only as a persistent read-only Projection", async () => {
+  const temporaryRoot = await mkdtemp(join(tmpdir(), "rux-session-import-readonly-"));
+  const databasePath = join(temporaryRoot, "state.sqlite3");
+  const preview = {
+    identityKey: "c".repeat(64),
+    metadata: { engine: "codex", providerConnectionId: "cli:codex:default", nativeSessionId: "missing-thread", title: "Historical", resumeStatus: "unavailable" },
+    messages: [{ id: "historical-1", role: "assistant", content: [{ type: "text", text: "still local" }] }],
+    truncated: false,
+    resume: { engine: "codex", providerConnectionId: "cli:codex:default", nativeSessionId: "missing-thread", status: "unavailable", reason: "not found" },
+  };
+  try {
+    const store = createTaskStore(databasePath, () => savedAt);
+    assert.throws(
+      () => store.importExternalSession({ workspaceId: "workspace-a", workspaceBranch: "main", preview, mode: "continue" }),
+      (error) => error.code === "SESSION_RESUME_UNAVAILABLE",
+    );
+    const imported = store.importExternalSession({ workspaceId: "workspace-a", workspaceBranch: "main", preview, mode: "view" });
+    assert.equal(imported.binding.status, "native-unavailable");
+    assert.equal(imported.task.importedSession.mode, "view");
+    store.close();
+    const reopened = createTaskStore(databasePath, () => savedAt);
+    assert.equal(reopened.load("workspace-a").tasks[0].messages[0].text, "still local");
+    assert.equal(reopened.load("workspace-a").tasks[0].importedSession.status, "native-unavailable");
+    reopened.close();
+  } finally {
+    await rm(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
+test("classifies safe append separately from modifications, deletion, reorder, and uncertain fingerprints", () => {
+  const message = (id, text) => ({ id, role: "user", content: [{ type: "text", text }] });
+  const base = [message("m1", "one"), message("m2", "two")];
+  assert.equal(compareSessionProjection(base, base).status, "unchanged");
+  assert.equal(compareSessionProjection(base, [...base, message("m3", "three")]).status, "append-only");
+  const differences = compareSessionProjection(base, [message("m2", "changed"), message("m1", "one")]);
+  assert.equal(differences.status, "external-differences");
+  assert.ok(differences.modifications > 0);
+  assert.ok(differences.moves > 0);
+  const uncertain = compareSessionProjection(
+    [{ ...message("claude-0-00000000-0000-4000-8000-000000000001", "same") }],
+    [{ ...message("claude-0-00000000-0000-4000-8000-000000000002", "same") }],
+  );
+  assert.equal(uncertain.status, "external-differences");
+  assert.equal(uncertain.uncertainMatches, 1);
+});
+
+test("refresh appends safely, holds external differences, rebuilds explicitly, and restores an old Revision", async () => {
+  const temporaryRoot = await mkdtemp(join(tmpdir(), "rux-session-refresh-"));
+  const databasePath = join(temporaryRoot, "state.sqlite3");
+  const basePreview = {
+    identityKey: "d".repeat(64),
+    metadata: { engine: "codex", providerConnectionId: "cli:codex:default", nativeSessionId: "thread-refresh", title: "Refresh task", resumeStatus: "available" },
+    messages: [
+      { id: "m1", role: "user", content: [{ type: "text", text: "one" }] },
+      { id: "m2", role: "assistant", content: [{ type: "text", text: "two" }] },
+    ],
+    truncated: false,
+    resume: { engine: "codex", providerConnectionId: "cli:codex:default", nativeSessionId: "thread-refresh", status: "available" },
+  };
+  try {
+    const store = createTaskStore(databasePath, () => savedAt);
+    const imported = store.importExternalSession({ workspaceId: "workspace-a", workspaceBranch: "main", preview: basePreview, mode: "continue" });
+    const appendedPreview = structuredClone(basePreview);
+    appendedPreview.messages.push({ id: "m3", role: "assistant", content: [{ type: "text", text: "three" }] });
+    const appended = store.refreshExternalSession({ workspaceId: "workspace-a", taskId: imported.task.id, preview: appendedPreview });
+    assert.equal(appended.diff.status, "append-only");
+    assert.notEqual(appended.currentRevisionId, imported.revision.id);
+    assert.equal(appended.task.messages.length, 3);
+
+    const state = store.load("workspace-a");
+    state.tasks[0].messages.push({ id: "rux-owned-refresh", role: "user", text: "keep local", time: "现在", createdAt: savedAt });
+    store.save(state);
+    const changedPreview = structuredClone(appendedPreview);
+    changedPreview.messages[0].content[0].text = "one edited externally";
+    changedPreview.messages.splice(1, 1);
+    const held = store.refreshExternalSession({ workspaceId: "workspace-a", taskId: imported.task.id, preview: changedPreview });
+    assert.equal(held.diff.status, "external-differences");
+    assert.ok(held.candidateRevisionId);
+    assert.equal(held.currentRevisionId, appended.currentRevisionId, "external differences must not replace current Projection");
+    assert.equal(store.load("workspace-a").tasks[0].messages.some((message) => message.text === "two"), true);
+
+    const rebuilt = store.activateSessionRevision("workspace-a", imported.task.id, held.candidateRevisionId, "rebuild");
+    assert.equal(rebuilt.currentRevisionId, held.candidateRevisionId);
+    assert.equal(rebuilt.task.messages.some((message) => message.id === "rux-owned-refresh"), true);
+    assert.equal(rebuilt.task.messages.some((message) => message.text === "two"), false);
+    const restored = store.activateSessionRevision("workspace-a", imported.task.id, imported.revision.id, "restore");
+    assert.equal(restored.currentRevisionId, imported.revision.id);
+    assert.equal(restored.task.messages.some((message) => message.id === "rux-owned-refresh"), true);
+    const history = store.listSessionRevisions("workspace-a", imported.task.id);
+    assert.equal(history.revisions.length, 3);
+    assert.deepEqual(history.audits.map((audit) => audit.action).sort(), ["rebuild", "refresh", "refresh", "restore"].sort());
+    assert.throws(() => store.activateSessionRevision("workspace-a", imported.task.id, "missing-revision", "restore"));
+    store.recordSessionAuditFailure("workspace-a", imported.task.id, "restore");
+    assert.equal(store.listSessionRevisions("workspace-a", imported.task.id).audits.some((audit) => audit.result === "failed"), true);
+    store.close();
+  } finally {
     await rm(temporaryRoot, { recursive: true, force: true });
   }
 });

@@ -215,6 +215,17 @@ function emitStreamScenario() {
 }
 
 function emitRuntimeEchoScenario(prompt) {
+  if (prompt.includes("Generate an optional narrative Context Handoff summary")) {
+    completeItem({
+      type: "agentMessage",
+      id: `message-summary-${runtimeSequence}`,
+      text: "Generated summary from deterministic facts.",
+      phase: "final_answer",
+      memoryCitation: null,
+    });
+    completeTurn("completed");
+    return;
+  }
   if (prompt.includes("Create immutable Run review evidence.")) {
     writeFileSync(join(process.cwd(), "runtime-review.txt"), "runtime run evidence\n", "utf8");
   }
@@ -465,6 +476,60 @@ lines.on("line", (line) => {
     });
     return;
   }
+  if (message.method === "thread/list") {
+    const discoveryFixtures = process.env.RUX_FAKE_CODEX_DISCOVERY_FIXTURES === "1"
+      ? [
+          {
+            id: "thread-unassigned-1",
+            preview: "Missing directory metadata",
+            createdAt: "2026-08-11T23:00:00.000Z",
+            updatedAt: "2026-08-12T00:30:00.000Z",
+          },
+          {
+            id: "thread-needs-authorization-1",
+            preview: "Outside authorized projects",
+            cwd: process.env.RUX_FAKE_CODEX_OUTSIDE_CWD,
+            createdAt: "2026-08-11T22:00:00.000Z",
+            updatedAt: "2026-08-12T00:00:00.000Z",
+          },
+        ]
+      : [];
+    send({
+      id: message.id,
+      result: {
+        data: [{
+          id: "thread-discovered-1",
+          preview: "Discovered fake Thread",
+          cwd: process.cwd(),
+          createdAt: "2026-08-12T00:00:00.000Z",
+          updatedAt: "2026-08-12T01:00:00.000Z",
+        }, ...discoveryFixtures],
+        nextCursor: message.params?.cursor ? null : "threads-page-2",
+      },
+    });
+    return;
+  }
+  if (message.method === "thread/read") {
+    if (message.params?.threadId === "missing-thread") {
+      send({ id: message.id, error: { code: -32044, message: "native thread not found" } });
+      return;
+    }
+    send({
+      id: message.id,
+      result: {
+        thread: {
+          id: message.params?.threadId,
+          preview: "Discovered fake Thread",
+          cwd: process.cwd(),
+          turns: [{ items: [
+            { id: "discovered-user-1", type: "userMessage", content: [{ type: "input_text", text: "Inspect the fixture" }] },
+            { id: "discovered-assistant-1", type: "agentMessage", text: "Fixture inspected" },
+          ] }],
+        },
+      },
+    });
+    return;
+  }
   if (message.method === "thread/start" || message.method === "thread/resume") {
     if (requireAuthentication && !isAuthenticated()) {
       send({
@@ -525,7 +590,7 @@ lines.on("line", (line) => {
     else if (scenario === "command-approve") emitCommandApprovalScenario(false);
     else if (scenario === "command-session-only") emitCommandApprovalScenario(false, true);
     else if (scenario === "duplicate-approval") emitDuplicateApprovalScenario();
-    else if (scenario === "line-limit") process.stdout.write("x".repeat(4 * 1024 * 1024 + 1));
+    else if (scenario === "line-limit") process.stdout.write("x".repeat(32 * 1024 * 1024 + 1));
     else if (scenario === "file-deny") emitFileApprovalScenario();
     else if (scenario === "permissions") emitPermissionsApprovalScenario();
     else if (scenario === "stop") emitCommandApprovalScenario(true);

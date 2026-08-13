@@ -58,10 +58,10 @@ P1 明确不包含：
 | 认证 | Renderer 已提供用户显式的 Rux/Claude Code 检测、状态修复与官方 CLI 登录；启动和打开面板均不自动检测 | P0-E1 已完成，后续只扩展新的 Engine/Provider |
 | Agent Profile | Profile Store 以 Definition 指向追加式不可变 Revision；Task/Run 固定具体 Revision | P0-E2 已完成，P1 再扩展跨 Agent Handoff |
 | 模型 | Codex 有结构化目录；Claude/自定义配置没有统一目录 | 增加 Engine 默认、已验证和未验证模型状态 |
-| Task Store | Main 管理的 Workspace 级 SQLite，持久化 Task/Message/Run/Event | 版本化迁移，增加 Revision/Connection/Session Projection 数据 |
+| Task Store | Main 管理的 Workspace 级 SQLite v5，持久化 Task/Message/Run/Event、Session Projection Revision、刷新审计与不可变 Handoff | 后续增加清理和导出数据 |
 | RUX 会话延续 | Renderer 保存 `sessionId`，Codex/Claude Adapter 可恢复 | 收紧兼容条件、错误恢复和桌面证据 |
-| 外部会话导入 | 未实现 | P1 新增官方 Session Connector 与本地 Projection |
-| Context Handoff | 未实现 | P1 新增事实包、可选摘要、预览确认与来源关系 |
+| 外部会话导入 | P1-E0 Connector、P1-E1 归属发现、P1-E2 预览/导入/继续及 P1-E3 刷新/差异/版本已完成 | 后续补齐 Handoff、清理与导出 |
+| Context Handoff | 确定性事实包、来源 Agent 隔离摘要、预览确认、不可变快照和来源关系已实现 | 主链路完成 |
 | Web/TUI | 共享 Runtime 能力已有基础 | 协议变更保持兼容；Desktop 为功能验收主客户端 |
 
 ### 初始状态追踪
@@ -74,7 +74,12 @@ P1 明确不包含：
 | P0-E3 | 已完成 | 官方目录来源/刷新时间、Engine 默认、Connection 隔离的验证历史、手动模型和错误分类已实现并测试 |
 | P0-E4 | 已完成 | Native Session Link、四维兼容恢复、显式失败分支、Run 证据与打包桌面验收已完成 |
 | P0-E5 | 已完成 | 打包应用已完成干净启动、显式检测、首次 Run、重启续聊、Session 恢复与 Workspace 切换验收；仍为未签名本地 RC |
-| P1-E0 至 P1-E6 | 未开始 | 不应在 P0 数据合同稳定前提前接入 UI |
+| P1-E0 | 已完成 | Protocol v4、Codex App Server/Claude Agent SDK Connector、限额/取消/清洗及 Desktop/stdio 合同测试已通过 |
+| P1-E1 | 已完成 | 显式元数据发现、realpath/组件边界/最长匹配、待归属/需授权/迁移建议与 Renderer 安全边界已实现 |
+| P1-E2 | 已验证 | 显式选择后预览；原子化 Task/Projection/Revision 导入；仅查看与兼容 Session 继续；全局身份去重 |
+| P1-E3 | 已验证 | 显式刷新、安全追加、外部差异候选、确认重建、旧 Revision 恢复与非敏感审计已通过存储和边界自动化 |
+| P1-E4 | 已完成 | Handoff 主链路与用户触发的来源 Agent 隔离摘要均已验证 |
+| P1-E5 至 P1-E6 | 未开始 | 后续增加清理、导出与完整桌面验收 |
 
 ## 4. 依赖顺序
 
@@ -220,6 +225,8 @@ flowchart LR
 
 目标：为 Codex 与 Claude Code 建立相同的会话发现、读取和恢复语义，同时保留 Provider 差异。
 
+状态（2026-08-12）：已完成。Claude 的生产能力要求本机可调用官方 `claude_agent_sdk`；缺失时明确返回 capability error，不降级读取内部 JSONL。
+
 交付物：
 
 - 定义 Session Metadata、Session Message、Session Link、Projection 和 Projection Revision Schema。
@@ -234,6 +241,8 @@ flowchart LR
 ### P1-E1：会话发现与 Workspace 归属
 
 目标：只在用户授权范围内发现会话，并让同一会话拥有唯一、可解释的项目归属。
+
+状态（2026-08-13）：已完成。当前界面只展示元数据及归属结果，不读取完整 Transcript，也不创建导入 Task；迁移建议仅提示，不自动提交归属变更。
 
 交付物：
 
@@ -251,6 +260,8 @@ flowchart LR
 ### P1-E2：导入、查看与继续
 
 目标：用户明确选择后，把外部会话变成带来源、可继续或可只读的 RUX Task。
+
+实现记录（2026-08-13）：Renderer 只允许当前 Workspace 的已归属 Session 进入内容预览，并明确提示本地复制、潜在敏感内容与外部并发写入风险。Main 在独立导入 IPC 中重新读取和校验后，由 Task Store v3 在单个事务中写入 Task、Projection、不可变 Revision 与 Session Link；全局身份键保证重复导入幂等。仅查看 Task 禁止运行；继续模式必须通过恢复检查并固定原 Engine、Connection、Revision、Workspace 与 Native Session。自动化覆盖选择后读取、归属复核、分页规范化、幂等、事务回滚、原会话不可用的只读保留和重启恢复。
 
 交付物：
 
@@ -270,6 +281,8 @@ flowchart LR
 
 目标：允许用户更新导入内容，同时避免外部改删静默覆盖本地历史。
 
+实现记录（2026-08-13）：Task 时间线提供显式“刷新原生会话”和“版本”入口。Main 根据持久化 Session Link 重新读取，不接受 Renderer 构造 Engine、Connection 或 Session id。Task Store v4 对稳定 ID 的纯追加创建新当前 Revision；修改、删除、重排、合成 ID 或不确定指纹只创建候选 Revision 和有界差异，当前投影不变。重建与恢复均二次确认，只替换导入消息并保留 RUX 自有 Task/Run/审批数据；所有刷新、重建、恢复及失败结果写入不含凭据的审计记录，且不写回 Native Session。
+
 交付物：
 
 - 只有用户点击“刷新原生会话”才读取最新 Transcript。
@@ -286,6 +299,8 @@ flowchart LR
 ### P1-E4：跨 Agent Context Handoff
 
 目标：跨 Agent、Provider、Engine 或 Agent Revision 时创建新任务，不篡改原会话。
+
+实现记录（2026-08-13）：确定性事实包、消息/文件移除、约束编辑、Main 解析目标 Revision、确认前零写入、确认事务、新 Task、不可变快照与双向关系已实现并通过自动化。文件只接受最新持久化 Run-owned Git Patch，缺失时明确省略。用户可在弹窗内显式调用固定的来源 Agent 生成摘要；Codex 使用 ephemeral Thread，Claude Code 禁用 Session 持久化和工具。结果带 Main 验证的来源标记，可编辑或移除，并且不进入来源 Task 的普通 Run/Session 历史。P1-E4 已完成。
 
 交付物：
 

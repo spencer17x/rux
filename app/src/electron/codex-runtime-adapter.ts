@@ -106,7 +106,15 @@ export class CodexRuntimeAdapter {
     return this.adapter.listModels(params);
   }
 
-  start(params: RunStartParams) {
+  listThreads(cursor: string | null | undefined, limit: number, signal?: AbortSignal): Promise<unknown> {
+    return this.adapter.listThreads(cursor, limit, signal);
+  }
+
+  readThread(threadId: string, signal?: AbortSignal): Promise<unknown> {
+    return this.adapter.readThread(threadId, signal);
+  }
+
+  start(params: RunStartParams & { ephemeral?: boolean }) {
     return this.adapter.start(params);
   }
 

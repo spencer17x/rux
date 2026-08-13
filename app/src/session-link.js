@@ -38,6 +38,10 @@ export function latestCompatibleSessionLink(task) {
     });
     if (sessionLinkCompatible(link, task)) return link;
   }
+  const importedLink = task?.importedSession?.sessionLink;
+  if (task?.importedSession?.mode === "continue" && sessionLinkCompatible(importedLink, task)) {
+    return importedLink;
+  }
   return undefined;
 }
 

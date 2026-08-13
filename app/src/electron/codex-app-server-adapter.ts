@@ -20,13 +20,17 @@ import {
 
 type JsonRecord = Record<string, unknown>;
 type RequestId = string | number;
-const MAX_PROVIDER_JSONL_LINE_BYTES = 4 * 1024 * 1024;
+// thread/read is an official App Server response that may contain a complete
+// historical Thread in one JSON-RPC line. Keep a hard transport bound while
+// allowing the Session Connector to normalize and apply its tighter limits.
+const MAX_PROVIDER_JSONL_LINE_BYTES = 32 * 1024 * 1024;
 
 type RpcPending = {
   method: string;
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
   timer: NodeJS.Timeout;
+  detachAbort?: () => void;
 };
 
 export type CodexAppServerRequestedPermissions = {
@@ -78,6 +82,8 @@ export interface CodexAppServerStartParams {
   sessionId?: string;
   profileId?: string;
   agentRevisionId?: string;
+  /** Internal one-shot work that must not be materialized in provider history. */
+  ephemeral?: boolean;
 }
 
 export type CodexAppServerAdapterEvent = RuntimeEvent
@@ -435,6 +441,22 @@ export class CodexAppServerAdapter {
     });
   }
 
+  /** Supported App Server Thread discovery surface used by the Session Connector. */
+  async listThreads(cursor: string | null | undefined, limit: number, signal?: AbortSignal): Promise<unknown> {
+    if (this.disposed) throw new Error("Rux service is disposed");
+    await this.ensureInitialized();
+    return this.request("thread/list", {
+      ...(cursor !== undefined ? { cursor } : {}),
+      limit,
+    }, signal);
+  }
+
+  async readThread(threadId: string, signal?: AbortSignal): Promise<unknown> {
+    if (this.disposed) throw new Error("Rux service is disposed");
+    await this.ensureInitialized();
+    return this.request("thread/read", { threadId, includeTurns: true }, signal);
+  }
+
   async start(params: CodexAppServerStartParams): Promise<{
     runId: string;
     adapter: "codex";
@@ -475,6 +497,7 @@ export class CodexAppServerAdapter {
               approvalsReviewer: "user",
               sandbox: policy.sandbox,
               serviceName: "rux",
+              ...(params.ephemeral ? { ephemeral: true } : {}),
             },
       );
       const threadResult = isRecord(rawThreadResult) ? rawThreadResult : {};
@@ -646,25 +669,42 @@ export class CodexAppServerAdapter {
     });
   }
 
-  private request(method: string, params: JsonRecord): Promise<unknown> {
+  private request(method: string, params: JsonRecord, signal?: AbortSignal): Promise<unknown> {
     const id = this.nextRequestId++;
     return new Promise((resolvePromise, rejectPromise) => {
+      if (signal?.aborted) {
+        rejectPromise(new Error(`Rux service ${method} was cancelled`));
+        return;
+      }
       const timeoutMs = this.options.requestTimeoutMs ?? defaultRequestTimeoutMs;
       const timer = setTimeout(() => {
+        const pending = this.pendingRpc.get(requestKey(id));
+        pending?.detachAbort?.();
         this.pendingRpc.delete(requestKey(id));
         rejectPromise(new Error(`Rux service ${method} timed out after ${timeoutMs}ms`));
       }, timeoutMs);
       timer.unref();
+      const abort = () => {
+        clearTimeout(timer);
+        this.pendingRpc.delete(requestKey(id));
+        rejectPromise(new Error(`Rux service ${method} was cancelled`));
+      };
+      const detachAbort = signal
+        ? () => signal.removeEventListener("abort", abort)
+        : undefined;
+      signal?.addEventListener("abort", abort, { once: true });
       this.pendingRpc.set(requestKey(id), {
         method,
         resolve: resolvePromise,
         reject: rejectPromise,
         timer,
+        detachAbort,
       });
       try {
         this.write({ method, id, params });
       } catch (error) {
         clearTimeout(timer);
+        detachAbort?.();
         this.pendingRpc.delete(requestKey(id));
         rejectPromise(error instanceof Error ? error : new Error(String(error)));
       }
@@ -679,7 +719,7 @@ export class CodexAppServerAdapter {
   private consumeStdout(chunk: string): void {
     this.stdoutBuffer += chunk;
     if (Buffer.byteLength(this.stdoutBuffer, "utf8") > MAX_PROVIDER_JSONL_LINE_BYTES && !this.stdoutBuffer.includes("\n")) {
-      this.failProtocol("Rux service exceeded the 4 MB JSONL line limit");
+      this.failProtocol("Rux service exceeded the 32 MB JSONL line limit");
       return;
     }
     let newline = this.stdoutBuffer.indexOf("\n");
@@ -687,7 +727,7 @@ export class CodexAppServerAdapter {
       const line = this.stdoutBuffer.slice(0, newline).trim();
       this.stdoutBuffer = this.stdoutBuffer.slice(newline + 1);
       if (Buffer.byteLength(line, "utf8") > MAX_PROVIDER_JSONL_LINE_BYTES) {
-        this.failProtocol("Rux service exceeded the 4 MB JSONL line limit");
+        this.failProtocol("Rux service exceeded the 32 MB JSONL line limit");
         return;
       }
       if (line) this.handleLine(line);
@@ -734,6 +774,7 @@ export class CodexAppServerAdapter {
     const pending = this.pendingRpc.get(requestKey(id));
     if (!pending) return;
     clearTimeout(pending.timer);
+    pending.detachAbort?.();
     this.pendingRpc.delete(requestKey(id));
     if (isRecord(message.error)) {
       const code = numberValue(message.error.code) ?? -32_000;
@@ -1300,6 +1341,7 @@ export class CodexAppServerAdapter {
     this.initialization = undefined;
     for (const pending of this.pendingRpc.values()) {
       clearTimeout(pending.timer);
+      pending.detachAbort?.();
       pending.reject(error ?? new Error("Rux service stopped"));
     }
     this.pendingRpc.clear();

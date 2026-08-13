@@ -8,6 +8,12 @@ import { ClaudeCodeAdapter } from "./claude-adapter";
 import { CodexRuntimeAdapter } from "./codex-runtime-adapter";
 import { GitChangesService, type GitRunBaseline } from "./git-service";
 import { TaskStore } from "./task-store";
+import { ClaudeSessionConnector, CodexSessionConnector, SessionConnectorService } from "./session-connector";
+import {
+  authorizedWorkspacesFromEnvironment,
+  SessionAttributionStore,
+  SessionDiscoveryService,
+} from "./session-discovery";
 import {
   agentListParamsSchema,
   agentModelListParamsSchema,
@@ -35,6 +41,12 @@ import {
   permissionDecideParamsSchema,
   runCancelParamsSchema,
   runStartParamsSchema,
+  sessionCancelParamsSchema,
+  sessionDiscoverParamsSchema,
+  sessionPreviewParamsSchema,
+  sessionListParamsSchema,
+  sessionReadParamsSchema,
+  sessionResumeCheckParamsSchema,
   runtimeShutdownParamsSchema,
   runtimeRequestSchema,
   terminalCreateParamsSchema,
@@ -56,6 +68,7 @@ import {
 import { createContextSnapshot, contextSnapshotPrompt } from "./context-snapshot.ts";
 import { RunPermissionGate, type PendingPermissionRun } from "./permission-gate.ts";
 import { awaitAllCleanup, forceKillProcessTree, processGroupExists } from "./child-process-lifecycle.ts";
+import { generateIsolatedHandoffSummary } from "./handoff-summary.ts";
 
 const parentPort = process.parentPort;
 if (!parentPort) {
@@ -177,9 +190,22 @@ const claudeCode = new ClaudeCodeAdapter(workspaceRoot, emit, {
 const codex = new CodexRuntimeAdapter(workspaceRoot, emit, {
   forwardAssistantMessageDeltas: true,
 });
+const sessions = new SessionConnectorService([
+  new CodexSessionConnector(codex),
+  new ClaudeSessionConnector(workspaceRoot),
+]);
 const gitChanges = new GitChangesService(workspaceRoot);
 const authManager = new AuthManager(workspaceRoot);
 const workspaceId = createHash("sha256").update(workspaceRoot).digest("hex").slice(0, 12);
+const sessionAttributions = new SessionAttributionStore(resolve(
+  process.env.RUX_STATE_ROOT ?? workspaceRoot,
+  "rux-session-attribution.sqlite3",
+));
+const sessionDiscovery = new SessionDiscoveryService(
+  sessions,
+  authorizedWorkspacesFromEnvironment({ id: workspaceId, name: basename(workspaceRoot), path: workspaceRoot }),
+  sessionAttributions,
+);
 let agentProfileStore: AgentProfileStore | undefined;
 
 function profiles(): AgentProfileStore {
@@ -538,6 +564,27 @@ async function handleRequest(input: unknown): Promise<void> {
         result = await codex.listModels(params);
         break;
       }
+      case "session.list":
+        result = await sessions.list(sessionListParamsSchema.parse(request.params));
+        break;
+      case "session.discover":
+        result = await sessionDiscovery.discover(sessionDiscoverParamsSchema.parse(request.params));
+        break;
+      case "session.preview":
+        result = await sessionDiscovery.preview(sessionPreviewParamsSchema.parse(request.params));
+        break;
+      case "session.read":
+        result = await sessions.read(sessionReadParamsSchema.parse(request.params));
+        break;
+      case "session.resume.check":
+        result = await sessions.checkResume(sessionResumeCheckParamsSchema.parse(request.params));
+        break;
+      case "session.cancel": {
+        const params = sessionCancelParamsSchema.parse(request.params);
+        sessions.cancel(params.operationId);
+        result = { ok: true };
+        break;
+      }
       case "agent.profile.list":
         result = { profiles: profiles().list() };
         break;
@@ -555,6 +602,9 @@ async function handleRequest(input: unknown): Promise<void> {
         result = { ok: true };
         break;
       }
+      case "handoff.summary.generate":
+        result = await generateIsolatedHandoffSummary(workspaceRoot, request.params, (revisionId) => profiles().getRevision(revisionId));
+        break;
       case "run.start": {
         const params = runStartParamsSchema.parse(request.params);
         if (gitMutationInProgress || gitMutationPending > 0) {
@@ -785,6 +835,8 @@ async function disposeAllRuns(): Promise<void> {
     for (const timer of timers) clearTimeout(timer);
   }
   mockRunTimers.clear();
+  sessions.dispose();
+  sessionAttributions.close();
   permissionGate.dispose();
   await awaitAllCleanup([
     claudeCode.dispose(),
@@ -799,6 +851,8 @@ function forceDisposeAllRuns(): void {
     for (const timer of timers) clearTimeout(timer);
   }
   mockRunTimers.clear();
+  sessions.dispose();
+  try { sessionAttributions.close(); } catch { /* Already closed during graceful shutdown. */ }
   permissionGate.dispose();
   claudeCode.forceDispose();
   codex.forceDispose();

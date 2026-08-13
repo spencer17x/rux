@@ -71,16 +71,27 @@ console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false
     permissionMode: "dontAsk",
     sessionId: "existing-session-id",
   });
+  await startAndWait({
+    runId: "isolated-summary-run",
+    prompt: "Summarize deterministic facts",
+    permissionMode: "plan",
+    noSessionPersistence: true,
+    disableTools: true,
+  });
 
   const invocations = readFileSync(invocationsPath, "utf8")
     .trim()
     .split(/\r?\n/)
     .map((line) => JSON.parse(line));
-  assert.equal(invocations.length, 2);
+  assert.equal(invocations.length, 3);
   assert.equal(invocations[0].includes("--resume"), false);
   const resumeIndex = invocations[1].indexOf("--resume");
   assert.notEqual(resumeIndex, -1);
   assert.equal(invocations[1][resumeIndex + 1], "existing-session-id");
+  assert.equal(invocations[2].includes("--no-session-persistence"), true);
+  const toolsIndex = invocations[2].indexOf("--tools");
+  assert.notEqual(toolsIndex, -1);
+  assert.equal(invocations[2][toolsIndex + 1], "");
 
   const freshMetadata = events.find((event) => event.type === "run.metadata" && event.runId === "fresh-run");
   const resumedMetadata = events.find((event) => event.type === "run.metadata" && event.runId === "resumed-run");

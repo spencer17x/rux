@@ -4,6 +4,20 @@ import {
   type DesktopInfo,
   type RuntimeEvent,
   type RendererRuntimeMethod,
+  type SessionImportParams,
+  type SessionImportResult,
+  type SessionRefreshParams,
+  type SessionRefreshResult,
+  type SessionRebuildParams,
+  type SessionRevisionListParams,
+  type SessionRevisionListResult,
+  type SessionRevisionRestoreParams,
+  type HandoffPreviewParams,
+  type HandoffPreviewResult,
+  type HandoffSummaryGenerateParams,
+  type HandoffSummaryGenerateResult,
+  type HandoffCommitParams,
+  type HandoffCommitResult,
   type RuntimeRequestMap,
   type RuxDesktopApi,
   type TaskStateSaveResult,
@@ -47,6 +61,38 @@ const api: RuxDesktopApi = {
       .then(() => ipcRenderer.invoke(IPC_CHANNELS.taskStateSave, state) as Promise<TaskStateSaveResult>);
     taskStateSaveQueue = save;
     return save;
+  },
+
+  importSession(params: SessionImportParams): Promise<SessionImportResult> {
+    return ipcRenderer.invoke(IPC_CHANNELS.sessionImport, params) as Promise<SessionImportResult>;
+  },
+
+  refreshSession(params: SessionRefreshParams): Promise<SessionRefreshResult> {
+    return ipcRenderer.invoke(IPC_CHANNELS.sessionRefresh, params) as Promise<SessionRefreshResult>;
+  },
+
+  rebuildSession(params: SessionRebuildParams): Promise<SessionRefreshResult> {
+    return ipcRenderer.invoke(IPC_CHANNELS.sessionRebuild, params) as Promise<SessionRefreshResult>;
+  },
+
+  listSessionRevisions(params: SessionRevisionListParams): Promise<SessionRevisionListResult> {
+    return ipcRenderer.invoke(IPC_CHANNELS.sessionRevisionList, params) as Promise<SessionRevisionListResult>;
+  },
+
+  restoreSessionRevision(params: SessionRevisionRestoreParams): Promise<SessionRefreshResult> {
+    return ipcRenderer.invoke(IPC_CHANNELS.sessionRevisionRestore, params) as Promise<SessionRefreshResult>;
+  },
+
+  previewHandoff(params: HandoffPreviewParams): Promise<HandoffPreviewResult> {
+    return ipcRenderer.invoke(IPC_CHANNELS.handoffPreview, params) as Promise<HandoffPreviewResult>;
+  },
+
+  generateHandoffSummary(params: HandoffSummaryGenerateParams): Promise<HandoffSummaryGenerateResult> {
+    return ipcRenderer.invoke(IPC_CHANNELS.handoffSummaryGenerate, params) as Promise<HandoffSummaryGenerateResult>;
+  },
+
+  commitHandoff(params: HandoffCommitParams): Promise<HandoffCommitResult> {
+    return ipcRenderer.invoke(IPC_CHANNELS.handoffCommit, params) as Promise<HandoffCommitResult>;
   },
 
   request<M extends RendererRuntimeMethod>(

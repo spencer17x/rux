@@ -1,8 +1,8 @@
 # Rux Desktop Architecture
 
-> Runtime protocol: v3  
+> Runtime protocol: v5
 > Agent Profile Store: v2  
-> Task Store: SQLite schema v2 / Workspace snapshot v2  
+> Task Store: SQLite schema v5 / Workspace snapshot v2
 > Updated: 2026-08-12
 
 ## Process boundaries
@@ -10,8 +10,8 @@
 ```mermaid
 flowchart LR
   UI["Sandboxed Renderer"] -->|"typed Preload IPC"| Main["Electron Main"]
-  Main -->|"validated protocol v3"| Runtime["Utility Process Runtime"]
-  TUI["Rust TUI"] -->|"JSONL protocol v3"| Host["stdio Runtime Host"]
+  Main -->|"validated protocol v5"| Runtime["Utility Process Runtime"]
+  TUI["Rust TUI"] -->|"JSONL protocol v5"| Host["stdio Runtime Host"]
   Runtime --> CLI["Official Codex / Claude Code CLI"]
   Host --> CLI
   Main --> Tasks["Main-owned Task SQLite v2"]
@@ -23,7 +23,29 @@ flowchart LR
 - Renderer has no Node integration and receives no filesystem, process, PTY, or credential capability. It can submit only protocol-validated, non-secret object references.
 - Main owns the native window, Workspace authorization, IPC routing, and Desktop Task Store access. A read-only Agent Revision resolver validates Task references without exposing the Profile Store to Renderer.
 - Utility Process Runtime owns official CLI adapters, authentication delegation, PTY, Git, Context, permissions, and Agent execution.
-- The standalone Runtime Host implements the same v3 protocol for the Rust TUI. Unused fields remain ordinary JSON fields so the TUI can evolve independently.
+- The standalone Runtime Host implements the same v5 protocol for the Rust TUI. Unused fields remain ordinary JSON fields so the TUI can evolve independently.
+
+## External Session Connector boundary
+
+Protocol v4 adds `session.list`, `session.read`, `session.resume.check`, and `session.cancel` to both the Desktop Utility Process Runtime and the stdio Runtime Host. The shared schemas normalize provider-native identity, metadata, messages, resume capability, links, projections, and immutable projection revisions. Requests are explicitly paginated, capped at 100 records and 2 MiB, cancellable, and bounded by timeouts; provider errors pass through the existing sensitive-text redaction boundary.
+
+Protocol v5 adds the Main-only `handoff.summary.generate` request. Renderer cannot call this Runtime method directly; it reaches it only through fingerprint-checked Handoff IPC. Desktop and stdio Runtime Hosts share the isolated, non-persistent source-Agent implementation.
+
+Codex discovery uses only App Server `thread/list` and `thread/read`; the resume check verifies that the Thread remains readable without starting a Turn. Claude Code discovery invokes the documented `claude_agent_sdk` session APIs (`list_sessions`, `get_session_info`, and `get_session_messages`) through a privileged Python bridge. Rux does not read Claude transcript files itself. If that optional SDK capability is absent, Runtime returns `SESSION_CAPABILITY_UNAVAILABLE` rather than falling back to undocumented JSONL parsing.
+
+P1-E0 delivered the API foundation without enabling startup scan or background synchronization. P1-E1 adds explicit metadata discovery and Workspace attribution; P1-E2 adds user-selected preview and transactional local Projection import; P1-E3 adds explicit refresh, diff candidates, versioned rebuild, and local restore.
+
+P1-E1 adds a filtered `session.discover` boundary. Main snapshots only the already-authorized, existing Recent Workspaces into the Utility Process environment when it starts. Runtime independently canonicalizes those roots and provider `cwd` values with `realpath`, uses path-component containment and longest matching for nested projects, and never accepts a Renderer-supplied root. The raw `session.list`, `session.read`, and resume-check methods remain available to the headless Runtime protocol but Main and the typed Preload block them from Renderer; Desktop can invoke only the attributed discovery method.
+
+Discovery stores only the global identity key and current Workspace assignment in `rux-session-attribution.sqlite3`. Sessions matched to another authorized Workspace are omitted from the current result. Missing/unresolvable paths remain metadata-only and unassigned; existing paths outside every authorized root require the native “打开项目…” authorization flow. If a later authorization creates a more specific match, discovery returns a migration suggestion while preserving the previous assignment. It does not move a Task or read the Transcript.
+
+P1-E2 exposes only the attributed `session.preview` method to Renderer. Runtime requires a prior assignment to the active authorized Workspace, reads bounded/paginated normalized content through the same supported Connector, then revalidates the global identity and canonical `cwd` before checking native resume availability. Codex `thread/read` is consumed once because its official response contains the complete Thread in one JSON-RPC record; App Server transport keeps a 32 MiB hard frame bound, while normalized preview remains capped at 8 MiB and 20,000 messages. Claude continues using official SDK pagination. Main owns the separate `rux:session:import` commit boundary and repeats that preview check so stale Renderer data cannot be persisted. Task Store schema v3 writes the Task snapshot, one globally deduplicated Session Projection, and an append-only Projection Revision in a single `BEGIN IMMEDIATE` transaction. Tool and unsupported provider content receive visible normalized placeholders rather than being dropped.
+
+An imported Task stores a non-secret binding to its Projection Revision and Native Session Link. `view` imports are locally read-only. `continue` imports are accepted only while resume is available and recover that pinned Session under the same Engine, official CLI Connection, built-in Agent Revision, and Workspace. Import never calls a provider delete/archive/update API. Existing external writers may still change the native Session, so the UI labels the local-copy risk and does not call this synchronization.
+
+P1-E3 keeps refresh behind Main-owned IPC. Renderer submits only the imported Task id and an operation id; Main resolves the persisted Engine, Connection, native Session id, and active Workspace before requesting a fresh attributed preview. Task Store schema v4 compares the current immutable Revision with the preview. Exact stable-ID prefix additions append safely and become a new current Revision. Modifications, deletions, moves, synthetic identifiers, or uncertain fingerprint matches create an immutable candidate Revision and a bounded typed diff without changing the current Task projection. Confirmed rebuild or restore replaces only provider-imported messages, preserves Rux-owned messages and all Run/approval/Task records, and appends an audit row containing time, Engine, native Session id, before/after Revision and result. Failed operations also append failure evidence and leave the current Revision unchanged. None of these paths invoke a provider write API.
+
+P1-E4 adds a Main-mediated Context Handoff boundary and Task Store schema v5. Preview accepts only source Task id, target Agent id, selected message ids, and selected file paths. Main resolves the target built-in or custom Agent and immutable latest Revision; Task Store rejects messages outside the source Task and files absent from the latest persisted Run-owned Git patch. A SHA-256 fingerprint binds the reviewed target and fact bundle. Confirmed commit rechecks that fingerprint inside `BEGIN IMMEDIATE`, inserts an immutable `context_handoff_snapshot`, creates a target Task with no Run or Native Session, and records bidirectional relations. The target's first user message is the reviewed handoff payload. Source changes cannot update the snapshot. An explicit summary request is revalidated against that fingerprint in Main, then executed by the pinned source Revision in Utility Process. Codex sets `thread/start.ephemeral=true`; Claude Code sets `--no-session-persistence` and disables tools. The isolated result is not emitted into ordinary Task Run history. Main issues a short-lived generation id, validates it again at commit, and persists provenance separately from deterministic facts while allowing the user to edit or remove the text.
 
 ## Provider and credential boundary
 
@@ -84,11 +106,11 @@ Before save/load, Task Store validation rejects:
 ## Current implementation truth
 
 - Claude Code and Codex Runs use real local adapters; Rux Demo remains development/Web-preview only.
-- Protocol v3, Agent Profile Store v2, Task Store v2, Desktop Runtime, stdio Runtime, Renderer fallback, and Rust TUI share the Revision/Connection contract.
+- Protocol v5, Agent Profile Store v2, Task Store v5, Desktop Runtime, stdio Runtime, Renderer fallback, and Rust TUI share the Revision/Connection, Session Connector, and isolated Handoff-summary contract.
 - `账户与登录` is an explicit Agent/Provider connection surface for Rux and Claude Code. Opening the app or panel performs no CLI inspection; missing CLIs link to official installation guidance, while API Key, Base URL, cloud Provider, OAuth storage, refresh, and logout remain CLI-owned.
 - Codex model discovery uses official App Server `model/list` with explicit catalog source and fetch time. Engines without a catalog expose Engine default plus advanced model IDs; successful Runs create verified history scoped to the same Engine and non-secret Connection reference. Only explicit model-not-found/incompatibility failures mark a model unavailable.
 - RUX 发起的 Codex Thread 与 Claude Session 已使用规范化 Native Session Link 持久化并可在兼容 Task 中恢复。恢复失败保留原 Session 证据并要求用户显式重试或创建新 Task；不会静默回退为新会话。
 - P0 Desktop Release Candidate 已在隔离打包环境完成干净启动、显式 Agent 检测、首次 Run、重启后同 Thread 恢复、Terminal 不恢复与 Workspace 切换。Workspace Starter Task 在第一次发送时采用规范化后的用户提示词标题，避免已运行历史继续显示为“开始新任务”。
-- External Codex/Claude conversation discovery, import, Projection Revisions, and context handoff remain P1 work; this architecture does not claim background conversation synchronization.
+- External Session discovery, selected-content preview, deduplicated local Projection persistence, read-only import, compatible native continuation, explicit refresh/diff, versioned rebuild, and local Revision restore are user-triggered Desktop flows with canonical Workspace attribution. Explicit attribution migration, cleanup/export, and context handoff remain later P1 work; this architecture does not claim background conversation synchronization.
 - Parts of Changes and Context remain showcase-backed in the Renderer and must not be presented as fully repository-backed until that wiring is complete.
 - macOS packages remain unsigned until Developer ID signing and notarization are configured.

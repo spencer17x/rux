@@ -10,7 +10,7 @@ import {
   utilityProcess,
   type UtilityProcess,
 } from "electron";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import {
   existsSync,
@@ -29,6 +29,20 @@ import { TaskStore } from "./task-store";
 import {
   IPC_CHANNELS,
   runtimeRequestSchema,
+  sessionImportParamsSchema,
+  sessionPreviewParamsSchema,
+  sessionPreviewResultSchema,
+  sessionRebuildParamsSchema,
+  sessionRefreshParamsSchema,
+  sessionRevisionListParamsSchema,
+  sessionRevisionRestoreParamsSchema,
+  handoffPreviewParamsSchema,
+  handoffSummaryGenerateParamsSchema,
+  handoffSummaryGenerateResultSchema,
+  handoffCommitParamsSchema,
+  builtInAgentRevisionId,
+  defaultModelState,
+  defaultProviderConnectionForAdapter,
   taskStateLoadParamsSchema,
   workspaceActivateParamsSchema,
   workspaceOpenParamsSchema,
@@ -42,6 +56,8 @@ import {
   type WorkspaceOpenResult,
   type WorkspaceSummary,
   type WorkspaceTaskState,
+  type HandoffTarget,
+  type HandoffSummaryProvenance,
 } from "../shared/protocol";
 import { failClosedTimeout, runtimeRequestPolicy } from "./runtime-request-policy.ts";
 
@@ -70,6 +86,12 @@ let workspaceState: WorkspaceState | null = null;
 let workspaceAuthorizationSource: WorkspaceAuthorizationSource = "placeholder";
 let taskStore: TaskStore | null = null;
 let agentProfileStore: AgentProfileStore | null = null;
+const handoffSummaryGenerations = new Map<string, {
+  sourceTaskId: string;
+  fingerprint: string;
+  provenance: HandoffSummaryProvenance;
+  expiresAt: number;
+}>();
 let runtimeStopPromise: Promise<void> | null = null;
 let workspaceTransition: Promise<void> = Promise.resolve();
 let quitCleanupStarted = false;
@@ -338,7 +360,11 @@ function handleRuntimeMessage(message: RuntimeWireMessage): void {
 function startRuntimeProcess(): void {
   if (runtimeProcess) return;
 
-  const workspaceRoot = requireWorkspaceState().active.path;
+  const currentWorkspaceState = requireWorkspaceState();
+  const workspaceRoot = currentWorkspaceState.active.path;
+  const authorizedWorkspaces = currentWorkspaceState.recent
+    .filter((workspace) => !workspace.placeholder)
+    .map(({ id, name, path }) => ({ id, name, path }));
   const { port1, port2 } = new MessageChannelMain();
 
   runtimePort = port2;
@@ -362,6 +388,7 @@ function startRuntimeProcess(): void {
     env: {
       ...process.env,
       RUX_WORKSPACE_ROOT: workspaceRoot,
+      RUX_AUTHORIZED_WORKSPACES: JSON.stringify(authorizedWorkspaces),
       RUX_STATE_ROOT: app.getPath("userData"),
       RUX_ENABLE_MOCK: app.isPackaged ? "0" : "1",
     },
@@ -537,8 +564,8 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.request, async (event, input: unknown) => {
     assertTrustedRenderer(event);
     const parsed = runtimeRequestSchema.parse(input) as RuntimeRequest;
-    if (parsed.method === "runtime.shutdown") {
-      throw new Error("Runtime shutdown is owned by the Main Process lifecycle");
+    if (["runtime.shutdown", "session.list", "session.read", "session.resume.check"].includes(parsed.method)) {
+      throw new Error("This Runtime method is not exposed to the Renderer");
     }
     return requestRuntime(parsed);
   });
@@ -608,6 +635,188 @@ function registerIpcHandlers(): void {
     requireAuthorizedWorkspaceId(parsed.workspaceId);
     const saved = requireTaskStore().save(parsed);
     return { workspaceId: saved.workspaceId, savedAt: saved.updatedAt };
+  });
+
+  ipcMain.handle(IPC_CHANNELS.sessionImport, async (event, input: unknown) => {
+    assertTrustedRenderer(event);
+    const parsed = sessionImportParamsSchema.parse(input);
+    const active = requireWorkspaceState().active;
+    if (active.placeholder || parsed.activeWorkspaceId !== active.id) {
+      throw new Error("Session import requires the active authorized Workspace");
+    }
+    requireAuthorizedWorkspaceId(active.id);
+    const { mode, ...previewInput } = parsed;
+    const previewParams = sessionPreviewParamsSchema.parse(previewInput);
+    const requestId = `session-import-${createHash("sha256")
+      .update(`${Date.now()}:${parsed.operationId}:${parsed.nativeSessionId}`)
+      .digest("hex").slice(0, 32)}`;
+    const preview = sessionPreviewResultSchema.parse(await requestRuntime({
+      kind: "request",
+      id: requestId,
+      method: "session.preview",
+      params: previewParams,
+    }));
+    return requireTaskStore().importExternalSession({
+      workspaceId: active.id,
+      workspaceBranch: active.branch,
+      preview,
+      mode,
+    });
+  });
+
+  ipcMain.handle(IPC_CHANNELS.sessionRefresh, async (event, input: unknown) => {
+    assertTrustedRenderer(event);
+    const parsed = sessionRefreshParamsSchema.parse(input);
+    const active = requireWorkspaceState().active;
+    if (active.placeholder) throw new Error("Session refresh requires the active authorized Workspace");
+    const state = requireTaskStore().load(requireAuthorizedWorkspaceId(active.id));
+    const task = state.tasks.find((candidate) => candidate.id === parsed.taskId);
+    const link = task?.importedSession?.sessionLink;
+    if (!task || !link || (link.engine !== "codex" && link.engine !== "claude-code")) throw new Error("Imported Session Task was not found");
+    const previewParams = sessionPreviewParamsSchema.parse({
+      operationId: parsed.operationId,
+      engine: link.engine,
+      providerConnection: task.providerConnection,
+      activeWorkspaceId: active.id,
+      nativeSessionId: link.nativeSessionId,
+      limit: 100,
+    });
+    try {
+      const preview = sessionPreviewResultSchema.parse(await requestRuntime({
+        kind: "request",
+        id: `session-refresh-${createHash("sha256").update(`${Date.now()}:${parsed.operationId}:${task.id}`).digest("hex").slice(0, 32)}`,
+        method: "session.preview",
+        params: previewParams,
+      }));
+      return requireTaskStore().refreshExternalSession({ workspaceId: active.id, taskId: task.id, preview });
+    } catch (error) {
+      requireTaskStore().recordSessionAuditFailure(active.id, task.id, "refresh");
+      throw error;
+    }
+  });
+
+  ipcMain.handle(IPC_CHANNELS.sessionRebuild, (event, input: unknown) => {
+    assertTrustedRenderer(event);
+    const parsed = sessionRebuildParamsSchema.parse(input);
+    const active = requireWorkspaceState().active;
+    requireAuthorizedWorkspaceId(active.id);
+    try {
+      return requireTaskStore().activateSessionRevision(active.id, parsed.taskId, parsed.candidateRevisionId, "rebuild");
+    } catch (error) {
+      requireTaskStore().recordSessionAuditFailure(active.id, parsed.taskId, "rebuild");
+      throw error;
+    }
+  });
+
+  ipcMain.handle(IPC_CHANNELS.sessionRevisionList, (event, input: unknown) => {
+    assertTrustedRenderer(event);
+    const parsed = sessionRevisionListParamsSchema.parse(input);
+    const active = requireWorkspaceState().active;
+    requireAuthorizedWorkspaceId(active.id);
+    return requireTaskStore().listSessionRevisions(active.id, parsed.taskId);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.sessionRevisionRestore, (event, input: unknown) => {
+    assertTrustedRenderer(event);
+    const parsed = sessionRevisionRestoreParamsSchema.parse(input);
+    const active = requireWorkspaceState().active;
+    requireAuthorizedWorkspaceId(active.id);
+    try {
+      return requireTaskStore().activateSessionRevision(active.id, parsed.taskId, parsed.revisionId, "restore");
+    } catch (error) {
+      requireTaskStore().recordSessionAuditFailure(active.id, parsed.taskId, "restore");
+      throw error;
+    }
+  });
+
+  const resolveHandoffTarget = (targetAgentId: string): HandoffTarget => {
+    if (targetAgentId === "codex" || targetAgentId === "claude-code") {
+      const adapter = targetAgentId;
+      const model = adapter === "codex" ? "Rux default" : "Claude default";
+      return { agentId: adapter, agentName: adapter === "codex" ? "Rux" : "Claude Code", adapter, agentRevisionId: builtInAgentRevisionId(adapter), providerConnection: defaultProviderConnectionForAdapter(adapter), model, ...defaultModelState(model), permissionMode: "acceptEdits" as const };
+    }
+    const profile = agentProfileStore?.get(targetAgentId);
+    if (!profile) throw new Error("Handoff target Agent was not found");
+    return { agentId: profile.id, agentName: profile.name, adapter: profile.backend, agentProfileId: profile.id, agentRevisionId: profile.latestRevisionId, providerConnection: profile.providerConnection, model: profile.model || (profile.backend === "codex" ? "Rux default" : "Claude default"), modelSource: profile.modelSource, modelVerificationStatus: profile.modelVerificationStatus, ...(profile.reasoningEffort ? { reasoningEffort: profile.reasoningEffort } : {}), permissionMode: profile.permissionMode };
+  };
+
+  ipcMain.handle(IPC_CHANNELS.handoffPreview, (event, input: unknown) => {
+    assertTrustedRenderer(event);
+    const parsed = handoffPreviewParamsSchema.parse(input);
+    const active = requireWorkspaceState().active;
+    requireAuthorizedWorkspaceId(active.id);
+    const source = requireTaskStore().load(active.id).tasks.find((task) => task.id === parsed.sourceTaskId);
+    if (!source) throw new Error("Handoff source Task was not found");
+    return requireTaskStore().previewContextHandoff({ workspaceId: active.id, sourceTaskId: source.id, target: resolveHandoffTarget(parsed.targetAgentId), messageIds: parsed.messageIds, filePaths: parsed.filePaths, sourceAgentAvailable: source.status !== "interrupted" });
+  });
+
+  ipcMain.handle(IPC_CHANNELS.handoffSummaryGenerate, async (event, input: unknown) => {
+    assertTrustedRenderer(event);
+    const parsed = handoffSummaryGenerateParamsSchema.parse(input);
+    const active = requireWorkspaceState().active;
+    requireAuthorizedWorkspaceId(active.id);
+    const source = requireTaskStore().load(active.id).tasks.find((task) => task.id === parsed.sourceTaskId);
+    if (!source) throw new Error("Handoff source Task was not found");
+    if (source.adapter !== "codex" && source.adapter !== "claude-code") throw new Error("The source Agent cannot generate a handoff summary");
+    const preview = requireTaskStore().previewContextHandoff({
+      workspaceId: active.id,
+      sourceTaskId: source.id,
+      target: resolveHandoffTarget(parsed.targetAgentId),
+      messageIds: parsed.messageIds,
+      filePaths: parsed.filePaths,
+      sourceAgentAvailable: source.status !== "interrupted",
+    });
+    if (preview.fingerprint !== parsed.fingerprint) throw new Error("Handoff source facts changed; review the preview again");
+    const factsJson = JSON.stringify(preview.facts, null, 2);
+    const prompt = [
+      "Generate an optional narrative Context Handoff summary from the deterministic facts below.",
+      "Use only these facts. Do not inspect the workspace, invoke tools, or add assumptions.",
+      "Cover the goal, confirmed decisions, current progress, blockers, and recommended next steps when present.",
+      "Return concise plain text only. The user will review and may edit or remove it before confirmation.",
+      `Deterministic facts:\n${factsJson}`,
+    ].join("\n\n");
+    if (prompt.length > 100_000) throw new Error("Selected handoff facts are too large for summary generation; deselect some messages");
+    const operationId = `handoff-summary-generation-${randomUUID()}`;
+    const generated = handoffSummaryGenerateResultSchema.parse(await requestRuntime({
+      kind: "request",
+      id: operationId,
+      method: "handoff.summary.generate",
+      params: {
+        operationId,
+        adapter: source.adapter,
+        prompt,
+        ...(!source.model.toLowerCase().includes("default") ? { model: source.model } : {}),
+        ...(source.reasoningEffort ? { reasoningEffort: source.reasoningEffort } : {}),
+        ...(source.agentProfileId ? { profileId: source.agentProfileId } : {}),
+        agentRevisionId: source.agentRevisionId,
+        providerConnection: source.providerConnection,
+      },
+    }));
+    handoffSummaryGenerations.set(generated.generationId, {
+      sourceTaskId: source.id,
+      fingerprint: parsed.fingerprint,
+      provenance: generated.provenance,
+      expiresAt: Date.now() + 15 * 60_000,
+    });
+    return generated;
+  });
+
+  ipcMain.handle(IPC_CHANNELS.handoffCommit, (event, input: unknown) => {
+    assertTrustedRenderer(event);
+    const parsed = handoffCommitParamsSchema.parse(input);
+    const active = requireWorkspaceState().active;
+    requireAuthorizedWorkspaceId(active.id);
+    let agentSummaryProvenance: HandoffSummaryProvenance | undefined;
+    if (parsed.agentSummaryGenerationId) {
+      const generation = handoffSummaryGenerations.get(parsed.agentSummaryGenerationId);
+      if (!generation || generation.expiresAt < Date.now() || generation.sourceTaskId !== parsed.sourceTaskId || generation.fingerprint !== parsed.fingerprint) {
+        throw new Error("Handoff Agent summary is stale; generate it again or remove it before confirming");
+      }
+      agentSummaryProvenance = generation.provenance;
+    }
+    const result = requireTaskStore().commitContextHandoff({ workspaceId: active.id, sourceTaskId: parsed.sourceTaskId, target: resolveHandoffTarget(parsed.targetAgentId), messageIds: parsed.messageIds, filePaths: parsed.filePaths, sourceAgentAvailable: true, fingerprint: parsed.fingerprint, ...(parsed.agentSummary ? { agentSummary: parsed.agentSummary } : {}), ...(agentSummaryProvenance ? { agentSummaryProvenance } : {}), ...(parsed.constraints ? { constraints: parsed.constraints } : {}) });
+    if (parsed.agentSummaryGenerationId) handoffSummaryGenerations.delete(parsed.agentSummaryGenerationId);
+    return result;
   });
 }
 

@@ -186,7 +186,7 @@ test("clean startup waits for explicit project and account actions", async () =>
   assert.match(detectSource, /runtime\.listAgents\(\{ refresh: true \}\)/);
   assert.doesNotMatch(detectSource, /setTasks|setDrafts|setContextState|setWorkspaceState/);
   const accountsStart = rendererSource.indexOf("function AccountsDialog(");
-  const accountsEnd = rendererSource.indexOf("\nfunction CodexSettingsDialog", accountsStart);
+  const accountsEnd = rendererSource.indexOf("\nfunction SessionDiscoveryDialog", accountsStart);
   const accountsSource = rendererSource.slice(accountsStart, accountsEnd);
   assert.match(accountsSource, /Agent 与 Provider/);
   assert.match(accountsSource, /无需 Rux 账号/);
@@ -214,6 +214,83 @@ test("clean startup waits for explicit project and account actions", async () =>
   assert.match(rendererSource, /setTaskActionError\("Web 预览不会读取本机目录；请在 Rux 桌面应用中打开项目。"\)/);
 
   assert.match(webRuntimeSource, /showcasePreview \? changedFiles : \[\]/);
+});
+
+test("Session Connectors use supported provider interfaces without credential or transcript parsing", async () => {
+  const connectorSource = await readFile(path.join(root, "src/electron/session-connector.ts"), "utf8");
+  const codexSource = await readFile(path.join(root, "src/electron/codex-app-server-adapter.ts"), "utf8");
+
+  assert.match(codexSource, /this\.request\("thread\/list"/);
+  assert.match(codexSource, /this\.request\("thread\/read"/);
+  assert.match(connectorSource, /from claude_agent_sdk import list_sessions, get_session_info, get_session_messages/);
+  assert.doesNotMatch(connectorSource, /\.jsonl|Keychain|security find-generic-password|credentials\.json/);
+  assert.doesNotMatch(connectorSource, /readFile|readFileSync|createReadStream|readdir|readdirSync/);
+  assert.match(connectorSource, /MAX_RESPONSE_BYTES = 2 \* 1024 \* 1024/);
+  assert.match(connectorSource, /redactSensitiveText/);
+});
+
+test("external Session discovery is explicit, Workspace-filtered, and cannot expose raw Connector methods to Renderer", async () => {
+  const rendererSource = await readFile(path.join(root, "src/App.jsx"), "utf8");
+  const runtimeClientSource = await readFile(path.join(root, "src/runtime.js"), "utf8");
+  const mainSource = await readFile(path.join(root, "src/electron/main.ts"), "utf8");
+  const protocolSource = await readFile(path.join(root, "src/shared/protocol.ts"), "utf8");
+
+  assert.match(rendererSource, />导入 Agent 会话</);
+  assert.match(rendererSource, /首次发现不会读取完整对话/);
+  assert.match(rendererSource, /本机 Claude Agent SDK 尚未提供会话浏览能力/);
+  assert.match(rendererSource, /打开此窗口本身不会访问任何历史/);
+  assert.match(rendererSource, /onClick=\{state\.status === "loading" \? onCancel : onDiscover\}/);
+  const openStart = rendererSource.indexOf("const openSessionDiscovery = () =>");
+  const discoverStart = rendererSource.indexOf("const discoverSessions = async", openStart);
+  assert.equal(rendererSource.slice(openStart, discoverStart).includes("discoverSessions("), false);
+  assert.match(runtimeClientSource, /api\.request\("session\.discover", params\)/);
+  assert.doesNotMatch(runtimeClientSource, /api\.request\("session\.list"/);
+  assert.doesNotMatch(runtimeClientSource, /api\.request\("session\.read"/);
+  assert.match(mainSource, /RUX_AUTHORIZED_WORKSPACES: JSON\.stringify\(authorizedWorkspaces\)/);
+  assert.match(mainSource, /\["runtime\.shutdown", "session\.list", "session\.read", "session\.resume\.check"\]/);
+  assert.match(protocolSource, /"runtime\.shutdown" \| "session\.list" \| "session\.read" \| "session\.resume\.check"/);
+});
+
+test("external Session refresh is user-triggered, versioned, and mediated by Main", async () => {
+  const rendererSource = await readFile(path.join(root, "src/App.jsx"), "utf8");
+  const preloadSource = await readFile(path.join(root, "src/electron/preload.ts"), "utf8");
+  const mainSource = await readFile(path.join(root, "src/electron/main.ts"), "utf8");
+
+  assert.match(rendererSource, /刷新原生会话<\/button>/);
+  assert.match(rendererSource, /确认按原生会话重建<\/button>/);
+  assert.match(rendererSource, /恢复此本地版本<\/button>/);
+  assert.match(rendererSource, /window\.confirm\("按原生会话重建当前本地 Projection？旧 Revision、Rux Run、审批和 Task 元数据会保留，Provider 原会话不会被修改/);
+  assert.match(rendererSource, /window\.confirm\("恢复这个本地 Projection Revision？这不会修改原生会话，当前版本也会继续保留/);
+  assert.match(rendererSource, /onClick=\{onRefreshSession\}/);
+  assert.match(preloadSource, /refreshSession\(params: SessionRefreshParams\)[\s\S]*ipcRenderer\.invoke\(IPC_CHANNELS\.sessionRefresh/);
+  assert.match(mainSource, /ipcMain\.handle\(IPC_CHANNELS\.sessionRefresh/);
+  assert.match(mainSource, /method: "session\.preview"/);
+  assert.match(mainSource, /requireTaskStore\(\)\.refreshExternalSession/);
+  assert.match(mainSource, /requireTaskStore\(\)\.activateSessionRevision/);
+  assert.doesNotMatch(rendererSource, /useEffect\(\(\) => \{[^}]*refreshImportedSession\(/s);
+});
+
+test("Context Handoff previews local facts and creates a target Task only after confirmation", async () => {
+  const rendererSource = await readFile(path.join(root, "src/App.jsx"), "utf8");
+  const mainSource = await readFile(path.join(root, "src/electron/main.ts"), "utf8");
+  const preloadSource = await readFile(path.join(root, "src/electron/preload.ts"), "utf8");
+
+  assert.match(rendererSource, /复制为新任务/);
+  assert.match(rendererSource, /确定性事实包/);
+  assert.match(rendererSource, /让来源 Agent 生成/);
+  assert.match(rendererSource, /未保存原生会话 · 可编辑或移除/);
+  assert.match(rendererSource, /不会使用展示数据补齐/);
+  assert.match(rendererSource, /确认前不会调用目标 Agent，也不会创建 Native Session/);
+  assert.match(rendererSource, /window\.confirm\("确认创建新的 Task 并固定目标 Agent Revision/);
+  assert.match(preloadSource, /IPC_CHANNELS\.handoffPreview/);
+  assert.match(preloadSource, /IPC_CHANNELS\.handoffSummaryGenerate/);
+  assert.match(preloadSource, /IPC_CHANNELS\.handoffCommit/);
+  assert.match(mainSource, /resolveHandoffTarget/);
+  assert.match(mainSource, /requireTaskStore\(\)\.previewContextHandoff/);
+  assert.match(mainSource, /method: "handoff\.summary\.generate"/);
+  assert.match(mainSource, /agentSummaryGenerationId/);
+  assert.match(mainSource, /requireTaskStore\(\)\.commitContextHandoff/);
+  assert.doesNotMatch(rendererSource, /runtimeRef\.current\.startRun[^\n]*handoff/i);
 });
 
 test("renderer keeps Agent setup actionable and resumes the selected task session", async () => {

@@ -198,7 +198,7 @@ export class ClaudeCodeAdapter {
     return this.adapterInfo;
   }
 
-  start(params: RunStartParams): { runId: string; adapter: "claude-code" } {
+  start(params: RunStartParams & { noSessionPersistence?: boolean; disableTools?: boolean }): { runId: string; adapter: "claude-code" } {
     if (this.disposed) throw new Error("Claude Code adapter is disposed");
     if (this.runs.has(params.runId)) throw new Error("Run ID is already active");
     const adapter = this.info();
@@ -218,6 +218,8 @@ export class ClaudeCodeAdapter {
       "--name",
       `Rux ${params.runId.slice(0, 12)}`,
     ];
+    if (params.noSessionPersistence) args.push("--no-session-persistence");
+    if (params.disableTools) args.push("--tools", "");
     if (params.sessionId) args.push("--resume", params.sessionId);
     let permissionBroker: ClaudePermissionBroker | undefined;
     if (params.permissionMode === "acceptEdits" && this.options.onPermissionRequest) {

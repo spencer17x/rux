@@ -14,6 +14,12 @@ import { ClaudeCodeAdapter } from "./claude-adapter";
 import { CodexRuntimeAdapter } from "./codex-runtime-adapter";
 import { GitChangesService, type GitRunBaseline } from "./git-service";
 import { TaskStore } from "./task-store";
+import { ClaudeSessionConnector, CodexSessionConnector, SessionConnectorService } from "./session-connector";
+import {
+  authorizedWorkspacesFromEnvironment,
+  SessionAttributionStore,
+  SessionDiscoveryService,
+} from "./session-discovery";
 import {
   agentListParamsSchema,
   agentModelListParamsSchema,
@@ -41,6 +47,12 @@ import {
   permissionDecideParamsSchema,
   runCancelParamsSchema,
   runStartParamsSchema,
+  sessionCancelParamsSchema,
+  sessionDiscoverParamsSchema,
+  sessionPreviewParamsSchema,
+  sessionListParamsSchema,
+  sessionReadParamsSchema,
+  sessionResumeCheckParamsSchema,
   runtimeShutdownParamsSchema,
   runtimeRequestSchema,
   taskStateLoadParamsSchema,
@@ -58,6 +70,7 @@ import {
 import { createContextSnapshot, contextSnapshotPrompt } from "./context-snapshot.ts";
 import { RunPermissionGate, type PendingPermissionRun } from "./permission-gate.ts";
 import { awaitAllCleanup } from "./child-process-lifecycle.ts";
+import { generateIsolatedHandoffSummary } from "./handoff-summary.ts";
 
 const startedAt = new Date().toISOString();
 const configuredRoot = resolve(process.env.RUX_WORKSPACE_ROOT ?? process.cwd());
@@ -182,10 +195,20 @@ const claudeCode = new ClaudeCodeAdapter(workspaceRoot, emit, {
   }, signal),
 });
 const codex = new CodexRuntimeAdapter(workspaceRoot, emit);
+const sessions = new SessionConnectorService([
+  new CodexSessionConnector(codex),
+  new ClaudeSessionConnector(workspaceRoot),
+]);
 const authManager = new AuthManager(workspaceRoot);
 const gitChanges = new GitChangesService(workspaceRoot);
 const profiles = new AgentProfileStore(resolve(stateRoot, "agent-profiles.json"));
 const workspaceId = createHash("sha256").update(workspaceRoot).digest("hex").slice(0, 12);
+const sessionAttributions = new SessionAttributionStore(resolve(stateRoot, "rux-session-attribution.sqlite3"));
+const sessionDiscovery = new SessionDiscoveryService(
+  sessions,
+  authorizedWorkspacesFromEnvironment({ id: workspaceId, name: workspaceRoot.split(/[\\/]/).filter(Boolean).at(-1) ?? "Workspace", path: workspaceRoot }),
+  sessionAttributions,
+);
 const taskStore = new TaskStore(
   resolve(stateRoot, "rux-task-state.sqlite3"),
   undefined,
@@ -357,6 +380,27 @@ async function handleRequest(input: unknown): Promise<void> {
       case "agent.model.list":
         result = await codex.listModels(agentModelListParamsSchema.parse(request.params));
         break;
+      case "session.list":
+        result = await sessions.list(sessionListParamsSchema.parse(request.params));
+        break;
+      case "session.discover":
+        result = await sessionDiscovery.discover(sessionDiscoverParamsSchema.parse(request.params));
+        break;
+      case "session.preview":
+        result = await sessionDiscovery.preview(sessionPreviewParamsSchema.parse(request.params));
+        break;
+      case "session.read":
+        result = await sessions.read(sessionReadParamsSchema.parse(request.params));
+        break;
+      case "session.resume.check":
+        result = await sessions.checkResume(sessionResumeCheckParamsSchema.parse(request.params));
+        break;
+      case "session.cancel": {
+        const params = sessionCancelParamsSchema.parse(request.params);
+        sessions.cancel(params.operationId);
+        result = { ok: true };
+        break;
+      }
       case "agent.profile.list":
         result = { profiles: profiles.list() };
         break;
@@ -374,6 +418,9 @@ async function handleRequest(input: unknown): Promise<void> {
         result = { ok: true };
         break;
       }
+      case "handoff.summary.generate":
+        result = await generateIsolatedHandoffSummary(workspaceRoot, request.params, (revisionId) => profiles.getRevision(revisionId));
+        break;
       case "run.start": {
         const params = runStartParamsSchema.parse(request.params);
         if (gitMutationInProgress || gitMutationPending > 0) {
@@ -545,6 +592,8 @@ function dispose(): Promise<void> {
   shutdownPromise ??= (async () => {
     shuttingDown = true;
     permissionGate.dispose();
+    sessions.dispose();
+    sessionAttributions.close();
     const cleanup = await Promise.allSettled([
       claudeCode.dispose(),
       codex.dispose(),
@@ -567,6 +616,8 @@ function dispose(): Promise<void> {
 
 function forceDispose(): void {
   permissionGate.dispose();
+  sessions.dispose();
+  try { sessionAttributions.close(); } catch { /* Already closed during graceful shutdown. */ }
   claudeCode.forceDispose();
   codex.forceDispose();
   authManager.forceDispose();

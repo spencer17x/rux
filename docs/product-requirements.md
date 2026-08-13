@@ -149,6 +149,14 @@ flowchart LR
 
 ### 5.9 外部历史采用“会话接入”而非实时双向同步
 
+实现状态（2026-08-13）：当前 Runtime protocol 为 v5。v4 提供统一 Session Connector 合同；v5 新增仅由 Main 经 Handoff 指纹校验后调用的隔离式来源 Agent 摘要请求。Codex 使用 App Server Thread List/Read，Claude Code 使用官方 Agent SDK 的 `list_sessions`、`get_session_info`、`get_session_messages`；两端支持分页、取消、超时、大小限制和敏感错误清洗。
+
+实现状态（2026-08-13）：P1-E1 已开放显式的“导入 Agent 会话”元数据发现入口。打开入口不会访问 Provider；点击查找后，Runtime 才按规范化真实路径和最具体已授权 Workspace 归属结果返回当前项目、待归属、需要授权和迁移建议。属于其他项目的会话被隐藏，迁移建议不会静默改变旧归属。
+
+实现状态（2026-08-13）：P1-E2 已支持用户点选当前 Workspace 会话后读取规范化内容并预览本地复制风险，再选择“仅导入查看”或“导入并继续”。Main 在提交前重新读取并校验身份、Workspace 归属与恢复状态，然后用一个 SQLite 事务创建或更新 Task、Projection、不可变 Projection Revision 与 Native Session Link。重复导入按 `engine + connectionReference + nativeSessionId` 去重，不覆盖 RUX 自有消息；仅查看 Task 禁止启动 Run，继续模式固定原 Engine、官方 CLI Connection、内置 Agent Revision、Workspace 与原生 Session。
+
+实现状态（2026-08-13）：P1-E3 已实现 Task 内显式刷新、稳定 ID 安全追加、外部修改/删除/重排/不确定匹配差异、候选 Revision、确认重建、旧 Revision 恢复与非敏感审计。差异出现时当前 Projection 保持不变；重建和恢复只切换 RUX 本地 Projection，保留 RUX 自有消息、Run、审批和 Task 数据，不调用 Provider 写接口。该能力仍是用户触发的本地投影，不是实时双向同步。
+
 - 外部历史默认只发现当前 Workspace 关联的会话。
 - 首次发现只读取会话元数据；读取完整内容必须由用户选择会话后触发。
 - 用户可以选择“仅导入查看”或“导入并继续”。
@@ -175,6 +183,8 @@ flowchart LR
 - 仅切换同一 Revision 和 Connection 支持的兼容模型不视为升级 Agent；变化仍只影响后续 Run。
 
 ### 5.12 跨 Agent 使用可审查的混合式 Context Handoff
+
+实现状态（2026-08-13）：P1-E4 已完成。用户从已有 Task 选择消息和真实 Run-owned 文件证据、选择目标 Agent 后生成预览；Main 解析目标 Connection 与最新不可变 Revision，确认前不创建目标 Task、Run 或 Native Session。用户可显式要求固定的来源 Agent 生成可选叙事摘要；该调用禁用工具且不持久化原生会话，结果带有经 Main 验证的来源标记，并可编辑或移除。确认事务创建新 Task、保存不可变快照并建立双向来源关系，来源后续变化不会改写快照。
 
 - RUX 首先从已有本地记录中确定性组装事实包，不依赖模型推断。
 - 事实包至少包含来源 Task、Workspace、用户选中的消息、最近 Run 结果、文件变更、未完成状态和来源 Agent Revision。
@@ -557,10 +567,10 @@ P0 实现状态（2026-08-12）：Desktop 本地 Release Candidate 已通过隔�
 | 模型目录 | Codex 已有结构化模型目录基础；其他 Engine 和自定义配置能力不一致 | 增加 Engine 优先目录、手动输入、运行验证和来源状态 |
 | RUX 原生 API Provider | 尚未实现；MVP 复用官方 CLI 配置 | P2 使用独立 Adapter、系统凭据库和不透明凭据引用 |
 | 自定义 Agent | 已有不可变 Revision、Task/Run 固定、版本提示与“使用新版创建新任务”分支 | P1 增加可预览确认的跨 Agent Context Handoff |
-| Context Handoff | 尚未实现跨 Agent 的结构化交接 | 增加事实包、可选摘要、预览编辑、确认和来源追踪 |
-| 外部会话导入 | 尚未实现 | P1 使用官方接口实现工作区级手动接入 |
-| 会话 Workspace 归属 | 尚未实现外部会话发现与嵌套归属 | 增加真实路径最长匹配、全局身份去重和待归属流程 |
-| 外部会话刷新 | 尚未实现 | 增加去重追加、差异检查和版本化重建，不宣称实时同步 |
+| Context Handoff | 已实现确定性事实包、来源 Agent 隔离摘要、可编辑预览、确认事务和双向来源追踪 | P1-E4 已完成；后续仅做体验优化 |
+| 外部会话导入 | 已实现显式发现、选择后预览、去重导入、只读查看与兼容继续 | 后续补齐数据管理与跨 Agent Handoff |
+| 会话 Workspace 归属 | 已实现 realpath 组件边界、最长匹配、待归属/需授权与迁移建议 | 后续实现显式归属迁移提交 |
+| 外部会话刷新 | 已实现显式刷新、安全追加、差异候选、版本化重建和本地恢复 | 保持非后台、非双向同步语义 |
 | 本地会话数据管理 | 尚未实现 | 增加占用查看、导出、解除关联与分范围删除 |
 | RUX Agent | 仍是 Mock 协议适配器 | 不描述为真实远程 Provider |
 | Changes/Context | Renderer 部分仍含展示数据 | 在接入真实数据前保持明确标注 |

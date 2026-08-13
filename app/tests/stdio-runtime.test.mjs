@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import {
   chmodSync,
   copyFileSync,
@@ -176,6 +177,74 @@ test("standalone JSONL Runtime runs Codex and custom Agent profiles over stdio",
   assert.equal(models.result.models[0].model, "fake-model");
   assert.equal(models.result.models[0].defaultReasoningEffort, "medium");
   assert.equal(models.result.nextCursor, "models-page-2");
+
+  child.stdin.write(`${JSON.stringify({
+    kind: "request",
+    id: "session-list",
+    method: "session.list",
+    params: {
+      operationId: "stdio-session-list",
+      engine: "codex",
+      providerConnection: codexConnection.providerConnection,
+      limit: 1,
+    },
+  })}\n`);
+  const sessionList = await waitFor(messages, (message) =>
+    message.kind === "response" && message.id === "session-list");
+  assert.equal(sessionList.ok, true);
+  assert.equal(sessionList.result.sessions[0].nativeSessionId, "thread-discovered-1");
+  assert.equal(sessionList.result.nextCursor, "threads-page-2");
+
+  child.stdin.write(`${JSON.stringify({
+    kind: "request",
+    id: "session-discover",
+    method: "session.discover",
+    params: {
+      operationId: "stdio-session-discover",
+      engine: "codex",
+      providerConnection: codexConnection.providerConnection,
+      activeWorkspaceId: createHash("sha256").update(realpathSync(workspace)).digest("hex").slice(0, 12),
+      limit: 1,
+    },
+  })}\n`);
+  const sessionDiscovery = await waitFor(messages, (message) =>
+    message.kind === "response" && message.id === "session-discover");
+  assert.equal(sessionDiscovery.ok, true);
+  assert.equal(sessionDiscovery.result.current[0].metadata.nativeSessionId, "thread-discovered-1");
+  assert.deepEqual(sessionDiscovery.result.unassigned, []);
+
+  child.stdin.write(`${JSON.stringify({
+    kind: "request",
+    id: "session-read",
+    method: "session.read",
+    params: {
+      operationId: "stdio-session-read",
+      engine: "codex",
+      providerConnection: codexConnection.providerConnection,
+      nativeSessionId: "thread-discovered-1",
+      limit: 50,
+    },
+  })}\n`);
+  const sessionRead = await waitFor(messages, (message) =>
+    message.kind === "response" && message.id === "session-read");
+  assert.equal(sessionRead.ok, true);
+  assert.deepEqual(sessionRead.result.messages.map((message) => message.role), ["user", "assistant"]);
+
+  child.stdin.write(`${JSON.stringify({
+    kind: "request",
+    id: "session-resume-check",
+    method: "session.resume.check",
+    params: {
+      operationId: "stdio-session-resume-check",
+      engine: "codex",
+      providerConnection: codexConnection.providerConnection,
+      nativeSessionId: "thread-discovered-1",
+    },
+  })}\n`);
+  const sessionResume = await waitFor(messages, (message) =>
+    message.kind === "response" && message.id === "session-resume-check");
+  assert.equal(sessionResume.ok, true);
+  assert.equal(sessionResume.result.status, "available");
 
   child.stdin.write(`${JSON.stringify({
     kind: "request",
