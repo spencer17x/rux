@@ -6,6 +6,7 @@ import { AgentProfileStore } from "./agent-profile-store";
 import { AuthManager } from "./auth-manager";
 import { ClaudeCodeAdapter } from "./claude-adapter";
 import { CodexRuntimeAdapter } from "./codex-runtime-adapter";
+import { NativeProviderAdapter } from "./native-provider-adapter.ts";
 import { GitChangesService, type GitRunBaseline } from "./git-service";
 import { TaskStore } from "./task-store";
 import { ClaudeSessionConnector, CodexSessionConnector, SessionConnectorService } from "./session-connector";
@@ -20,6 +21,7 @@ import {
   agentProfileDeleteParamsSchema,
   agentProfileInputSchema,
   agentProfileUpdateParamsSchema,
+  nativeProviderRuntimeSyncSchema,
   authLoginParamsSchema,
   gitChangeSelectionSchema,
   gitBranchesListResultSchema,
@@ -190,6 +192,7 @@ const claudeCode = new ClaudeCodeAdapter(workspaceRoot, emit, {
 const codex = new CodexRuntimeAdapter(workspaceRoot, emit, {
   forwardAssistantMessageDeltas: true,
 });
+const nativeProvider = new NativeProviderAdapter(workspaceRoot, emit);
 const sessions = new SessionConnectorService([
   new CodexSessionConnector(codex),
   new ClaudeSessionConnector(workspaceRoot),
@@ -352,11 +355,12 @@ async function cancelRun(runId: string): Promise<void> {
   await Promise.all([
     claudeCode.cancel(runId),
     codex.cancel(runId),
+    nativeProvider.cancel(runId),
   ]);
 }
 
 async function contextSnapshot(params: unknown) {
-  const adapters = [claudeCode.info(), codex.info()].filter((adapter) => adapter.available);
+  const adapters = [claudeCode.info(), codex.info(), nativeProvider.info()].filter((adapter) => adapter.available);
   return createContextSnapshot(workspaceRoot, params, [
     ...adapters.map((adapter) => adapter.name),
     "Git Changes",
@@ -387,11 +391,15 @@ async function prepareRun(params: ReturnType<typeof runStartParamsSchema.parse>)
       throw new Error("Custom Agent backend does not match the requested adapter");
     }
     profileSnapshot = profile;
+    if (params.providerConnectionId && params.providerConnectionId !== profile.providerConnection.id) {
+      throw new Error("Custom Agent Connection does not match its immutable Revision");
+    }
     promptSections.push(`Custom Agent instructions:\n${profile.instructions}`);
     effectiveParams = {
       ...params,
       model: params.model ?? profile.model,
       reasoningEffort: params.reasoningEffort ?? profile.reasoningEffort,
+      providerConnectionId: profile.providerConnection.id,
     };
   }
   promptSections.push(contextSnapshotPrompt(runContextSnapshot));
@@ -422,6 +430,8 @@ async function launchPreparedRun(params: RunStartParams): Promise<{
       ? claudeCode.start(params)
       : params.adapter === "codex"
         ? codex.start(params)
+        : params.adapter === "rux-native"
+          ? nativeProvider.start(params)
         : startMockRun({ ...params, contextFiles: params.contextFiles ?? [] }));
   } catch (error) {
     runGitBaselines.delete(params.runId);
@@ -457,6 +467,7 @@ function recoverPendingRun(runId: string, requestId: string): PendingPermissionR
         ...(run.sessionId ? { sessionId: run.sessionId } : {}),
         ...(run.profileId ? { profileId: run.profileId } : {}),
         agentRevisionId: run.agentRevisionId,
+        providerConnectionId: run.providerConnection.id,
         contextFiles: run.contextFiles,
       },
     };
@@ -548,6 +559,7 @@ async function handleRequest(input: unknown): Promise<void> {
           adapters: [
             claudeCode.info(params.refresh),
             codex.info(params.refresh),
+            nativeProvider.info(),
             ...(mockEnabled ? [{
               id: "mock",
               name: "Rux Demo",
@@ -600,6 +612,18 @@ async function handleRequest(input: unknown): Promise<void> {
         const params = agentProfileDeleteParamsSchema.parse(request.params);
         profiles().delete(params.id);
         result = { ok: true };
+        break;
+      }
+      case "provider.connection.sync": {
+        const params = nativeProviderRuntimeSyncSchema.parse(request.params);
+        nativeProvider.sync(params.connections);
+        result = { ok: true, count: params.connections.length };
+        break;
+      }
+      case "provider.connection.test": {
+        const params = request.params as { id?: unknown };
+        if (!params || typeof params.id !== "string") throw new Error("Native Provider Connection id is required");
+        result = await nativeProvider.test(params.id);
         break;
       }
       case "handoff.summary.generate":
@@ -844,6 +868,7 @@ async function disposeAllRuns(): Promise<void> {
     authManager.dispose(),
     gitChanges.dispose(),
   ], "Runtime resource");
+  nativeProvider.dispose();
 }
 
 function forceDisposeAllRuns(): void {
@@ -856,6 +881,7 @@ function forceDisposeAllRuns(): void {
   permissionGate.dispose();
   claudeCode.forceDispose();
   codex.forceDispose();
+  nativeProvider.dispose();
   authManager.forceDispose();
   gitChanges.forceDispose();
 }

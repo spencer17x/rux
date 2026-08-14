@@ -5,6 +5,7 @@ import {
   ipcMain,
   type IpcMainInvokeEvent,
   MessageChannelMain,
+  safeStorage,
   type MessagePortMain,
   shell,
   utilityProcess,
@@ -26,6 +27,7 @@ import { pathToFileURL } from "node:url";
 import runtimePath from "./runtime?modulePath";
 import { AgentProfileStore } from "./agent-profile-store";
 import { TaskStore } from "./task-store";
+import { NativeProviderStore } from "./native-provider-store.ts";
 import {
   IPC_CHANNELS,
   runtimeRequestSchema,
@@ -40,6 +42,12 @@ import {
   handoffSummaryGenerateParamsSchema,
   handoffSummaryGenerateResultSchema,
   handoffCommitParamsSchema,
+  localDataExecuteParamsSchema,
+  localDataExportParamsSchema,
+  localDataPreviewParamsSchema,
+  nativeProviderConnectionDeleteParamsSchema,
+  nativeProviderConnectionInputSchema,
+  nativeProviderConnectionTestParamsSchema,
   builtInAgentRevisionId,
   defaultModelState,
   defaultProviderConnectionForAdapter,
@@ -86,6 +94,7 @@ let workspaceState: WorkspaceState | null = null;
 let workspaceAuthorizationSource: WorkspaceAuthorizationSource = "placeholder";
 let taskStore: TaskStore | null = null;
 let agentProfileStore: AgentProfileStore | null = null;
+let nativeProviderStore: NativeProviderStore | null = null;
 const handoffSummaryGenerations = new Map<string, {
   sourceTaskId: string;
   fingerprint: string;
@@ -341,6 +350,9 @@ async function waitForRuntimeExit(child: UtilityProcess, timeoutMs: number): Pro
 function handleRuntimeMessage(message: RuntimeWireMessage): void {
   if (message.kind === "event") {
     emitToRenderers(message.event);
+    if (message.event.type === "runtime.ready") void syncNativeProviderConnections().catch((error) => {
+      console.error(`[runtime] Native Provider sync failed: ${error instanceof Error ? error.message : String(error)}`);
+    });
     return;
   }
 
@@ -355,6 +367,21 @@ function handleRuntimeMessage(message: RuntimeWireMessage): void {
   } else {
     pending.reject(new Error(`${message.error.code}: ${message.error.message}`));
   }
+}
+
+function requireNativeProviderStore(): NativeProviderStore {
+  if (!nativeProviderStore) throw new Error("Rux Native Provider store is unavailable");
+  return nativeProviderStore;
+}
+
+async function syncNativeProviderConnections(): Promise<void> {
+  const store = requireNativeProviderStore();
+  await requestRuntime({
+    kind: "request",
+    id: `provider-sync-${randomUUID()}`,
+    method: "provider.connection.sync",
+    params: { connections: store.runtimeCredentials() },
+  });
 }
 
 function startRuntimeProcess(): void {
@@ -564,7 +591,10 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.request, async (event, input: unknown) => {
     assertTrustedRenderer(event);
     const parsed = runtimeRequestSchema.parse(input) as RuntimeRequest;
-    if (["runtime.shutdown", "session.list", "session.read", "session.resume.check"].includes(parsed.method)) {
+    if (
+      ["runtime.shutdown", "session.list", "session.read", "session.resume.check"].includes(parsed.method)
+      || ["provider.connection.sync", "provider.connection.test"].includes(parsed.method)
+    ) {
       throw new Error("This Runtime method is not exposed to the Renderer");
     }
     return requestRuntime(parsed);
@@ -673,6 +703,7 @@ function registerIpcHandlers(): void {
     const task = state.tasks.find((candidate) => candidate.id === parsed.taskId);
     const link = task?.importedSession?.sessionLink;
     if (!task || !link || (link.engine !== "codex" && link.engine !== "claude-code")) throw new Error("Imported Session Task was not found");
+    if (task.importedSession?.status === "unlinked") throw new Error("This imported Session is unlinked; explicitly import it again before refreshing");
     const previewParams = sessionPreviewParamsSchema.parse({
       operationId: parsed.operationId,
       engine: link.engine,
@@ -818,6 +849,90 @@ function registerIpcHandlers(): void {
     if (parsed.agentSummaryGenerationId) handoffSummaryGenerations.delete(parsed.agentSummaryGenerationId);
     return result;
   });
+
+  ipcMain.handle(IPC_CHANNELS.localDataSummary, (event) => {
+    assertTrustedRenderer(event);
+    const active = requireWorkspaceState().active;
+    if (active.placeholder) throw new Error("Local data requires an active authorized Workspace");
+    return requireTaskStore().getLocalDataSummary(requireAuthorizedWorkspaceId(active.id));
+  });
+
+  ipcMain.handle(IPC_CHANNELS.localDataPreview, (event, input: unknown) => {
+    assertTrustedRenderer(event);
+    const parsed = localDataPreviewParamsSchema.parse(input);
+    const active = requireWorkspaceState().active;
+    if (active.placeholder) throw new Error("Local data requires an active authorized Workspace");
+    return requireTaskStore().previewLocalDataAction(requireAuthorizedWorkspaceId(active.id), parsed);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.localDataExecute, (event, input: unknown) => {
+    assertTrustedRenderer(event);
+    const parsed = localDataExecuteParamsSchema.parse(input);
+    const active = requireWorkspaceState().active;
+    if (active.placeholder) throw new Error("Local data requires an active authorized Workspace");
+    return requireTaskStore().executeLocalDataAction(requireAuthorizedWorkspaceId(active.id), parsed);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.localDataExport, async (event, input: unknown) => {
+    assertTrustedRenderer(event);
+    const parsed = localDataExportParamsSchema.parse(input);
+    const active = requireWorkspaceState().active;
+    if (active.placeholder) throw new Error("Local data export requires an active authorized Workspace");
+    const artifact = requireTaskStore().buildLocalDataExport(
+      requireAuthorizedWorkspaceId(active.id),
+      parsed.scope,
+      parsed.taskId,
+      parsed.format,
+      parsed.revisions,
+    );
+    const result = await dialog.showSaveDialog(mainWindow!, {
+      title: "导出 Rux 本地数据",
+      defaultPath: artifact.suggestedName,
+      filters: parsed.format === "json"
+        ? [{ name: "JSON", extensions: ["json"] }]
+        : [{ name: "Markdown", extensions: ["md"] }],
+    });
+    if (result.canceled || !result.filePath) return { saved: false, canceled: true };
+    writeFileSync(result.filePath, artifact.content, { encoding: "utf8", mode: 0o600 });
+    return { saved: true, canceled: false, filePath: result.filePath, bytes: Buffer.byteLength(artifact.content, "utf8") };
+  });
+
+  ipcMain.handle(IPC_CHANNELS.providerConnectionList, (event) => {
+    assertTrustedRenderer(event);
+    return requireNativeProviderStore().list();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.providerConnectionSave, async (event, input: unknown) => {
+    assertTrustedRenderer(event);
+    const parsed = nativeProviderConnectionInputSchema.parse(input);
+    const saved = requireNativeProviderStore().save(parsed);
+    await syncNativeProviderConnections();
+    return saved;
+  });
+
+  ipcMain.handle(IPC_CHANNELS.providerConnectionDelete, async (event, input: unknown) => {
+    assertTrustedRenderer(event);
+    const parsed = nativeProviderConnectionDeleteParamsSchema.parse(input);
+    const usedBy = agentProfileStore?.list().filter((profile) => profile.providerConnection.id === parsed.id) ?? [];
+    if (usedBy.length) throw new Error(`先删除或迁移使用该 Connection 的 Agent：${usedBy.map((profile) => profile.name).join("、")}`);
+    requireNativeProviderStore().delete(parsed.id);
+    await syncNativeProviderConnections();
+    return { ok: true as const };
+  });
+
+  ipcMain.handle(IPC_CHANNELS.providerConnectionTest, async (event, input: unknown) => {
+    assertTrustedRenderer(event);
+    const parsed = nativeProviderConnectionTestParamsSchema.parse(input);
+    await syncNativeProviderConnections();
+    const result = await requestRuntime({
+      kind: "request",
+      id: `provider-test-${randomUUID()}`,
+      method: "provider.connection.test",
+      params: parsed,
+    }) as import("../shared/protocol").NativeProviderConnectionTestResult;
+    requireNativeProviderStore().recordTest(result);
+    return result;
+  });
 }
 
 function createMainWindow(): BrowserWindow {
@@ -900,6 +1015,15 @@ app.setName("Rux");
 app.whenReady().then(() => {
   initializeWorkspaceState();
   agentProfileStore = new AgentProfileStore(resolve(app.getPath("userData"), "agent-profiles.json"));
+  nativeProviderStore = new NativeProviderStore(
+    resolve(app.getPath("userData"), "native-provider-connections.json"),
+    {
+      available: () => safeStorage.isEncryptionAvailable()
+        && (process.platform !== "linux" || safeStorage.getSelectedStorageBackend() !== "basic_text"),
+      encrypt: (value) => safeStorage.encryptString(value),
+      decrypt: (value) => safeStorage.decryptString(value),
+    },
+  );
   taskStore = new TaskStore(
     resolve(app.getPath("userData"), "rux-task-state.sqlite3"),
     undefined,

@@ -997,3 +997,81 @@ test("refresh appends safely, holds external differences, rebuilds explicitly, a
     await rm(temporaryRoot, { recursive: true, force: true });
   }
 });
+
+test("previews and executes scoped local data lifecycle without mutating the Native Session", async () => {
+  const temporaryRoot = await mkdtemp(join(tmpdir(), "rux-session-data-"));
+  const databasePath = join(temporaryRoot, "state.sqlite3");
+  const preview = {
+    identityKey: "e".repeat(64),
+    metadata: { engine: "codex", providerConnectionId: "cli:codex:default", nativeSessionId: "thread-local-data", title: "Local data", resumeStatus: "available" },
+    messages: [
+      { id: "native-1", role: "user", content: [{ type: "text", text: "Imported prompt" }] },
+      { id: "native-2", role: "assistant", content: [{ type: "text", text: "Imported answer" }] },
+    ],
+    truncated: false,
+    resume: { engine: "codex", providerConnectionId: "cli:codex:default", nativeSessionId: "thread-local-data", status: "available" },
+  };
+  try {
+    const store = createTaskStore(databasePath, () => savedAt);
+    const imported = store.importExternalSession({ workspaceId: "workspace-a", workspaceBranch: "main", preview, mode: "continue" });
+    const summary = store.getLocalDataSummary("workspace-a");
+    assert.equal(summary.taskCount, 1);
+    assert.equal(summary.importedTaskCount, 1);
+    assert.equal(summary.projectionRevisionCount, 1);
+    assert.ok(summary.estimatedBytes > 0);
+
+    const unlinkPreview = store.previewLocalDataAction("workspace-a", { scope: "task", taskId: imported.task.id, action: "unlink" });
+    assert.equal(unlinkPreview.estimatedReclaimableBytes, 0);
+    assert.deepEqual(unlinkPreview.nativeSessions, [{ engine: "codex", nativeSessionId: "thread-local-data" }]);
+    assert.throws(() => store.executeLocalDataAction("workspace-a", { scope: "task", taskId: imported.task.id, action: "unlink", fingerprint: "0".repeat(64) }), /review the impact again/);
+    store.executeLocalDataAction("workspace-a", { scope: "task", taskId: imported.task.id, action: "unlink", fingerprint: unlinkPreview.fingerprint, confirmed: true });
+    assert.equal(store.load("workspace-a").tasks[0].importedSession.status, "unlinked");
+    assert.equal(store.listSessionRevisions("workspace-a", imported.task.id).revisions.length, 1, "unlink retains Projection revisions");
+
+    const relinked = store.importExternalSession({ workspaceId: "workspace-a", workspaceBranch: "main", preview, mode: "continue" });
+    assert.equal(relinked.binding.status, "linked");
+    const state = store.load("workspace-a");
+    state.tasks[0].messages.push({ id: "rux-local-note", role: "user", text: "Rux-owned note", time: "现在", createdAt: savedAt });
+    state.tasks[0].runs.push({
+      id: "rux-run", taskId: imported.task.id, adapter: "codex", status: "completed", prompt: "Continue locally",
+      permissionMode: "acceptEdits", model: "gpt-5", agentRevisionId: state.tasks[0].agentRevisionId,
+      providerConnection: state.tasks[0].providerConnection, modelSource: "manual", modelVerificationStatus: "verified",
+      contextFiles: [], gitRestores: [], startedAt: savedAt, updatedAt: savedAt, finishedAt: savedAt,
+      permissionRequests: [], permissionDecisions: [], verifications: [], events: [],
+    });
+    store.save(state);
+
+    const json = store.buildLocalDataExport("workspace-a", "task", imported.task.id, "json", "all");
+    const markdown = store.buildLocalDataExport("workspace-a", "task", imported.task.id, "markdown", "current");
+    assert.match(json.content, /"projectionRevisions"/);
+    assert.match(json.content, /Rux-owned note/);
+    assert.doesNotMatch(json.content, /"(?:apiKey|accessToken|refreshToken|authorization|password|secret|credential)"\s*:/i);
+    assert.match(markdown.content, /# Rux 本地数据导出/);
+    assert.match(markdown.content, /该文件可能包含/);
+
+    const removePreview = store.previewLocalDataAction("workspace-a", { scope: "task", taskId: imported.task.id, action: "remove-imported" });
+    assert.equal(removePreview.importedMessageCount, 2);
+    assert.equal(removePreview.runCount, 1);
+    store.executeLocalDataAction("workspace-a", { scope: "task", taskId: imported.task.id, action: "remove-imported", fingerprint: removePreview.fingerprint, confirmed: true });
+    const retained = store.load("workspace-a").tasks[0];
+    assert.equal(retained.importedSession, undefined);
+    assert.deepEqual(retained.messages.map((message) => message.id), ["rux-local-note"]);
+    assert.equal(retained.runs[0].id, "rux-run");
+    const database = new DatabaseSync(databasePath);
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM session_projection").get().count, 0);
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM session_projection_revision").get().count, 0);
+    database.close();
+
+    const reimported = store.importExternalSession({ workspaceId: "workspace-a", workspaceBranch: "main", preview, mode: "continue" });
+    assert.equal(reimported.created, true);
+    assert.equal(store.load("workspace-a").tasks[0].messages.some((message) => message.id === "rux-local-note"), true);
+    const deletePreview = store.previewLocalDataAction("workspace-a", { scope: "task", taskId: imported.task.id, action: "delete-task" });
+    store.executeLocalDataAction("workspace-a", { scope: "task", taskId: imported.task.id, action: "delete-task", fingerprint: deletePreview.fingerprint, confirmed: true });
+    assert.deepEqual(store.load("workspace-a").tasks, []);
+    const importedAgain = store.importExternalSession({ workspaceId: "workspace-a", workspaceBranch: "main", preview, mode: "view" });
+    assert.equal(importedAgain.created, true, "a still-existing Native Session can be reimported after local deletion");
+    store.close();
+  } finally {
+    await rm(temporaryRoot, { recursive: true, force: true });
+  }
+});

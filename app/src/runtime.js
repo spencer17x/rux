@@ -50,6 +50,7 @@ function normalizeRunArguments(options, emit) {
       sessionId: options?.sessionId,
       profileId: options?.profileId,
       agentRevisionId: options?.agentRevisionId || builtInAgentRevisionId(adapter),
+      providerConnectionId: options?.providerConnectionId,
       contextFiles: options?.contextFiles,
     },
     emit,
@@ -165,6 +166,10 @@ export function createMockRuntime() {
     async previewHandoff() { throw new Error("Context Handoff 仅在 Rux 桌面应用中可用"); },
     async generateHandoffSummary() { throw new Error("Context Handoff 摘要生成仅在 Rux 桌面应用中可用"); },
     async commitHandoff() { throw new Error("Context Handoff 仅在 Rux 桌面应用中可用"); },
+    async getLocalDataSummary() { throw new Error("本地数据管理仅在 Rux 桌面应用中可用"); },
+    async previewLocalData() { throw new Error("本地数据管理仅在 Rux 桌面应用中可用"); },
+    async executeLocalData() { throw new Error("本地数据管理仅在 Rux 桌面应用中可用"); },
+    async exportLocalData() { throw new Error("本地数据导出仅在 Rux 桌面应用中可用"); },
 
     async cancelSessionDiscovery() {
       return { ok: true };
@@ -189,6 +194,11 @@ export function createMockRuntime() {
     async deleteAgentProfile() {
       throw new Error("自定义 Agent 仅在 Rux 桌面应用中可用");
     },
+
+    async listProviderConnections() { return []; },
+    async saveProviderConnection() { throw new Error("原生 Provider 仅在 Rux 桌面应用中可用"); },
+    async deleteProviderConnection() { throw new Error("原生 Provider 仅在 Rux 桌面应用中可用"); },
+    async testProviderConnection() { throw new Error("原生 Provider 仅在 Rux 桌面应用中可用"); },
 
     async listChanges() {
       const previewFiles = showcasePreview ? changedFiles : [];
@@ -413,6 +423,10 @@ function createDesktopRuntime(api) {
     previewHandoff(params) { return api.previewHandoff(params); },
     generateHandoffSummary(params) { return api.generateHandoffSummary(params); },
     commitHandoff(params) { return api.commitHandoff(params); },
+    getLocalDataSummary() { return api.getLocalDataSummary(); },
+    previewLocalData(params) { return api.previewLocalData(params); },
+    executeLocalData(params) { return api.executeLocalData(params); },
+    exportLocalData(params) { return api.exportLocalData(params); },
 
     cancelSessionDiscovery(operationId) {
       return api.request("session.cancel", { operationId });
@@ -445,6 +459,11 @@ function createDesktopRuntime(api) {
     deleteAgentProfile(id) {
       return api.request("agent.profile.delete", { id });
     },
+
+    listProviderConnections() { return api.listProviderConnections(); },
+    saveProviderConnection(input) { return api.saveProviderConnection(input); },
+    deleteProviderConnection(id) { return api.deleteProviderConnection({ id, confirmed: true }); },
+    testProviderConnection(id) { return api.testProviderConnection({ id }); },
 
     listChanges() {
       return api.request("changes.list", {});
@@ -539,6 +558,7 @@ function createDesktopRuntime(api) {
         ...(normalized.options.sessionId ? { sessionId: normalized.options.sessionId } : {}),
         ...(normalized.options.profileId ? { profileId: normalized.options.profileId } : {}),
         agentRevisionId: normalized.options.agentRevisionId,
+        providerConnectionId: normalized.options.providerConnectionId,
         ...(normalized.options.contextFiles?.length ? { contextFiles: normalized.options.contextFiles } : {}),
       }).catch((error) => {
         const emit = activeRuns.get(runId);

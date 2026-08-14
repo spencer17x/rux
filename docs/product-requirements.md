@@ -1,10 +1,10 @@
 # RUX 产品需求文档
 
-> 版本：v1.0  
+> 版本：v1.1
 > 状态：需求基线已确认；实现与验收仍按阶段推进  
-> 更新日期：2026-08-12  
-> 当前范围：Desktop MVP 的 Agent、Provider、模型、认证与会话接入
-> 配套执行文档：[P0/P1 交付路线与验收矩阵](delivery-roadmap-and-acceptance.md)
+> 更新日期：2026-08-14
+> 当前范围：Desktop MVP 的 Agent、Provider、模型、认证与会话接入，以及已确认的 P2 Auto 模型路由
+> 配套执行文档：[P0/P1 交付路线与 P2 规划验收矩阵](delivery-roadmap-and-acceptance.md)
 
 ## 1. 产品背景
 
@@ -64,7 +64,10 @@ RUX 的核心目标是把黑盒式 Agent Run 转化为可见、可控、可审�
 | Provider Connection | 由 Engine 管理的登录或模型访问配置，例如 ChatGPT 登录、Claude 登录、API Key、云 Provider 或自定义 Base URL 配置。 |
 | Agent | 一个命名执行配置，由 Engine、Provider Connection、默认模型、指令、权限、Skills 与 Tools 组成。 |
 | Agent Revision | Agent 每次保存后形成的不可变版本。Task 固定使用创建时选中的 Revision。 |
-| Model | Agent 的默认模型或当前 Run 的兼容模型覆盖项。 |
+| Model | Agent 的默认模型、固定 Run 模型或 Auto 路由允许选择的兼容模型。 |
+| Auto Model Policy | Agent Revision 中不可变的模型路由策略，包含简单任务模型、复杂任务模型、模型白名单、路由偏好与回退规则。 |
+| Model Decision | Run 启动前形成的不可变路由结果，记录模式、复杂度、实际模型、选择原因和回退证据。 |
+| Token Usage | Engine/Provider 对一次 Run 报告的输入、缓存输入、输出、推理和总 Token；无法精确获得时必须标记未报告或估算。 |
 | Native Session | Codex Thread 或 Claude Code Session 等由官方 Engine 持有的原生对话。 |
 | RUX Projection | RUX 对消息、事件和会话关联进行规范化后的本地记录，不包含认证凭据。 |
 | Projection Revision | 一次完整的外部会话投影快照；重建时保留旧版本，保证历史可审查和可恢复。 |
@@ -136,6 +139,7 @@ flowchart LR
 - 用户先选择 Agent，再选择该 Agent/Connection 可用的兼容模型。
 - Provider Connection 由 Agent 决定，不要求用户每次 Run 重复选择。
 - Agent 提供默认模型；Composer 可以为当前 Run 覆盖兼容模型。
+- 模型模式包括“固定模型”“Engine 默认”和规划中的“Auto”。Auto 在每个 Run 开始前选择一个实际模型，不在执行中途换模。
 - 每个 Run 保存实际使用的 Engine、Connection 引用、模型和不可变 Agent 快照，确保历史可审查。
 
 ### 5.8 RUX 发起的会话自动留存
@@ -149,7 +153,7 @@ flowchart LR
 
 ### 5.9 外部历史采用“会话接入”而非实时双向同步
 
-实现状态（2026-08-13）：当前 Runtime protocol 为 v5。v4 提供统一 Session Connector 合同；v5 新增仅由 Main 经 Handoff 指纹校验后调用的隔离式来源 Agent 摘要请求。Codex 使用 App Server Thread List/Read，Claude Code 使用官方 Agent SDK 的 `list_sessions`、`get_session_info`、`get_session_messages`；两端支持分页、取消、超时、大小限制和敏感错误清洗。
+实现状态（2026-08-14）：当前 Runtime protocol 为 v6。v4 提供统一 Session Connector 合同；v5 新增仅由 Main 经 Handoff 指纹校验后调用的隔离式来源 Agent 摘要请求；v6 增加 Rux Native Engine、原生 Connection 合同与 `rux-response` Session Link。Codex 使用 App Server Thread List/Read，Claude Code 使用官方 Agent SDK 的 `list_sessions`、`get_session_info`、`get_session_messages`；两端支持分页、取消、超时、大小限制和敏感错误清洗。
 
 实现状态（2026-08-13）：P1-E1 已开放显式的“导入 Agent 会话”元数据发现入口。打开入口不会访问 Provider；点击查找后，Runtime 才按规范化真实路径和最具体已授权 Workspace 归属结果返回当前项目、待归属、需要授权和迁移建议。属于其他项目的会话被隐藏，迁移建议不会静默改变旧归属。
 
@@ -220,6 +224,8 @@ flowchart LR
 - 导出支持 Task 或 Workspace 范围，并至少提供便于阅读的 Markdown 与保留结构的 JSON；用户可选择当前版本或包含旧 Revision。
 - 导出文件不得包含凭据，并在写入前提示其中可能含有提示词、文件内容、命令输出和其他敏感信息。
 
+实现状态（2026-08-13）：P1-E5 已完成。设置页和导入 Task 均可打开 Workspace 本地数据页，查看估算占用、Task、导入 Task、Projection Revision 与 Handoff 数量。解除关联、删除导入内容和删除 Task/Workspace Tasks 使用不同范围，并在执行前展示影响、预计释放空间和不会被修改的 Native Session；Main 在事务中复核预览指纹。Markdown/JSON 导出支持 Task/Workspace 和当前/全部 Revision，使用原生保存对话框，排除结构化凭据字段并在写入前提示潜在敏感内容。删除后只承诺可从仍存在的原生会话重新导入，不承诺恢复本地数据。
+
 ### 5.15 嵌套 Workspace 采用最具体归属
 
 - 会话归属判断必须在 Main/Runtime 的授权边界内完成，Renderer 不直接解析或探测本地路径。
@@ -247,10 +253,12 @@ flowchart LR
 - 动态目录带有来源和最后刷新时间；实际 Run 始终以 Engine 的执行结果为准。
 - 已保存模型从最新目录消失时，RUX 显示警告并允许重新验证或选择 Engine 默认，不静默替换模型。
 
-### 5.17 RUX 原生 API Provider 延后至 P2
+### 5.17 RUX 原生 API Provider（P2-E1 首版已实现）
 
-- P0/P1 只复用官方 Engine 管理的 OAuth、API Key、Base URL 和云 Provider 配置；不增加 RUX 自己的密钥托管入口。
-- RUX 原生 API Provider 作为独立 Provider Adapter 在 P2 实现，不反向扩大 MVP 范围。
+实现状态（2026-08-14）：已实现 Responses-compatible 原生 Connection、Main `safeStorage` 加密、Renderer 隔离、显式连接测试、自动创建 Rux Native Agent，以及无需外部 Agent CLI 的模型调用和受 Workspace 边界保护的文件读取/列表/写入工具循环。命令执行、流式输出、模型目录、Custom Headers、Anthropic 原生协议与原生 OAuth 仍是后续范围。
+
+- 官方 CLI Connection 继续复用对应 Engine 管理的 OAuth、API Key、Base URL 和云 Provider 配置；RUX 不读取或迁移这些凭据。
+- RUX Native 作为独立 `rux-native` Engine 和 Provider Adapter 实现，不要求用户安装 Codex 或 Claude Code。
 - API Key 等密钥只保存到操作系统凭据库，例如 macOS Keychain、Windows Credential Manager 或 Linux Secret Service；凭据库不可用时不得回退为明文文件或普通应用状态。
 - 密钥录入、替换和删除通过 Main/Runtime 所有的受控凭据流程完成。普通 Renderer 只获得不透明 `credentialRef`、连接状态和非敏感说明，不获得、回显或持久化密钥。
 - Base URL、Provider 类型、模型 ID 和显示名称可以作为非敏感配置保存，但不得把密钥嵌入 URL、日志、错误文本或导出文件。
@@ -259,6 +267,23 @@ flowchart LR
 - RUX 原生 Connection 与 CLI Connection 相互独立。RUX 不导入、复制或迁移已有 CLI/OAuth 凭据，也不把自己的密钥写回 CLI。
 - 删除 RUX 原生 Connection 必须预览影响的 Agent 和 Task，并明确确认是否删除系统凭据；删除本地凭据不等同于在 Provider 侧吊销密钥。
 - ChatGPT 与 Claude 订阅 OAuth 仍委托官方 CLI。为 RUX 原生 Provider 增加 OAuth 必须另行完成合规与安全设计，不包含在本决策中。
+
+### 5.18 Auto 模型路由与 Token 证据（P2）
+
+实现状态：需求已确认，尚未实现。该能力不依赖 RUX 原生 API Provider，可以先基于现有 Codex/Claude Code Engine 与非敏感 Connection 落地。
+
+- Composer 增加 `Auto` 模式，与“固定模型”和“Engine 默认”并列。Auto 只负责为当前 Run 选择模型，不改变 Agent、Engine、Provider Connection、权限或 Workspace。
+- 第一版只分“简单任务”和“复杂任务”两级。默认使用可解释的确定性信号，例如用户意图、上下文规模、文件/工具需求、跨文件范围、失败记录和是否需要多步骤计划；不额外调用模型做分类。
+- 用户可以在 Agent 配置中分别指定简单任务模型、复杂任务模型、路由策略（保守、均衡、质量优先）、是否允许回退，以及 Auto 模型白名单。
+- Auto Policy 属于不可变 Agent Revision。修改模型、白名单、策略或回退规则会追加新 Revision；已有 Task 继续使用其固定 Revision，新策略只影响使用新 Revision 创建的 Task。
+- 白名单按 `engine + connectionReference + modelId` 隔离，只接受当前 Engine 目录模型或同一 Connection 下已成功运行的模型。手动、未验证模型必须先由用户显式成功运行，才能进入 Auto 白名单。
+- Auto 只能在同一 Agent Revision、Engine 和 Provider Connection 内切换模型。跨 Agent、Engine 或 Connection 继续使用 Context Handoff 新建 Task，不得把自动路由伪装成原会话延续。
+- Runtime 必须先读取 Engine 对“同一 Native Session 按 Run 切换模型”的明确能力。支持时下一 Run 可以选择不同白名单模型；不支持或未知时保持 Session 固定模型，或提示创建新 Task，不得试探性静默切换。
+- 每个 Run 启动前生成不可变 Model Decision，至少记录模式、简单/复杂分类、实际模型、策略、选择原因、白名单快照、是否回退和非敏感失败证据。执行开始后本 Run 不再换模。
+- 回退只能发生在白名单内，且必须显示。模型明确不存在或不兼容时可以尝试下一个允许模型；认证、网络、配额或临时服务错误不能触发无限换模，也不能把模型永久标记为无效。
+- 每个 Assistant turn/Run 在 Transcript 中展示实际模型；展开后展示 Auto 分类、选择原因、Engine、Connection、Agent Revision、回退和 Token 明细。
+- Token Usage 优先采用 Engine/Provider 返回的结构化数据，区分输入、缓存输入、输出、推理和总 Token。未返回时显示“未报告”；本地估算必须明确标记“估算”，不能作为账单事实。
+- 如果未来使用模型型路由器，其调用必须与任务 Run 分开记录模型、Token、耗时和来源，且路由模型也受显式允许范围约束。
 
 ## 6. 信息架构
 
@@ -283,12 +308,13 @@ flowchart LR
 ### 6.3 Composer
 
 - 主选择器：Agent。
-- 次选择器：兼容模型。
+- 次选择器：固定模型、Engine 默认或 Auto；Auto 展示本次可能使用的简单/复杂模型与白名单范围。
 - Run 级选项：推理强度、权限模式等 Engine 支持的能力。
 - 没有可用 Agent 时保留用户草稿，并将用户引导到“Agent 与 Provider”。
 - 运行中的 Task 不允许无提示切换 Agent；跨 Agent 使用“复制为新任务”。
 - Task 使用的 Agent 有新 Revision 时显示非阻塞提示，并提供“使用新版创建新任务”。
 - 模型选择器区分 Engine 默认、目录模型、已验证模型与未验证的手动模型。
+- Auto 模式下，Composer 展示当前策略摘要；Assistant 消息展示实际使用模型、Token 和可展开的路由原因，不以 `Auto` 替代真实模型名。
 
 ### 6.4 Task 历史
 
@@ -394,6 +420,16 @@ Workspace 归属单独保存；嵌套 Workspace 使用规范化真实路径的�
 4. 测试成功后，用户创建 Agent 并绑定该 Connection。
 5. 替换或删除密钥时，RUX 展示受影响 Agent/Task，并要求再次确认。
 
+### 7.9 使用 Auto 模型路由（P2）
+
+1. 用户编辑 Agent，在同一 Engine/Connection 下选择简单任务模型与复杂任务模型。
+2. 用户从目录模型和已验证模型中配置 Auto 白名单，并选择保守、均衡或质量优先策略。
+3. 保存产生新的不可变 Agent Revision；新 Task 固定该 Revision 与 Auto Policy。
+4. 用户发送消息后，RUX 在 Run 启动前用确定性规则判断简单或复杂，并检查 Native Session 是否允许按 Run 换模。
+5. RUX 在白名单内选择实际模型，保存 Model Decision，然后启动一次固定模型的 Run。
+6. Assistant 消息显示 `Auto → 实际模型`、复杂度、Token 和耗时；用户可展开查看选择原因与回退证据。
+7. 如果目标模型明确不兼容，RUX 仅在策略允许时回退到白名单内模型；无法安全回退时停止并给出可恢复操作。
+
 ## 8. 状态模型
 
 ### 8.1 Agent/Connection 状态
@@ -435,6 +471,17 @@ Workspace 归属单独保存；嵌套 Workspace 使用规范化真实路径的�
 | 不可用 | Engine 明确返回模型不存在、不兼容或不支持。 |
 | 目录过期 | 缓存目录可能陈旧，可以刷新；不代表模型一定不可用。 |
 
+### 8.4 Auto 路由状态（P2）
+
+| 状态 | 含义 |
+| --- | --- |
+| Auto 就绪 | 简单/复杂模型均在当前白名单中，且 Engine/Session 能力允许路由。 |
+| Auto 受限 | 当前 Native Session 不允许安全换模；后续 Run 保持固定模型或需要新 Task。 |
+| 已选简单模型 | 本 Run 被分类为简单任务并固定了实际模型。 |
+| 已选复杂模型 | 本 Run 被分类为复杂任务并固定了实际模型。 |
+| 已回退 | 目标模型明确不兼容或不可用，且按策略切换到白名单内另一模型。 |
+| 配置失效 | 模型离开目录、验证状态改变或白名单不完整，需要用户修复 Agent Revision。 |
+
 ## 9. 会话一致性规则
 
 - P0 只保证 RUX 自己发起的消息和 Run 被实时写入 RUX Projection。
@@ -464,6 +511,8 @@ Workspace 归属单独保存；嵌套 Workspace 使用规范化真实路径的�
 13. 删除和批量清理必须明确展示作用范围，不得影响 Native Session。
 14. 不默认上传遥测、对话内容、文件内容或命令输出。
 15. 如果未来增加云能力，必须独立设计用户同意、加密、保留与删除策略。
+16. Auto 路由只能读取执行所需的非敏感 Task/Run 元数据和用户已授权的上下文，不得为分类额外上传内容；未来模型型路由必须单独披露调用与 Token。
+17. Token Usage 只保存结构化计数和来源，不保存隐藏推理内容；不得把估算值描述为 Provider 账单或精确费用。
 
 ## 11. 分阶段范围
 
@@ -496,8 +545,11 @@ Workspace 归属单独保存；嵌套 Workspace 使用规范化真实路径的�
 
 ### P2：增强连接与协调
 
-- 独立的 RUX 原生 API Provider Adapter 与 Connection。
-- Main/Runtime 受控凭据录入、操作系统凭据库存储和不透明 `credentialRef`。
+- Auto 模型路由：简单/复杂模型、策略、同 Connection 白名单和显式回退。
+- 每个 Run 的实际模型、路由原因以及输入/缓存输入/输出/推理/总 Token 证据。
+- Engine/Native Session 的按 Run 模型切换能力协商；不支持时保持固定或显式分支。
+- 扩展已落地的 RUX 原生 API Provider Adapter 与 Connection，增加更多协议、模型目录和能力协商。
+- 完善已落地的 Main/Runtime 受控凭据流程，补齐连接编辑、影响预览与平台凭据诊断。
 - 用户显式连接测试、密钥替换/删除影响预览和无明文降级保证。
 - RUX 原生 Provider 的模型目录和能力协商。
 - 外部会话变更检测与冲突协调。
@@ -552,6 +604,26 @@ Workspace 归属单独保存；嵌套 Workspace 使用规范化真实路径的�
 - 确认后的 Handoff 保存为不可变快照，并能从新 Task 返回来源 Task。
 - 删除导入 Task 不会删除 Codex/Claude Code 的原生会话。
 
+### 12.4 Auto 模型路由验收（P2）
+
+- 用户能为 Agent Revision 配置简单模型、复杂模型、路由策略、回退规则和模型白名单。
+- Auto 不会选择白名单外、跨 Engine、跨 Connection 或未验证的手动模型。
+- 每次 Run 开始前只生成一个实际模型决定，执行中途不换模；历史 Run 不因策略更新而改变。
+- Engine 未声明当前 Native Session 支持换模时，RUX 不进行试探性切换，并提供固定模型或新建 Task 的明确路径。
+- Transcript 中每个 Assistant turn 显示实际模型；Auto 模式同时显示分类，展开后能查看选择原因和回退证据。
+- Token 明细区分输入、缓存输入、输出、推理和总量，并标明 Provider/Engine 报告、估算或未报告。
+- 明确模型不兼容可以按策略在白名单内回退；认证、网络、配额和临时错误不会造成无限自动重试或永久无效结论。
+
+### 12.5 Rux Native Provider 验收（P2-E1）
+
+- 未安装 Codex 与 Claude Code 时，用户仍能通过显式配置的 Responses-compatible Connection 创建并运行 Rux Native Agent。
+- API Key 不出现在 Renderer 状态、普通 Runtime IPC、日志、Task Store 或导出中；OS 加密不可用时拒绝保存，不回退明文。
+- 打开账户面板和应用启动不访问 Provider；只有用户点击测试或发起 Run 才产生网络请求。
+- Base URL 禁止携带用户名、密码或嵌入式 Key，公网地址必须使用 HTTPS；localhost 可用于显式本地开发。
+- Agent 文件工具不能越过授权 Workspace、跟随外部符号链接或读取/写入 `.env`、私钥、凭据文件和明显 Secret 内容。
+- 每个 Run 记录实际模型、Connection、Provider response id、Token Usage、工具活动、Git baseline/patch 与终态。
+- 当前首版没有命令工具；在跨平台沙箱和精细权限证据完成前，不得用未隔离的本机 Shell 冒充完整 coding-agent 命令能力。
+
 ## 13. 当前实现与目标差距
 
 P0 实现状态（2026-08-12）：Desktop 本地 Release Candidate 已通过隔离 Fake CLI 的干净启动、显式连接检测、首次 Run、重启续聊、同 Native Session 恢复、Terminal 不恢复与 Workspace 切换验收。自动化、Web/Desktop/TUI 构建和当前平台打包均通过。macOS 包仍未签名和公证，不是可公开分发的正式版本。
@@ -562,17 +634,18 @@ P0 实现状态（2026-08-12）：Desktop 本地 Release Candidate 已通过隔�
 | Codex 执行 | 已接入真实 CLI/App Server 路径 | 保持并用于会话列表、读取与恢复 |
 | Task/Message/Run | 已按授权 Workspace 持久化到 Main 管理的 SQLite | 继续作为 RUX Projection |
 | Native Session 延续 | 已保存规范化 Session Link，按 Engine/Connection/Revision/Workspace 恢复，并提供可见失败恢复分支 | P1 扩展到外部会话发现、导入与 Projection 版本 |
-| 账户界面 | 已采用无 RUX 账号前置的“Agent 与 Provider”语义，分别管理 Rux/Claude Code | 后续按同一 Connection 合同扩展 Engine |
+| 账户界面 | 已采用无 RUX 账号前置的“Agent 与 Provider”语义，管理 Rux Native、Codex 与 Claude Code | 后续扩展更多原生协议和 Connection 编辑体验 |
 | 登录状态同步 | 已提供用户显式触发的统一检测；启动和打开面板均不自动读取状态 | 保持用户主动与 CLI 凭据边界 |
 | 模型目录 | Codex 已有结构化模型目录基础；其他 Engine 和自定义配置能力不一致 | 增加 Engine 优先目录、手动输入、运行验证和来源状态 |
-| RUX 原生 API Provider | 尚未实现；MVP 复用官方 CLI 配置 | P2 使用独立 Adapter、系统凭据库和不透明凭据引用 |
+| Auto 模型路由 | 尚未实现；当前 Task/Run 使用用户选择或 Engine 默认模型 | P2 增加 Revision-owned Policy、Run Model Decision、同 Connection 白名单与逐 Run Token 证据 |
+| RUX 原生 API Provider | P2-E1 首版已实现；无需外部 Agent CLI，可配置 Responses-compatible Base URL、模型和 API Key | 后续增加命令沙箱、流式输出、目录/能力协商、更多协议与凭据影响预览 |
 | 自定义 Agent | 已有不可变 Revision、Task/Run 固定、版本提示与“使用新版创建新任务”分支 | P1 增加可预览确认的跨 Agent Context Handoff |
 | Context Handoff | 已实现确定性事实包、来源 Agent 隔离摘要、可编辑预览、确认事务和双向来源追踪 | P1-E4 已完成；后续仅做体验优化 |
-| 外部会话导入 | 已实现显式发现、选择后预览、去重导入、只读查看与兼容继续 | 后续补齐数据管理与跨 Agent Handoff |
+| 外部会话导入 | 已实现显式发现、选择后预览、去重导入、只读查看、兼容继续、Context Handoff 与本地数据生命周期 | 后续补齐显式归属迁移提交 |
 | 会话 Workspace 归属 | 已实现 realpath 组件边界、最长匹配、待归属/需授权与迁移建议 | 后续实现显式归属迁移提交 |
 | 外部会话刷新 | 已实现显式刷新、安全追加、差异候选、版本化重建和本地恢复 | 保持非后台、非双向同步语义 |
-| 本地会话数据管理 | 尚未实现 | 增加占用查看、导出、解除关联与分范围删除 |
-| RUX Agent | 仍是 Mock 协议适配器 | 不描述为真实远程 Provider |
+| 本地会话数据管理 | 已实现 Task/Workspace 占用、影响预览、解除关联、分层删除及 Markdown/JSON 导出 | 后续只扩展诊断与迁移工具 |
+| RUX Agent | `rux-native` 已是真实 Responses-compatible Adapter；开发 Mock 仍单独存在 | 不把尚未实现的命令沙箱、模型目录或原生 OAuth 描述为已完成 |
 | Changes/Context | Renderer 部分仍含展示数据 | 在接入真实数据前保持明确标注 |
 
 ## 14. 成功指标

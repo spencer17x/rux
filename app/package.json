@@ -27,7 +27,7 @@
     "test:auth": "node --experimental-strip-types --test tests/auth-manager.test.mjs",
     "test:persistence": "node --experimental-strip-types --test tests/task-store.test.mjs",
     "test:agents": "node --experimental-strip-types --test tests/agent-profile-store.test.mjs",
-    "test:adapters": "node --experimental-strip-types --test tests/codex-event-parser.test.mjs tests/codex-adapter.test.mjs tests/codex-app-server-adapter.test.mjs tests/claude-adapter.test.mjs tests/claude-permission-broker.test.mjs",
+    "test:adapters": "node --experimental-strip-types --test tests/codex-event-parser.test.mjs tests/codex-adapter.test.mjs tests/codex-app-server-adapter.test.mjs tests/claude-adapter.test.mjs tests/claude-permission-broker.test.mjs tests/native-provider-adapter.test.mjs tests/native-provider-store.test.mjs",
     "test:permissions": "node --experimental-strip-types --test tests/permission-gate.test.mjs",
     "test:context": "node --experimental-strip-types --test tests/context-snapshot.test.mjs",
     "test:runtime-lifecycle": "node --experimental-strip-types --test tests/runtime-lifecycle.test.mjs",

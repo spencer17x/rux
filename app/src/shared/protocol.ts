@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const RUX_PROTOCOL_VERSION = 5 as const;
+export const RUX_PROTOCOL_VERSION = 6 as const;
 
 export const IPC_CHANNELS = {
   request: "rux:runtime:request",
@@ -20,6 +20,14 @@ export const IPC_CHANNELS = {
   handoffPreview: "rux:handoff:preview",
   handoffSummaryGenerate: "rux:handoff:summary-generate",
   handoffCommit: "rux:handoff:commit",
+  localDataSummary: "rux:local-data:summary",
+  localDataPreview: "rux:local-data:preview",
+  localDataExecute: "rux:local-data:execute",
+  localDataExport: "rux:local-data:export",
+  providerConnectionList: "rux:provider-connection:list",
+  providerConnectionSave: "rux:provider-connection:save",
+  providerConnectionDelete: "rux:provider-connection:delete",
+  providerConnectionTest: "rux:provider-connection:test",
 } as const;
 
 export const runtimeMethods = [
@@ -44,6 +52,8 @@ export const runtimeMethods = [
   "agent.profile.create",
   "agent.profile.update",
   "agent.profile.delete",
+  "provider.connection.sync",
+  "provider.connection.test",
   "handoff.summary.generate",
   "run.start",
   "run.cancel",
@@ -70,7 +80,7 @@ export const runtimeMethods = [
 export type RuntimeMethod = (typeof runtimeMethods)[number];
 export type RendererRuntimeMethod = Exclude<
   RuntimeMethod,
-  "runtime.shutdown" | "session.list" | "session.read" | "session.resume.check" | "handoff.summary.generate"
+  "runtime.shutdown" | "session.list" | "session.read" | "session.resume.check" | "handoff.summary.generate" | "provider.connection.sync" | "provider.connection.test"
 >;
 
 export interface RuntimeStatus {
@@ -146,7 +156,7 @@ export interface AuthLoginParams {
 
 export type AuthCancelParams = AuthLoginParams;
 
-export const runAdapters = ["claude-code", "codex", "mock"] as const;
+export const runAdapters = ["claude-code", "codex", "rux-native", "mock"] as const;
 export type RunAdapter = (typeof runAdapters)[number];
 
 export const permissionModes = ["plan", "acceptEdits", "dontAsk"] as const;
@@ -204,10 +214,10 @@ export interface AgentModelListResult {
   nextCursor?: string | null;
 }
 
-export const agentBackends = ["claude-code", "codex"] as const;
+export const agentBackends = ["claude-code", "codex", "rux-native"] as const;
 export type AgentBackend = (typeof agentBackends)[number];
 
-export const providerConnectionKinds = ["official-cli", "legacy"] as const;
+export const providerConnectionKinds = ["official-cli", "rux-native", "legacy"] as const;
 export type ProviderConnectionKind = (typeof providerConnectionKinds)[number];
 
 /**
@@ -219,6 +229,52 @@ export interface ProviderConnectionRef {
   kind: ProviderConnectionKind;
   engine: RunAdapter;
   label: string;
+}
+
+export const nativeProviderTypes = ["openai-responses"] as const;
+export type NativeProviderType = (typeof nativeProviderTypes)[number];
+
+/** Renderer-safe native Provider metadata. The API key never crosses this contract. */
+export interface NativeProviderConnection {
+  id: string;
+  label: string;
+  providerType: NativeProviderType;
+  baseUrl: string;
+  defaultModel: string;
+  hasCredential: boolean;
+  createdAt: string;
+  updatedAt: string;
+  lastTestedAt?: string;
+  lastTestStatus?: "connected" | "error";
+  lastTestDetail?: string;
+}
+
+export interface NativeProviderConnectionInput {
+  id?: string;
+  label: string;
+  providerType: NativeProviderType;
+  baseUrl: string;
+  defaultModel: string;
+  apiKey?: string;
+}
+
+export interface NativeProviderConnectionDeleteParams { id: string; confirmed: true; }
+export interface NativeProviderConnectionTestParams { id: string; }
+export interface NativeProviderConnectionTestResult {
+  id: string;
+  ok: boolean;
+  testedAt: string;
+  detail: string;
+}
+
+/** Main-to-Runtime only. This object may contain a secret and must never be exposed to Renderer IPC. */
+export interface NativeProviderRuntimeCredential {
+  id: string;
+  label: string;
+  providerType: NativeProviderType;
+  baseUrl: string;
+  defaultModel: string;
+  apiKey: string;
 }
 
 export const modelSources = [
@@ -252,7 +308,9 @@ export function officialCliProviderConnection(engine: AgentBackend): ProviderCon
 }
 
 export function defaultProviderConnectionForAdapter(adapter: RunAdapter): ProviderConnectionRef {
-  return adapter === "mock"
+  return adapter === "rux-native"
+    ? { id: "native:rux-native:unconfigured", kind: "rux-native", engine: "rux-native", label: "Rux Native（未配置）" }
+    : adapter === "mock"
     ? { id: "legacy:mock:local-demo", kind: "legacy", engine: "mock", label: "Legacy local demo" }
     : officialCliProviderConnection(adapter);
 }
@@ -285,7 +343,7 @@ export function builtInAgentRevisionId(adapter: RunAdapter): string {
 }
 
 export function builtInAgentRevisionAdapter(revisionId: string): RunAdapter | undefined {
-  const match = /^builtin:(claude-code|codex|mock)@1$/.exec(revisionId);
+  const match = /^builtin:(claude-code|codex|rux-native|mock)@1$/.exec(revisionId);
   return match?.[1] as RunAdapter | undefined;
 }
 
@@ -367,10 +425,11 @@ export interface RunStartParams {
   sessionId?: string;
   profileId?: string;
   agentRevisionId: string;
+  providerConnectionId?: string;
   contextFiles?: string[];
 }
 
-export const nativeSessionKinds = ["codex-thread", "claude-session", "mock-session"] as const;
+export const nativeSessionKinds = ["codex-thread", "claude-session", "rux-response", "mock-session"] as const;
 export type NativeSessionKind = (typeof nativeSessionKinds)[number];
 
 /** A non-secret, immutable reference used to decide whether a Task may resume a provider-native session. */
@@ -504,7 +563,7 @@ export interface SessionDiscoverResult {
 
 export const sessionImportModes = ["view", "continue"] as const;
 export type SessionImportMode = (typeof sessionImportModes)[number];
-export const importedSessionStatuses = ["linked", "read-only", "native-unavailable"] as const;
+export const importedSessionStatuses = ["linked", "read-only", "native-unavailable", "unlinked"] as const;
 export type ImportedSessionStatus = (typeof importedSessionStatuses)[number];
 
 export interface SessionPreviewParams extends SessionReadParams {
@@ -615,6 +674,75 @@ export interface SessionRevisionRestoreParams {
   taskId: string;
   revisionId: string;
   confirmed: boolean;
+}
+
+export const localDataScopes = ["task", "workspace"] as const;
+export type LocalDataScope = (typeof localDataScopes)[number];
+export const localDataActions = ["unlink", "remove-imported", "delete-task"] as const;
+export type LocalDataAction = (typeof localDataActions)[number];
+export const localDataExportFormats = ["markdown", "json"] as const;
+export type LocalDataExportFormat = (typeof localDataExportFormats)[number];
+export const localDataRevisionScopes = ["current", "all"] as const;
+export type LocalDataRevisionScope = (typeof localDataRevisionScopes)[number];
+
+export interface LocalDataSummary {
+  workspaceId: string;
+  estimatedBytes: number;
+  taskCount: number;
+  importedTaskCount: number;
+  projectionRevisionCount: number;
+  handoffCount: number;
+}
+
+export interface LocalDataPreviewParams {
+  scope: LocalDataScope;
+  taskId?: string;
+  action: LocalDataAction;
+}
+
+export interface LocalDataNativeSessionImpact {
+  engine: SessionEngine;
+  nativeSessionId: string;
+}
+
+export interface LocalDataImpactPreview extends LocalDataSummary {
+  scope: LocalDataScope;
+  action: LocalDataAction;
+  affectedTaskCount: number;
+  affectedProjectionRevisionCount: number;
+  importedMessageCount: number;
+  runCount: number;
+  affectedHandoffCount: number;
+  estimatedReclaimableBytes: number;
+  nativeSessions: LocalDataNativeSessionImpact[];
+  fingerprint: string;
+}
+
+export interface LocalDataExecuteParams extends LocalDataPreviewParams {
+  fingerprint: string;
+  confirmed: true;
+}
+
+export interface LocalDataExecuteResult {
+  workspaceId: string;
+  action: LocalDataAction;
+  affectedTaskCount: number;
+  savedAt: string;
+}
+
+export interface LocalDataExportParams {
+  scope: LocalDataScope;
+  taskId?: string;
+  format: LocalDataExportFormat;
+  revisions: LocalDataRevisionScope;
+  confirmedSensitiveContent: true;
+}
+
+export interface LocalDataExportResult {
+  saved: boolean;
+  canceled: boolean;
+  filePath?: string;
+  bytes?: number;
 }
 
 export interface SessionReadParams extends SessionListParams {
@@ -1380,6 +1508,14 @@ export interface RuntimeRequestMap {
     params: AgentProfileDeleteParams;
     result: { ok: true };
   };
+  "provider.connection.sync": {
+    params: { connections: NativeProviderRuntimeCredential[] };
+    result: { ok: true; count: number };
+  };
+  "provider.connection.test": {
+    params: { id: string };
+    result: NativeProviderConnectionTestResult;
+  };
   "handoff.summary.generate": {
     params: HandoffSummaryRuntimeParams;
     result: HandoffSummaryGenerateResult;
@@ -1689,6 +1825,14 @@ export interface RuxDesktopApi {
   previewHandoff(params: HandoffPreviewParams): Promise<HandoffPreviewResult>;
   generateHandoffSummary(params: HandoffSummaryGenerateParams): Promise<HandoffSummaryGenerateResult>;
   commitHandoff(params: HandoffCommitParams): Promise<HandoffCommitResult>;
+  getLocalDataSummary(): Promise<LocalDataSummary>;
+  previewLocalData(params: LocalDataPreviewParams): Promise<LocalDataImpactPreview>;
+  executeLocalData(params: LocalDataExecuteParams): Promise<LocalDataExecuteResult>;
+  exportLocalData(params: LocalDataExportParams): Promise<LocalDataExportResult>;
+  listProviderConnections(): Promise<NativeProviderConnection[]>;
+  saveProviderConnection(input: NativeProviderConnectionInput): Promise<NativeProviderConnection>;
+  deleteProviderConnection(params: NativeProviderConnectionDeleteParams): Promise<{ ok: true }>;
+  testProviderConnection(params: NativeProviderConnectionTestParams): Promise<NativeProviderConnectionTestResult>;
   request<M extends RendererRuntimeMethod>(
     method: M,
     params: RuntimeRequestMap[M]["params"],
@@ -1776,6 +1920,7 @@ export const runStartParamsSchema = z.object({
   sessionId: z.string().min(1).max(500).optional(),
   profileId: z.string().min(1).max(120).optional(),
   agentRevisionId: z.string().min(1).max(240),
+  providerConnectionId: z.string().min(1).max(240).optional(),
   contextFiles: z.array(z.string().min(1).max(4_096)).max(500).default([]),
 }).strict().superRefine((params, context) => {
   if (!params.profileId) {
@@ -1819,7 +1964,7 @@ export const nativeSessionLinkSchema = z.object({
 }).strict();
 
 export const providerConnectionRefSchema = z.object({
-  id: z.string().trim().min(1).max(240).regex(/^(?:cli|legacy):[a-z0-9._/-]+(?::[a-z0-9._/-]+)*$/i),
+  id: z.string().trim().min(1).max(240).regex(/^(?:cli|native|legacy):[a-z0-9._/-]+(?::[a-z0-9._/-]+)*$/i),
   kind: z.enum(providerConnectionKinds),
   engine: z.enum(runAdapters),
   label: z.string().trim().min(1).max(160),
@@ -1838,7 +1983,50 @@ export const providerConnectionRefSchema = z.object({
       message: "Legacy Connection id must be scoped to its Engine",
     });
   }
+  if (connection.kind === "rux-native" && (connection.engine !== "rux-native" || !connection.id.startsWith("native:rux-native:"))) {
+    context.addIssue({
+      code: "custom",
+      path: ["id"],
+      message: "Rux Native Connection id must be scoped to the rux-native Engine",
+    });
+  }
 });
+
+const nativeProviderConnectionIdSchema = z.string().trim().regex(/^native:rux-native:[a-f0-9-]{36}$/);
+const nativeProviderBaseUrlSchema = z.url().max(2_048).superRefine((value, context) => {
+  const url = new URL(value);
+  if (url.username || url.password) context.addIssue({ code: "custom", message: "Base URL must not contain credentials" });
+  if (url.protocol !== "https:" && !(url.protocol === "http:" && ["localhost", "127.0.0.1", "::1"].includes(url.hostname))) {
+    context.addIssue({ code: "custom", message: "Base URL must use HTTPS, except for localhost" });
+  }
+});
+
+export const nativeProviderConnectionInputSchema = z.object({
+  id: nativeProviderConnectionIdSchema.optional(),
+  label: z.string().trim().min(1).max(80),
+  providerType: z.enum(nativeProviderTypes),
+  baseUrl: nativeProviderBaseUrlSchema,
+  defaultModel: z.string().trim().min(1).max(160),
+  apiKey: z.string().min(1).max(16_384).optional(),
+}).strict();
+
+export const nativeProviderConnectionDeleteParamsSchema = z.object({
+  id: nativeProviderConnectionIdSchema,
+  confirmed: z.literal(true),
+}).strict();
+
+export const nativeProviderConnectionTestParamsSchema = z.object({ id: nativeProviderConnectionIdSchema }).strict();
+
+export const nativeProviderRuntimeSyncSchema = z.object({
+  connections: z.array(z.object({
+    id: nativeProviderConnectionIdSchema,
+    label: z.string().min(1).max(80),
+    providerType: z.enum(nativeProviderTypes),
+    baseUrl: nativeProviderBaseUrlSchema,
+    defaultModel: z.string().min(1).max(160),
+    apiKey: z.string().min(1).max(16_384),
+  }).strict()).max(100),
+}).strict();
 
 const sessionOperationIdSchema = z.string().trim().min(1).max(120);
 const sessionNativeIdSchema = z.string().trim().min(1).max(500);
@@ -2572,6 +2760,12 @@ export const persistedRunSchema = z.object({
     if (link.agentRevisionId !== run.agentRevisionId) {
       context.addIssue({ code: "custom", path: [field, "agentRevisionId"], message: "Native Session Revision must match its Run" });
     }
+    const expectedKind = run.adapter === "codex" ? "codex-thread"
+      : run.adapter === "claude-code" ? "claude-session"
+        : run.adapter === "rux-native" ? "rux-response" : "mock-session";
+    if (link.kind !== expectedKind) {
+      context.addIssue({ code: "custom", path: [field, "kind"], message: "Native Session kind must match its Run Engine" });
+    }
   }
   if (run.resumeFailure && !run.resumeFrom) {
     context.addIssue({ code: "custom", path: ["resumeFailure"], message: "Resume failure requires an attempted Native Session" });
@@ -2849,6 +3043,72 @@ export const sessionRevisionListResultSchema = z.object({
   currentRevisionId: z.string().trim().min(1).max(240),
   revisions: z.array(sessionRevisionSummarySchema).max(10_000),
   audits: z.array(sessionProjectionAuditSchema).max(10_000),
+}).strict();
+
+export const localDataSummarySchema = z.object({
+  workspaceId: persistedWorkspaceIdSchema,
+  estimatedBytes: z.number().int().nonnegative(),
+  taskCount: z.number().int().nonnegative(),
+  importedTaskCount: z.number().int().nonnegative(),
+  projectionRevisionCount: z.number().int().nonnegative(),
+  handoffCount: z.number().int().nonnegative(),
+}).strict();
+
+export const localDataPreviewParamsSchema = z.object({
+  scope: z.enum(localDataScopes),
+  taskId: z.string().min(1).max(240).optional(),
+  action: z.enum(localDataActions),
+}).strict().superRefine((value, context) => {
+  if (value.scope === "task" && !value.taskId) {
+    context.addIssue({ code: "custom", path: ["taskId"], message: "Task scope requires a Task id" });
+  }
+});
+
+export const localDataImpactPreviewSchema = localDataSummarySchema.safeExtend({
+  scope: z.enum(localDataScopes),
+  action: z.enum(localDataActions),
+  affectedTaskCount: z.number().int().nonnegative(),
+  affectedProjectionRevisionCount: z.number().int().nonnegative(),
+  importedMessageCount: z.number().int().nonnegative(),
+  runCount: z.number().int().nonnegative(),
+  affectedHandoffCount: z.number().int().nonnegative(),
+  estimatedReclaimableBytes: z.number().int().nonnegative(),
+  nativeSessions: z.array(z.object({
+    engine: z.enum(sessionEngines),
+    nativeSessionId: sessionNativeIdSchema,
+  }).strict()).max(20_000),
+  fingerprint: z.string().length(64),
+});
+
+export const localDataExecuteParamsSchema = localDataPreviewParamsSchema.safeExtend({
+  fingerprint: z.string().length(64),
+  confirmed: z.literal(true),
+});
+
+export const localDataExecuteResultSchema = z.object({
+  workspaceId: persistedWorkspaceIdSchema,
+  action: z.enum(localDataActions),
+  affectedTaskCount: z.number().int().nonnegative(),
+  savedAt: persistedIsoDateSchema,
+}).strict();
+
+export const localDataExportParamsSchema = z.object({
+  scope: z.enum(localDataScopes),
+  taskId: z.string().min(1).max(240).optional(),
+  format: z.enum(localDataExportFormats),
+  revisions: z.enum(localDataRevisionScopes),
+  confirmedSensitiveContent: z.literal(true),
+}).strict().superRefine((value, context) => {
+  if (value.scope === "task" && !value.taskId) {
+    context.addIssue({ code: "custom", path: ["taskId"], message: "Task scope requires a Task id" });
+  }
+});
+
+export const localDataExportResultSchema = z.object({
+  saved: z.boolean(),
+  canceled: z.boolean(),
+  filePath: z.string().min(1).max(4_096).optional(),
+  bytes: z.number().int().nonnegative().optional(),
 }).strict();
 
 export const handoffPreviewParamsSchema = z.object({

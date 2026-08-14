@@ -3,15 +3,15 @@
 > Runtime protocol: v5
 > Agent Profile Store: v2  
 > Task Store: SQLite schema v5 / Workspace snapshot v2
-> Updated: 2026-08-12
+> Updated: 2026-08-14
 
 ## Process boundaries
 
 ```mermaid
 flowchart LR
   UI["Sandboxed Renderer"] -->|"typed Preload IPC"| Main["Electron Main"]
-  Main -->|"validated protocol v5"| Runtime["Utility Process Runtime"]
-  TUI["Rust TUI"] -->|"JSONL protocol v5"| Host["stdio Runtime Host"]
+  Main -->|"validated protocol v6"| Runtime["Utility Process Runtime"]
+  TUI["Rust TUI"] -->|"JSONL protocol v6"| Host["stdio Runtime Host"]
   Runtime --> CLI["Official Codex / Claude Code CLI"]
   Host --> CLI
   Main --> Tasks["Main-owned Task SQLite v2"]
@@ -47,11 +47,15 @@ P1-E3 keeps refresh behind Main-owned IPC. Renderer submits only the imported Ta
 
 P1-E4 adds a Main-mediated Context Handoff boundary and Task Store schema v5. Preview accepts only source Task id, target Agent id, selected message ids, and selected file paths. Main resolves the target built-in or custom Agent and immutable latest Revision; Task Store rejects messages outside the source Task and files absent from the latest persisted Run-owned Git patch. A SHA-256 fingerprint binds the reviewed target and fact bundle. Confirmed commit rechecks that fingerprint inside `BEGIN IMMEDIATE`, inserts an immutable `context_handoff_snapshot`, creates a target Task with no Run or Native Session, and records bidirectional relations. The target's first user message is the reviewed handoff payload. Source changes cannot update the snapshot. An explicit summary request is revalidated against that fingerprint in Main, then executed by the pinned source Revision in Utility Process. Codex sets `thread/start.ephemeral=true`; Claude Code sets `--no-session-persistence` and disables tools. The isolated result is not emitted into ordinary Task Run history. Main issues a short-lived generation id, validates it again at commit, and persists provenance separately from deterministic facts while allowing the user to edit or remove the text.
 
+P1-E5 keeps local data lifecycle outside the Utility Process and every Provider Connector. Main-only IPC exposes Workspace usage summary, impact preview, confirmed execution, and native-file export. Task Store derives imported message ownership from immutable Projection Revisions, estimates serialized local bytes, and binds each preview to the active Workspace state with SHA-256. Execution recomputes the preview before entering a SQLite transaction. `unlink` retains the binding and all local data but changes it to a non-runnable/non-refreshable state; an explicit repeated import re-establishes the binding. `remove-imported` removes only provider-derived messages, Projection rows, Revisions, and refresh audit while preserving Rux-owned Run, approval, Task, and Handoff state. `delete-task` also removes the selected Task records and cleans Handoff relations. Workspace scope applies the same semantics in batch. Export selection is resolved again in Main, supports Markdown/JSON and current/all Revision ranges, recursively drops credential-shaped structural fields, warns before invocation, and writes the user-selected file with mode `0600`. None of these paths can issue a provider-native delete, archive, or transcript mutation.
+
 ## Provider and credential boundary
 
 `ProviderConnectionRef` is deliberately non-secret. It contains only a stable id, kind, Engine, and display label. The P0 official CLI references are `cli:codex:default` and `cli:claude-code:default`.
 
 Rux never reads CLI credential files, Keychain entries, OAuth tokens, API keys, Base URLs, or arbitrary executable paths. Codex and Claude Code retain ownership of OAuth, API-key, Base URL, cloud-provider configuration, token refresh, and logout. The Renderer runs `auth.status` only after the user clicks the detection action, then refreshes `agent.list` so installation state cannot remain stale. A direct login action delegates only to the selected official command (`codex login` or `claude auth login`); login success updates only that Provider. Renderer-visible status is limited to installation and connection state, normalized auth method, CLI version/path, non-sensitive detail, and the non-secret Connection reference.
+
+Protocol v6 adds the independent `rux-native` Engine. Main validates and stores non-secret Connection metadata plus OS-encrypted API-key ciphertext; the encryption key remains owned by Electron `safeStorage`/the operating system. Preload exposes create/list/test/delete operations but never a secret read. On Runtime readiness or Connection mutation, Main decrypts the key and sends it through Renderer-inaccessible `provider.connection.sync`; Runtime keeps it only in memory. Provider access occurs only for an explicit test or Run. The first Adapter uses the Responses API with function tools for bounded file read/list/write, rejects sensitive paths/content and symlink escapes, records Provider response ids as `rux-response` Session Links, and emits normalized usage. It intentionally has no shell tool until a real cross-platform sandbox is available.
 
 ## Agent Definition and immutable Revision
 
@@ -85,6 +89,36 @@ Codex Thread 与 Claude Session 统一保存为非敏感 `NativeSessionLink`，�
 
 Renderer compares a custom Task's fixed `agentRevisionId` with its live Definition's `latestRevisionId`. A mismatch produces a non-blocking notice; the action creates a blank Task fixed to the latest Revision and deliberately copies no messages, Runs, selected Context, or native Session id. P1 Context Handoff will own any later, explicit transfer of work. If a Definition is deleted, it disappears from new-task selection while a synthetic historical choice keeps the existing Task bound to its retained Revision for review and compatible continuation.
 
+## Planned Auto model-routing boundary
+
+Auto routing is a post-P1 capability and is not implemented by protocol v6. It extends the existing immutable Agent/Run contract rather than creating an independent model gateway.
+
+```mermaid
+flowchart LR
+  Message["User message"] --> Router["Deterministic simple/complex router"]
+  Revision["Pinned Agent Revision + Auto Policy"] --> Router
+  Catalog["Engine catalog + verified history"] --> Router
+  Capability["Native Session model-switch capability"] --> Router
+  Router --> Decision["Immutable Run Model Decision"]
+  Decision --> Engine["One fixed-model Engine Run"]
+  Engine --> Usage["Normalized Token Usage"]
+  Decision --> Store["Task Store"]
+  Usage --> Store
+  Store --> UI["Transcript + Run inspector"]
+```
+
+The planned shared contract adds:
+
+- `AutoModelPolicy`: simple model, complex model, allowlist, strategy, and fallback policy, stored inside an immutable Agent Revision;
+- `RunModelDecision`: routing mode, simple/complex classification, selected model, reason codes, allowlist snapshot, fallback evidence, and capability result;
+- `TokenUsage`: optional input, cached-input, output, reasoning, and total counts plus `engine`, `provider`, `estimated`, or `unknown` provenance.
+
+Main/Renderer may request `auto`, but Runtime is the final enforcement boundary. Runtime resolves exactly one model before starting the Run, validates it against the pinned Revision's Engine/Connection-scoped allowlist, and rejects any cross-Agent, cross-Engine, cross-Connection, or unverified-manual candidate. The first release uses deterministic signals and makes no extra model call. A future model-based router must be a separately evidenced invocation with its own model, usage, duration, and provenance.
+
+Native Session continuation remains conservative. Auto may select another model only when the Engine explicitly reports that per-Run model selection is compatible with that Session. Unknown or unsupported capability keeps the pinned model or requires the existing new-Task/Handoff path. A Run never changes model after execution begins.
+
+Provider/Engine usage is normalized after the Run and stored with the Assistant turn. Missing usage remains unknown; local estimates are labeled and cannot be used as billing truth. Reasoning token counts may be stored, but hidden reasoning content is never persisted merely to support usage display.
+
 ## Task Store v1 to v2 migration and validation
 
 SQLite migration upgrades `PRAGMA user_version` and every Workspace JSON row in one `BEGIN IMMEDIATE` transaction. A failure parsing or migrating any row rolls back the version and all row writes.
@@ -107,10 +141,11 @@ Before save/load, Task Store validation rejects:
 
 - Claude Code and Codex Runs use real local adapters; Rux Demo remains development/Web-preview only.
 - Protocol v5, Agent Profile Store v2, Task Store v5, Desktop Runtime, stdio Runtime, Renderer fallback, and Rust TUI share the Revision/Connection, Session Connector, and isolated Handoff-summary contract.
-- `账户与登录` is an explicit Agent/Provider connection surface for Rux and Claude Code. Opening the app or panel performs no CLI inspection; missing CLIs link to official installation guidance, while API Key, Base URL, cloud Provider, OAuth storage, refresh, and logout remain CLI-owned.
+- `账户与登录` is an explicit Agent/Provider surface for Rux Native, Codex, and Claude Code. Opening the app or panel performs no CLI inspection. Rux Native metadata loads locally without network access; only explicit test/Run actions contact its Provider. CLI credentials remain CLI-owned.
 - Codex model discovery uses official App Server `model/list` with explicit catalog source and fetch time. Engines without a catalog expose Engine default plus advanced model IDs; successful Runs create verified history scoped to the same Engine and non-secret Connection reference. Only explicit model-not-found/incompatibility failures mark a model unavailable.
+- Auto model routing, Revision-owned model allowlists, and per-Run routing decisions are planned P2 work and are not implemented in protocol v6. Current Runs use a user-selected model or Engine default. `rux-native` already emits normalized per-Run usage, but the complete per-turn Token Usage UI remains incomplete.
 - RUX 发起的 Codex Thread 与 Claude Session 已使用规范化 Native Session Link 持久化并可在兼容 Task 中恢复。恢复失败保留原 Session 证据并要求用户显式重试或创建新 Task；不会静默回退为新会话。
 - P0 Desktop Release Candidate 已在隔离打包环境完成干净启动、显式 Agent 检测、首次 Run、重启后同 Thread 恢复、Terminal 不恢复与 Workspace 切换。Workspace Starter Task 在第一次发送时采用规范化后的用户提示词标题，避免已运行历史继续显示为“开始新任务”。
-- External Session discovery, selected-content preview, deduplicated local Projection persistence, read-only import, compatible native continuation, explicit refresh/diff, versioned rebuild, and local Revision restore are user-triggered Desktop flows with canonical Workspace attribution. Explicit attribution migration, cleanup/export, and context handoff remain later P1 work; this architecture does not claim background conversation synchronization.
+- External Session discovery, selected-content preview, deduplicated local Projection persistence, read-only import, compatible native continuation, explicit refresh/diff, versioned rebuild, local Revision restore, Context Handoff, scoped cleanup, and export are user-triggered Desktop flows with canonical Workspace attribution. Explicit attribution migration remains later P1 work; this architecture does not claim background conversation synchronization.
 - Parts of Changes and Context remain showcase-backed in the Renderer and must not be presented as fully repository-backed until that wiring is complete.
 - macOS packages remain unsigned until Developer ID signing and notarization are configured.

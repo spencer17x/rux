@@ -198,6 +198,11 @@ test("clean startup waits for explicit project and account actions", async () =>
   assert.match(accountsSource, /已安装 · 未连接/);
   assert.match(accountsSource, /已连接/);
   assert.match(accountsSource, /检测错误/);
+  assert.match(accountsSource, /连接不等于当前使用/);
+  assert.match(accountsSource, />新建任务</);
+  assert.match(accountsSource, /当前使用/);
+  assert.doesNotMatch(accountsSource, /设为默认/);
+  assert.match(rendererSource, /initialAgentId=\{newTaskAgentId\}/);
   assert.match(rendererSource, /https:\/\/developers\.openai\.com\/codex\/cli\//);
   assert.match(rendererSource, /https:\/\/docs\.anthropic\.com\/en\/docs\/claude-code\/getting-started/);
   assert.doesNotMatch(accountsSource, /一键同步|onSync|登录 Codex|Codex 设置/);
@@ -293,10 +298,34 @@ test("Context Handoff previews local facts and creates a target Task only after 
   assert.doesNotMatch(rendererSource, /runtimeRef\.current\.startRun[^\n]*handoff/i);
 });
 
+test("local data cleanup and export are impact-previewed, confirmation-gated, and Main-owned", async () => {
+  const rendererSource = await readFile(path.join(root, "src/App.jsx"), "utf8");
+  const mainSource = await readFile(path.join(root, "src/electron/main.ts"), "utf8");
+  const preloadSource = await readFile(path.join(root, "src/electron/preload.ts"), "utf8");
+  const storeSource = await readFile(path.join(root, "src/electron/task-store.ts"), "utf8");
+
+  assert.match(rendererSource, /本地数据与导出/);
+  assert.match(rendererSource, /先生成影响预览，再明确确认执行/);
+  assert.match(rendererSource, /原生会话不受影响/);
+  assert.match(rendererSource, /导出文件可能包含敏感内容/);
+  assert.match(rendererSource, /confirmedSensitiveContent: true/);
+  assert.match(preloadSource, /IPC_CHANNELS\.localDataPreview/);
+  assert.match(preloadSource, /IPC_CHANNELS\.localDataExecute/);
+  assert.match(preloadSource, /IPC_CHANNELS\.localDataExport/);
+  assert.match(mainSource, /localDataExecuteParamsSchema\.parse/);
+  assert.match(mainSource, /dialog\.showSaveDialog/);
+  assert.match(mainSource, /mode: 0o600/);
+  assert.match(storeSource, /Local data changed; review the impact again/);
+  assert.match(storeSource, /DELETE FROM session_projection_revision/);
+  assert.doesNotMatch(mainSource, /method: "session\.(?:delete|archive)"/);
+});
+
 test("renderer keeps Agent setup actionable and resumes the selected task session", async () => {
   const rendererSource = await readFile(path.join(root, "src/App.jsx"), "utf8");
 
   assert.match(rendererSource, /className="composer-agent-select" aria-label="选择 Agent"/);
+  assert.match(rendererSource, /已折叠 \{message\.unsupportedContent\.total\} 个导入事件/);
+  assert.match(rendererSource, /composer-connect-button/);
   assert.match(rendererSource, /className="composer-agent-warning"/);
   assert.match(rendererSource, /onClick=\{onOpenAccounts\}>账户与登录<\/button>/);
   assert.match(rendererSource, /const preflight = runPreflight\(selectedTask, prompt\)/);

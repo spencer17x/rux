@@ -18,6 +18,18 @@ import {
   type HandoffSummaryGenerateResult,
   type HandoffCommitParams,
   type HandoffCommitResult,
+  type LocalDataSummary,
+  type LocalDataPreviewParams,
+  type LocalDataImpactPreview,
+  type LocalDataExecuteParams,
+  type LocalDataExecuteResult,
+  type LocalDataExportParams,
+  type LocalDataExportResult,
+  type NativeProviderConnection,
+  type NativeProviderConnectionInput,
+  type NativeProviderConnectionDeleteParams,
+  type NativeProviderConnectionTestParams,
+  type NativeProviderConnectionTestResult,
   type RuntimeRequestMap,
   type RuxDesktopApi,
   type TaskStateSaveResult,
@@ -93,6 +105,38 @@ const api: RuxDesktopApi = {
 
   commitHandoff(params: HandoffCommitParams): Promise<HandoffCommitResult> {
     return ipcRenderer.invoke(IPC_CHANNELS.handoffCommit, params) as Promise<HandoffCommitResult>;
+  },
+
+  getLocalDataSummary(): Promise<LocalDataSummary> {
+    return ipcRenderer.invoke(IPC_CHANNELS.localDataSummary) as Promise<LocalDataSummary>;
+  },
+
+  previewLocalData(params: LocalDataPreviewParams): Promise<LocalDataImpactPreview> {
+    return ipcRenderer.invoke(IPC_CHANNELS.localDataPreview, params) as Promise<LocalDataImpactPreview>;
+  },
+
+  executeLocalData(params: LocalDataExecuteParams): Promise<LocalDataExecuteResult> {
+    return ipcRenderer.invoke(IPC_CHANNELS.localDataExecute, params) as Promise<LocalDataExecuteResult>;
+  },
+
+  exportLocalData(params: LocalDataExportParams): Promise<LocalDataExportResult> {
+    return ipcRenderer.invoke(IPC_CHANNELS.localDataExport, params) as Promise<LocalDataExportResult>;
+  },
+
+  listProviderConnections(): Promise<NativeProviderConnection[]> {
+    return ipcRenderer.invoke(IPC_CHANNELS.providerConnectionList) as Promise<NativeProviderConnection[]>;
+  },
+
+  saveProviderConnection(input: NativeProviderConnectionInput): Promise<NativeProviderConnection> {
+    return ipcRenderer.invoke(IPC_CHANNELS.providerConnectionSave, input) as Promise<NativeProviderConnection>;
+  },
+
+  deleteProviderConnection(params: NativeProviderConnectionDeleteParams): Promise<{ ok: true }> {
+    return ipcRenderer.invoke(IPC_CHANNELS.providerConnectionDelete, params) as Promise<{ ok: true }>;
+  },
+
+  testProviderConnection(params: NativeProviderConnectionTestParams): Promise<NativeProviderConnectionTestResult> {
+    return ipcRenderer.invoke(IPC_CHANNELS.providerConnectionTest, params) as Promise<NativeProviderConnectionTestResult>;
   },
 
   request<M extends RendererRuntimeMethod>(

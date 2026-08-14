@@ -1,9 +1,9 @@
-# RUX P0/P1 交付路线与验收矩阵
+# RUX P0/P1 交付路线与 P2 规划验收矩阵
 
-> 版本：v1.0  
-> 状态：基于 [产品需求文档 v1.0](product-requirements.md) 的执行基线  
-> 更新日期：2026-08-12  
-> 范围：Desktop 优先，同时保持 Runtime Host、TUI 协议与 Web/Sites fallback 兼容
+> 版本：v1.1
+> 状态：基于 [产品需求文档 v1.1](product-requirements.md) 的执行基线
+> 更新日期：2026-08-14
+> 范围：Desktop 优先；P0/P1 为当前交付基线，P2 记录已确认的 Auto 路由与原生 Provider 规划，同时保持 Runtime Host、TUI 协议与 Web/Sites fallback 兼容
 
 ## 1. 文档目的
 
@@ -41,6 +41,10 @@ P1 明确不包含：
 - RUX 原生 API Provider；该能力属于 P2。
 - 跨设备或云端会话同步。
 
+### P2：Auto 模型路由与原生 Provider
+
+用户可以在固定 Agent Revision、Engine 与 Connection 边界内启用 Auto，为简单/复杂任务配置模型和白名单；每个 Run 都保存实际模型、路由证据和 Engine 报告的 Token。Auto 不跨 Agent/Engine/Connection，Native Session 不明确支持换模时保持固定或显式分支。RUX 原生 API Provider 是独立 Epic，首个无需 CLI 的切片已实现，但仍不是 Auto 的前置依赖。
+
 ### 范围控制原则
 
 - 以完整用户路径交付纵向切片；不能把尚未接通 Runtime 的按钮描述为已支持。
@@ -58,9 +62,9 @@ P1 明确不包含：
 | 认证 | Renderer 已提供用户显式的 Rux/Claude Code 检测、状态修复与官方 CLI 登录；启动和打开面板均不自动检测 | P0-E1 已完成，后续只扩展新的 Engine/Provider |
 | Agent Profile | Profile Store 以 Definition 指向追加式不可变 Revision；Task/Run 固定具体 Revision | P0-E2 已完成，P1 再扩展跨 Agent Handoff |
 | 模型 | Codex 有结构化目录；Claude/自定义配置没有统一目录 | 增加 Engine 默认、已验证和未验证模型状态 |
-| Task Store | Main 管理的 Workspace 级 SQLite v5，持久化 Task/Message/Run/Event、Session Projection Revision、刷新审计与不可变 Handoff | 后续增加清理和导出数据 |
+| Task Store | Main 管理的 Workspace 级 SQLite v5，持久化 Task/Message/Run/Event、Session Projection Revision、刷新审计与不可变 Handoff，并提供 Main-owned 占用、清理和导出边界 | 后续只扩展存储诊断与迁移工具 |
 | RUX 会话延续 | Renderer 保存 `sessionId`，Codex/Claude Adapter 可恢复 | 收紧兼容条件、错误恢复和桌面证据 |
-| 外部会话导入 | P1-E0 Connector、P1-E1 归属发现、P1-E2 预览/导入/继续及 P1-E3 刷新/差异/版本已完成 | 后续补齐 Handoff、清理与导出 |
+| 外部会话导入 | P1-E0 至 P1-E5 已完成：发现、导入、继续、刷新、版本、Handoff、本地清理与导出 | 后续补齐显式归属迁移提交与完整发布验收 |
 | Context Handoff | 确定性事实包、来源 Agent 隔离摘要、预览确认、不可变快照和来源关系已实现 | 主链路完成 |
 | Web/TUI | 共享 Runtime 能力已有基础 | 协议变更保持兼容；Desktop 为功能验收主客户端 |
 
@@ -79,7 +83,10 @@ P1 明确不包含：
 | P1-E2 | 已验证 | 显式选择后预览；原子化 Task/Projection/Revision 导入；仅查看与兼容 Session 继续；全局身份去重 |
 | P1-E3 | 已验证 | 显式刷新、安全追加、外部差异候选、确认重建、旧 Revision 恢复与非敏感审计已通过存储和边界自动化 |
 | P1-E4 | 已完成 | Handoff 主链路与用户触发的来源 Agent 隔离摘要均已验证 |
-| P1-E5 至 P1-E6 | 未开始 | 后续增加清理、导出与完整桌面验收 |
+| P1-E5 | 已实现 | Task/Workspace 占用、影响预览、解除关联、分层删除、Markdown/JSON 导出与安全负向测试已完成 |
+| P1-E6 | 未开始 | 后续完成 P1 全链路桌面发布验收 |
+| P2-E0 | 已规划 | Auto Model Policy、确定性简单/复杂路由、同 Connection 白名单、Run Model Decision 与 Token Usage |
+| P2-E1 | 首版已实现 | Responses-compatible Connection、OS 加密凭据、Renderer 隔离、显式测试与无需 CLI 的文件工具 Run；命令沙箱、更多协议和能力协商待续 |
 
 ## 4. 依赖顺序
 
@@ -101,6 +108,8 @@ flowchart LR
   P13 --> P16["P1-E6 Desktop 发布验收"]
   P14 --> P16
   P15 --> P16
+  P16 --> P20["P2-E0 Auto 模型路由"]
+  P16 --> P21["P2-E1 RUX 原生 Provider"]
 ```
 
 并行建议：
@@ -331,6 +340,8 @@ flowchart LR
 
 退出条件：P1-DATA-001 至 P1-DATA-010 全部通过。
 
+实现记录（2026-08-13）：设置与导入 Task 时间线提供 Main-owned 本地数据入口。Task Store 计算 Workspace 估算占用、Task/导入 Task/Projection Revision/Handoff 数量，并为 Task 或 Workspace 范围生成包含预计释放空间和不受影响 Native Session 的 SHA-256 影响预览；执行时在事务内重算指纹。解除关联只把绑定置为 `unlinked`，保留内容和 Revision 并阻止刷新/继续；删除导入内容只移除 Provider 投影消息、Projection/Revision/刷新审计，保留 Rux Run、Task 元数据和 Handoff；删除 Task 才清理全部本地关系。所有路径只访问 Main-owned SQLite，不调用 Connector 删除或归档。导出通过 Main 原生保存对话框写入权限为 `0600` 的 Markdown 或 JSON，支持 Task/Workspace 和当前/全部 Revision，结构化凭据字段被排除，Renderer 在写入前明确提示会话、文件和命令内容可能敏感。自动化覆盖过期指纹、范围区分、Run 保留、解除关联后显式重导入、删除后重新导入和凭据字段扫描；隔离的打包应用验收覆盖设置/Task 两个入口、原生导出面板、解除关联保留与删除导入层，证据位于 `design-audit/p1-local-data-management/`。
+
 ### P1-E6：Desktop 发布候选与体验验收
 
 目标：在打包应用中完成发现、导入、刷新、分支、导出和删除的关键路径。
@@ -345,6 +356,32 @@ flowchart LR
 - `design-audit/` 中保留稳定截图、路径说明和验收结论。
 
 退出条件：全部 P1 验收项通过，且 P1 发布门禁满足。
+
+## P2 已确认规划
+
+### P2-E0：Auto 模型路由与 Token 证据
+
+目标：在不改变 Agent、Engine、Connection 和 Native Session 审计边界的前提下，为每个 Run 自动选择用户允许的简单或复杂模型，并展示真实模型与 Token 消耗。
+
+交付物：
+
+- 共享协议增加 Revision-owned `AutoModelPolicy`、不可变 `RunModelDecision` 和带来源的 `TokenUsage`。
+- Agent 编辑器支持简单模型、复杂模型、保守/均衡/质量优先策略、回退开关和同 Connection 模型白名单。
+- 第一版路由器使用可测试、可解释的确定性简单/复杂规则，不额外调用模型。
+- Runtime 在 Run 启动前强制校验 Engine、Connection、目录/验证状态、白名单和 Native Session 换模能力。
+- 每个 Run 只使用一个实际模型；跨 Agent/Engine/Connection 仍进入 Context Handoff。
+- Transcript 每个 Assistant turn 显示实际模型、Auto 分类和总 Token；Run 面板展示路由原因、回退以及输入/缓存输入/输出/推理 Token。
+- 未报告 Token 保持未知，估算值显式标记；未来模型型路由器单独记录用量与来源。
+
+退出条件：P2-AUTO-001 至 P2-AUTO-012 全部通过。
+
+### P2-E1：RUX 原生 API Provider
+
+保持 PRD 5.17 的系统凭据库、Main/Runtime 特权读取和不透明 `credentialRef` 方向。P2-E1 可复用 P2-E0 路由合同，但 Auto 首版不依赖该 Epic。
+
+2026-08-14 已交付第一可运行切片：用户可在 `Agent 与 Provider` 中配置 Responses-compatible Base URL、模型和 API Key；Main 使用 `safeStorage` 保存加密密文，通过 Renderer 不可调用的 Runtime 方法同步内存凭据；系统自动创建固定该 Connection 的不可变 Rux Native Agent Revision。Run 支持 Provider response id 延续、Token Usage，以及受敏感文件和 realpath/symlink 边界保护的文件读取、列表和整体写入。测试覆盖无 CLI 工具循环、凭据无明文降级、损坏 Store 保留和越界符号链接拒绝。
+
+尚未完成：跨平台命令沙箱、增量 patch 工具、流式输出、连接编辑与完整影响预览、模型目录/能力协商、Anthropic 原生协议、Custom Headers、原生 OAuth 和完整打包桌面证据。
 
 ## 7. 验收证据等级
 
@@ -529,6 +566,36 @@ flowchart LR
 | P1-DATA-009 | 导出不含凭据，并提示潜在敏感内容 | U/I/S：Secret fixture/export scan | D-P1-24 |
 | P1-DATA-010 | 删除后可从仍存在的 Native Session 重新导入，不承诺本地恢复 | I/R：Delete/reimport test | D-P1-25 重新导入 |
 
+### 9.7 P2 Auto 模型路由验收矩阵（规划）
+
+| ID | 验收行为 | 自动化证据 | 桌面证据 |
+| --- | --- | --- | --- |
+| P2-AUTO-001 | Agent Revision 保存简单模型、复杂模型、策略、回退和白名单；更新只追加 Revision | U/I：Policy Schema + Profile Store | D-P2-01 Auto 配置 |
+| P2-AUTO-002 | 白名单只接受同 Engine/Connection 的目录或已验证模型 | U/I/S：Allowlist validation | 配置错误态 |
+| P2-AUTO-003 | 未验证手动模型不能直接进入 Auto 白名单 | U/R：Model verification state | 未验证禁用态 |
+| P2-AUTO-004 | 确定性路由对代表性简单/复杂任务产生稳定、可解释的分类 | U：Router fixture matrix | D-P2-02 路由原因 |
+| P2-AUTO-005 | Runtime 在执行前生成一个不可变 Model Decision，Run 中途不换模 | I/C：Runtime start + Store | D-P2-03 Run 详情 |
+| P2-AUTO-006 | Auto 不跨 Agent、Engine、Connection 或白名单选择模型 | U/I/S：Boundary negative tests | 明确阻止状态 |
+| P2-AUTO-007 | Native Session 未明确支持按 Run 换模时保持固定模型或要求新 Task | C/I/R：Capability fixtures | D-P2-04 Session 受限 |
+| P2-AUTO-008 | 明确模型不兼容时只按策略在白名单内回退，并记录前后模型和原因 | C/I/R：Fallback fixtures | D-P2-05 显式回退 |
+| P2-AUTO-009 | 认证、网络、配额和临时错误不会导致无限换模或永久无效 | U/C/S：Failure classifier | 可恢复错误态 |
+| P2-AUTO-010 | 每个 Assistant turn 展示实际模型；Auto 同时展示分类而非只显示 Auto | R：Transcript renderer | D-P2-06 消息证据 |
+| P2-AUTO-011 | Token Usage 区分输入、缓存输入、输出、推理和总量，并保存来源 | U/C/I：Usage normalization | D-P2-07 Token 明细 |
+| P2-AUTO-012 | Provider 未报告时显示未知；估算值有标签，路由器用量与任务用量分离 | U/R/S：Unknown/estimate fixtures | D-P2-08 未报告状态 |
+
+### 9.8 P2 Rux Native Provider 验收矩阵
+
+| ID | 验收行为 | 自动化证据 | 桌面证据 |
+| --- | --- | --- | --- |
+| P2-NATIVE-001 | 无 Codex/Claude Code CLI 时可配置 Connection 并创建可运行 Agent | C/I：`native-provider-adapter.test.mjs` | D-P2-09 Connection 与 Agent |
+| P2-NATIVE-002 | API Key 仅以 OS 加密密文落盘，Renderer 合同无 secret read | U/S：`native-provider-store.test.mjs` + release boundary | D-P2-10 密钥录入后遮蔽态 |
+| P2-NATIVE-003 | OS 加密不可用或 Store 损坏时保留原数据并拒绝写入 | U/S：Store fail-closed cases | 错误态 |
+| P2-NATIVE-004 | Provider 只在显式测试或 Run 时被访问 | U/I/R：request trigger assertions | D-P2-11 显式测试 |
+| P2-NATIVE-005 | Responses function-call 循环写入工具结果并保存 response id/usage | C/I：Adapter tool-loop test | D-P2-12 完成 Run |
+| P2-NATIVE-006 | 文件工具拒绝 Workspace 越界、外部 symlink、敏感路径与 Secret 内容 | U/C/S：Adapter + Context safety tests | D-P2-13 受阻证据 |
+| P2-NATIVE-007 | 当前没有跨平台命令沙箱时不暴露 Shell 工具 | U/R/S：Tool contract assertion | Run 能力说明 |
+| P2-NATIVE-008 | 删除 Connection 不撤销 Provider Key，且被 Agent 引用时拒绝静默删除 | I/R：Profile reference guard | D-P2-14 删除影响 |
+
 ## 10. 发布门禁
 
 ### 10.1 每个 Epic 的 Definition of Done
@@ -569,6 +636,27 @@ flowchart LR
 | 数据安全 | 导出扫描、删除范围、Revision 恢复和 Native Session 无副作用测试通过 |
 | 证据 | `design-audit/p1-session-ingestion/` 保存稳定截图、路径、结果和已知限制 |
 
+### 10.4 P2-E0 Auto Release Gate（规划）
+
+| Gate | 必须满足 |
+| --- | --- |
+| 功能 | P2-AUTO-001 至 P2-AUTO-012 全部通过 |
+| 协议 | Desktop Runtime、stdio Host、Renderer fallback 与 Rust TUI 能解析新增 Policy、Decision、Usage 字段 |
+| Engine 合同 | Codex/Claude Fixture 覆盖换模支持、未知、不支持和 usage 缺失状态 |
+| 安全 | Auto 未越过 Agent/Engine/Connection/白名单；模型型路由未被首版隐式引入 |
+| Desktop | 打包应用覆盖简单、复杂、Session 受限、显式回退、Token 未报告五条路径 |
+| 证据 | `design-audit/p2-auto-model-routing/` 保存配置、消息标签、Run 详情和限制 |
+
+### 10.5 P2-E1 Rux Native Release Gate
+
+| Gate | 必须满足 |
+| --- | --- |
+| 功能 | P2-NATIVE-001 至 P2-NATIVE-008 全部通过；首版限制保持可见 |
+| 自动化 | `npm test`、`npm run build:desktop` 与 Native Adapter/Store 安全负向测试通过 |
+| 安全 | Renderer/普通 IPC/Task Store/导出无 API Key；路径、symlink、敏感文件与无明文降级测试通过 |
+| Desktop | 实际打包应用完成添加 Connection→测试→自动 Agent→文件 Run→重启续聊 |
+| 证据 | `design-audit/p2-native-provider/` 保存稳定截图、隔离测试环境和已知限制 |
+
 ## 11. Desktop 手动证据清单
 
 截图必须来自稳定最终状态，不使用 Loading 状态作为通过证据。每个目录包含 `README.md`，记录应用版本、平台、Viewport、测试 Workspace、步骤、结果和限制。
@@ -594,6 +682,15 @@ flowchart LR
 - Handoff 事实包、可选摘要、编辑确认和来源关系。
 - Workspace 存储占用、解除关联、删除范围预览。
 - Markdown/JSON 导出选择与敏感内容提示。
+
+### P2-E0 最小证据集（规划）
+
+- Agent Revision 中的简单模型、复杂模型、策略和白名单。
+- 同一 Task 的简单任务与复杂任务实际模型对比。
+- Transcript 中 `Auto → 实际模型`、复杂度与 Token 标签。
+- Run 面板中的路由原因、白名单快照和回退证据。
+- Native Session 不支持换模时的固定模型或新 Task 提示。
+- Provider Usage 完整、部分缺失和未报告状态。
 
 ## 12. 实施时的测试结构建议
 
@@ -633,7 +730,8 @@ app/tests/
 | 5.14 本地数据由用户控制 | P1-E5 | P1-DATA |
 | 5.15 最具体 Workspace 归属 | P1-E1 | P1-DISC |
 | 5.16 Engine 模型目录与运行验证 | P0-E3 | P0-MDL |
-| 5.17 RUX 原生 API Provider | P2，不进入当前路线 | 不适用 |
+| 5.17 RUX 原生 API Provider | P2-E1 首版已实现 | `native-provider-adapter.test.mjs`、`native-provider-store.test.mjs`；完整桌面证据待补 |
+| 5.18 Auto 模型路由与 Token 证据 | P2-E0 | P2-AUTO |
 | 10 隐私与安全 | 所有 Epic | 所有 S 级负向测试与 Release Gate |
 
 ## 14. 交付追踪规则

@@ -14,6 +14,10 @@ import {
   handoffCommitResultSchema,
   handoffPreviewResultSchema,
   handoffTargetSchema,
+  localDataExecuteResultSchema,
+  localDataImpactPreviewSchema,
+  localDataPreviewParamsSchema,
+  localDataSummarySchema,
   legacyProviderConnectionForAdapter,
   persistedWorkspaceIdSchema,
   sessionImportResultSchema,
@@ -31,6 +35,13 @@ import {
   type HandoffPreviewResult,
   type HandoffSummaryProvenance,
   type HandoffTarget,
+  type LocalDataExecuteResult,
+  type LocalDataExportFormat,
+  type LocalDataImpactPreview,
+  type LocalDataPreviewParams,
+  type LocalDataRevisionScope,
+  type LocalDataScope,
+  type LocalDataSummary,
   type PersistedRun,
   type PersistedRunEvent,
   type PersistedTask,
@@ -67,6 +78,14 @@ type StoredProjectionRevisionRow = {
 };
 
 type StoredAuditRow = { audit_json: string };
+type StoredRevisionExportRow = { revision_json: string };
+type StoredHandoffExportRow = { snapshot_json: string };
+
+export interface LocalDataExportArtifact {
+  suggestedName: string;
+  mimeType: string;
+  content: string;
+}
 
 type StoredWorkspaceMigrationRow = StoredWorkspaceRow & {
   workspace_id: string;
@@ -111,9 +130,9 @@ function stringValue(object: UnknownRecord | undefined, key: string): string | u
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
-function legacyAdapter(task: UnknownRecord, run?: UnknownRecord): "claude-code" | "codex" | "mock" {
+function legacyAdapter(task: UnknownRecord, run?: UnknownRecord): "claude-code" | "codex" | "rux-native" | "mock" {
   const candidate = stringValue(run, "adapter") ?? stringValue(task, "adapter");
-  if (candidate === "claude-code" || candidate === "codex" || candidate === "mock") return candidate;
+  if (candidate === "claude-code" || candidate === "codex" || candidate === "rux-native" || candidate === "mock") return candidate;
   const agent = stringValue(task, "agent");
   if (agent === "Claude Code") return "claude-code";
   if (agent === "Codex" || agent === "Rux") return "codex";
@@ -961,6 +980,38 @@ function revisionContentHash(metadata: SessionPreviewResult["metadata"], message
   return createHash("sha256").update(JSON.stringify({ metadata, messages })).digest("hex");
 }
 
+function serializedBytes(value: unknown): number {
+  return Buffer.byteLength(typeof value === "string" ? value : JSON.stringify(value), "utf8");
+}
+
+function exportedValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(exportedValue);
+  if (!value || typeof value !== "object") return value;
+  const result: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(value)) {
+    if (/^(api[-_]?key|access[-_]?token|refresh[-_]?token|authorization|password|secret|credential)$/i.test(key)) continue;
+    result[key] = exportedValue(child);
+  }
+  return result;
+}
+
+function markdownExport(workspaceId: string, tasks: PersistedTask[], revisions: SessionProjectionRevision[]): string {
+  const lines = ["# Rux 本地数据导出", "", `Workspace: ${workspaceId}`, "", "> 该文件可能包含提示词、文件内容、命令输出和其他敏感会话内容。", ""];
+  for (const task of tasks) {
+    lines.push(`## ${task.title}`, "", `- Task ID: ${task.id}`, `- Agent: ${task.agent}`, `- Model: ${task.model}`, `- Created: ${task.createdAt ?? "未知"}`, "");
+    for (const message of task.messages) {
+      lines.push(`### ${message.role === "user" ? "用户" : "Agent"}`, "", message.text, "");
+    }
+    const taskRevisions = revisions.filter((revision) => revision.projectionId === task.importedSession?.projectionId);
+    if (taskRevisions.length) {
+      lines.push("### Projection Revisions", "");
+      for (const revision of taskRevisions) lines.push(`- Revision ${revision.ordinal}: ${revision.messages.length} 条消息 · ${revision.createdAt}`);
+      lines.push("");
+    }
+  }
+  return `${lines.join("\n")}\n`;
+}
+
 /**
  * Main-process-owned Task/Message/Run store.
  *
@@ -1061,6 +1112,167 @@ export class TaskStore {
       this.#database.exec("ROLLBACK");
       throw error;
     }
+  }
+
+  getLocalDataSummary(workspaceIdInput: string): LocalDataSummary {
+    const workspaceId = persistedWorkspaceIdSchema.parse(workspaceIdInput);
+    const state = this.load(workspaceId);
+    const projectionRows = this.#database.prepare("SELECT state_json FROM session_projection WHERE workspace_id = ?")
+      .all(workspaceId) as unknown as Array<{ state_json: string }>;
+    const revisionRows = this.#database.prepare("SELECT revision_json FROM session_projection_revision WHERE projection_id IN (SELECT id FROM session_projection WHERE workspace_id = ?)")
+      .all(workspaceId) as unknown as StoredRevisionExportRow[];
+    const auditRows = this.#database.prepare("SELECT audit_json FROM session_projection_audit WHERE projection_id IN (SELECT id FROM session_projection WHERE workspace_id = ?)")
+      .all(workspaceId) as unknown as StoredAuditRow[];
+    const handoffRows = this.#database.prepare("SELECT snapshot_json FROM context_handoff_snapshot WHERE workspace_id = ?")
+      .all(workspaceId) as unknown as StoredHandoffExportRow[];
+    const estimatedBytes = serializedBytes(state)
+      + projectionRows.reduce((sum, row) => sum + serializedBytes(row.state_json), 0)
+      + revisionRows.reduce((sum, row) => sum + serializedBytes(row.revision_json), 0)
+      + auditRows.reduce((sum, row) => sum + serializedBytes(row.audit_json), 0)
+      + handoffRows.reduce((sum, row) => sum + serializedBytes(row.snapshot_json), 0);
+    return localDataSummarySchema.parse({
+      workspaceId,
+      estimatedBytes,
+      taskCount: state.tasks.length,
+      importedTaskCount: state.tasks.filter((task) => task.importedSession).length,
+      projectionRevisionCount: revisionRows.length,
+      handoffCount: handoffRows.length,
+    });
+  }
+
+  previewLocalDataAction(workspaceIdInput: string, input: LocalDataPreviewParams): LocalDataImpactPreview {
+    const workspaceId = persistedWorkspaceIdSchema.parse(workspaceIdInput);
+    const params = localDataPreviewParamsSchema.parse(input);
+    const state = this.load(workspaceId);
+    const selected = params.scope === "workspace"
+      ? state.tasks
+      : state.tasks.filter((task) => task.id === params.taskId);
+    if (params.scope === "task" && !selected.length) throw new Error("Task was not found in the active Workspace");
+    const affected = params.action === "delete-task" ? selected : selected.filter((task) => task.importedSession);
+    const projectionIds = affected.flatMap((task) => task.importedSession ? [task.importedSession.projectionId] : []);
+    const revisionRows = projectionIds.flatMap((projectionId) => this.#database.prepare("SELECT revision_json FROM session_projection_revision WHERE projection_id = ?")
+      .all(projectionId) as unknown as StoredRevisionExportRow[]);
+    const revisions = revisionRows.map((row) => sessionProjectionRevisionSchema.parse(JSON.parse(row.revision_json) as unknown));
+    const importedIds = new Set<string>();
+    for (const task of affected) {
+      if (task.adapter !== "codex" && task.adapter !== "claude-code") continue;
+      for (const revision of revisions.filter((item) => item.projectionId === task.importedSession?.projectionId)) {
+        for (const message of sessionMessagesForTask(revision.messages, task.adapter, task.agentRevisionId)) importedIds.add(message.id);
+      }
+    }
+    const selectedIds = new Set(affected.map((task) => task.id));
+    const handoffRows = this.#database.prepare("SELECT snapshot_json FROM context_handoff_snapshot WHERE workspace_id = ?")
+      .all(workspaceId) as unknown as StoredHandoffExportRow[];
+    const affectedHandoffs = handoffRows.filter((row) => {
+      const snapshot = contextHandoffSnapshotSchema.parse(JSON.parse(row.snapshot_json) as unknown);
+      return selectedIds.has(snapshot.sourceTaskId) || selectedIds.has(snapshot.targetTaskId);
+    });
+    const projectionBytes = params.action === "unlink" ? 0 : projectionIds.reduce((sum, projectionId) => {
+      const projection = this.#database.prepare("SELECT state_json FROM session_projection WHERE id = ?").get(projectionId) as { state_json: string } | undefined;
+      const audits = this.#database.prepare("SELECT audit_json FROM session_projection_audit WHERE projection_id = ?").all(projectionId) as unknown as StoredAuditRow[];
+      return sum + (projection ? serializedBytes(projection.state_json) : 0)
+        + revisionRows.filter((row) => sessionProjectionRevisionSchema.parse(JSON.parse(row.revision_json) as unknown).projectionId === projectionId).reduce((value, row) => value + serializedBytes(row.revision_json), 0)
+        + audits.reduce((value, row) => value + serializedBytes(row.audit_json), 0);
+    }, 0);
+    const taskBytes = params.action === "delete-task"
+      ? affected.reduce((sum, task) => sum + serializedBytes(task), 0)
+      : params.action === "remove-imported"
+        ? affected.reduce((sum, task) => sum + task.messages.filter((message) => importedIds.has(message.id)).reduce((value, message) => value + serializedBytes(message), 0), 0)
+        : 0;
+    const summary = this.getLocalDataSummary(workspaceId);
+    const nativeSessions = affected.flatMap((task) => task.importedSession ? [{ engine: task.importedSession.sessionLink.engine, nativeSessionId: task.importedSession.sessionLink.nativeSessionId }] : []);
+    const previewBody = {
+      ...summary,
+      scope: params.scope,
+      action: params.action,
+      affectedTaskCount: affected.length,
+      affectedProjectionRevisionCount: revisions.length,
+      importedMessageCount: affected.reduce((sum, task) => sum + task.messages.filter((message) => importedIds.has(message.id)).length, 0),
+      runCount: affected.reduce((sum, task) => sum + task.runs.length, 0),
+      affectedHandoffCount: affectedHandoffs.length,
+      estimatedReclaimableBytes: projectionBytes + taskBytes + (params.action === "delete-task" ? affectedHandoffs.reduce((sum, row) => sum + serializedBytes(row.snapshot_json), 0) : 0),
+      nativeSessions,
+    };
+    return localDataImpactPreviewSchema.parse({
+      ...previewBody,
+      fingerprint: createHash("sha256").update(JSON.stringify(previewBody)).digest("hex"),
+    });
+  }
+
+  executeLocalDataAction(workspaceIdInput: string, input: LocalDataPreviewParams & { fingerprint: string; confirmed?: true }): LocalDataExecuteResult {
+    const workspaceId = persistedWorkspaceIdSchema.parse(workspaceIdInput);
+    const { fingerprint, confirmed: _confirmed, ...previewInput } = input;
+    const preview = this.previewLocalDataAction(workspaceId, previewInput);
+    if (preview.fingerprint !== fingerprint) throw new Error("Local data changed; review the impact again");
+    const now = this.#now();
+    this.#database.exec("BEGIN IMMEDIATE");
+    try {
+      const row = this.#database.prepare("SELECT state_json FROM workspace_task_state WHERE workspace_id = ?").get(workspaceId) as StoredWorkspaceRow | undefined;
+      const state = parseStoredState(row, workspaceId, now);
+      const selectedIds = new Set((input.scope === "workspace" ? state.tasks : state.tasks.filter((task) => task.id === input.taskId)).map((task) => task.id));
+      const selected = state.tasks.filter((task) => selectedIds.has(task.id));
+      const projectionIds = selected.flatMap((task) => task.importedSession ? [task.importedSession.projectionId] : []);
+      let tasks = state.tasks;
+      if (input.action === "unlink") {
+        tasks = state.tasks.map((task) => selectedIds.has(task.id) && task.importedSession
+          ? workspaceTaskStateSchema.shape.tasks.element.parse({ ...task, importedSession: { ...task.importedSession, status: "unlinked" }, preview: "已解除原生会话关联；本地内容仍保留", status: "completed", updatedAt: "现在", updatedAtIso: now })
+          : task);
+      } else if (input.action === "remove-imported") {
+        tasks = state.tasks.map((task) => {
+          if (!selectedIds.has(task.id) || !task.importedSession || (task.adapter !== "codex" && task.adapter !== "claude-code")) return task;
+          const rows = this.#database.prepare("SELECT revision_json FROM session_projection_revision WHERE projection_id = ?").all(task.importedSession.projectionId) as unknown as StoredRevisionExportRow[];
+          const importedIds = new Set(rows.flatMap((revisionRow) => sessionMessagesForTask(sessionProjectionRevisionSchema.parse(JSON.parse(revisionRow.revision_json) as unknown).messages, task.adapter as "codex" | "claude-code", task.agentRevisionId).map((message) => message.id)));
+          const { importedSession: _binding, ...withoutBinding } = task;
+          return workspaceTaskStateSchema.shape.tasks.element.parse({ ...withoutBinding, messages: task.messages.filter((message) => !importedIds.has(message.id)), preview: "已删除导入内容；Rux 自有记录仍保留", status: "completed", updatedAt: "现在", updatedAtIso: now });
+        });
+      } else {
+        tasks = state.tasks.filter((task) => !selectedIds.has(task.id)).map((task) => workspaceTaskStateSchema.shape.tasks.element.parse({
+          ...task,
+          ...(task.handoffSource && selectedIds.has(task.handoffSource.taskId) ? { handoffSource: undefined } : {}),
+          handoffTargets: (task.handoffTargets ?? []).filter((relation) => !selectedIds.has(relation.taskId)),
+        }));
+      }
+      if (input.action !== "unlink") {
+        for (const projectionId of projectionIds) {
+          this.#database.prepare("DELETE FROM session_projection_audit WHERE projection_id = ?").run(projectionId);
+          this.#database.prepare("DELETE FROM session_projection_revision WHERE projection_id = ?").run(projectionId);
+          this.#database.prepare("DELETE FROM session_projection WHERE id = ?").run(projectionId);
+        }
+      }
+      if (input.action === "delete-task") {
+        this.#database.prepare("DELETE FROM context_handoff_snapshot WHERE workspace_id = ? AND (source_task_id IN (SELECT value FROM json_each(?)) OR target_task_id IN (SELECT value FROM json_each(?)))")
+          .run(workspaceId, JSON.stringify([...selectedIds]), JSON.stringify([...selectedIds]));
+      }
+      const nextState = workspaceTaskStateSchema.parse({ ...state, tasks, updatedAt: now });
+      this.#database.prepare("UPDATE workspace_task_state SET state_json = ?, updated_at = ? WHERE workspace_id = ?").run(JSON.stringify(nextState), now, workspaceId);
+      this.#database.exec("COMMIT");
+      return localDataExecuteResultSchema.parse({ workspaceId, action: input.action, affectedTaskCount: preview.affectedTaskCount, savedAt: now });
+    } catch (error) {
+      this.#database.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  buildLocalDataExport(workspaceIdInput: string, scope: LocalDataScope, taskId: string | undefined, format: LocalDataExportFormat, revisionScope: LocalDataRevisionScope): LocalDataExportArtifact {
+    const workspaceId = persistedWorkspaceIdSchema.parse(workspaceIdInput);
+    const state = this.load(workspaceId);
+    const tasks = scope === "workspace" ? state.tasks : state.tasks.filter((task) => task.id === taskId);
+    if (scope === "task" && !tasks.length) throw new Error("Task was not found in the active Workspace");
+    const projectionIds = tasks.flatMap((task) => task.importedSession ? [task.importedSession.projectionId] : []);
+    const revisions = projectionIds.flatMap((projectionId) => {
+      const rows = revisionScope === "all"
+        ? this.#database.prepare("SELECT revision_json FROM session_projection_revision WHERE projection_id = ? ORDER BY ordinal").all(projectionId) as unknown as StoredRevisionExportRow[]
+        : this.#database.prepare("SELECT revision_json FROM session_projection_revision WHERE projection_id = ? AND id = (SELECT latest_revision_id FROM session_projection WHERE id = ?)").all(projectionId, projectionId) as unknown as StoredRevisionExportRow[];
+      return rows.map((row) => sessionProjectionRevisionSchema.parse(JSON.parse(row.revision_json) as unknown));
+    });
+    const handoffs = (this.#database.prepare("SELECT snapshot_json FROM context_handoff_snapshot WHERE workspace_id = ?").all(workspaceId) as unknown as StoredHandoffExportRow[])
+      .map((row) => contextHandoffSnapshotSchema.parse(JSON.parse(row.snapshot_json) as unknown))
+      .filter((snapshot) => tasks.some((task) => task.id === snapshot.sourceTaskId || task.id === snapshot.targetTaskId));
+    const stamp = this.#now().slice(0, 10);
+    const baseName = `rux-${scope === "workspace" ? "workspace" : "task"}-${stamp}`;
+    if (format === "markdown") return { suggestedName: `${baseName}.md`, mimeType: "text/markdown", content: markdownExport(workspaceId, tasks, revisions) };
+    const content = `${JSON.stringify(exportedValue({ schemaVersion: 1, exportedAt: this.#now(), workspaceId, revisionScope, tasks, projectionRevisions: revisions, handoffs }), null, 2)}\n`;
+    return { suggestedName: `${baseName}.json`, mimeType: "application/json", content };
   }
 
   previewContextHandoff(input: HandoffSelectionInput): HandoffPreviewResult {
@@ -1328,6 +1540,7 @@ export class TaskStore {
       const state = parseStoredState(stateRow, workspaceId, now);
       const task = state.tasks.find((candidate) => candidate.id === input.taskId);
       if (!task?.importedSession) throw Object.assign(new Error("Task is not linked to an imported Session"), { code: "SESSION_IMPORT_NOT_FOUND" });
+      if (task.importedSession.status === "unlinked") throw Object.assign(new Error("Session is unlinked; explicitly import it again before refreshing"), { code: "SESSION_UNLINKED" });
       if (task.importedSession.identityKey !== input.preview.identityKey) throw Object.assign(new Error("Refreshed Session identity does not match the Task"), { code: "SESSION_IDENTITY_MISMATCH" });
       const projectionRow = this.#database.prepare(`SELECT id, task_id, latest_revision_id, state_json, created_at FROM session_projection WHERE id = ? AND workspace_id = ? AND task_id = ?`)
         .get(task.importedSession.projectionId, workspaceId, task.id) as StoredProjectionRow | undefined;

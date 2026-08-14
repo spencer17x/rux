@@ -1,6 +1,7 @@
 export function nativeSessionKind(adapter) {
   if (adapter === "codex") return "codex-thread";
   if (adapter === "claude-code") return "claude-session";
+  if (adapter === "rux-native") return "rux-response";
   return "mock-session";
 }
 

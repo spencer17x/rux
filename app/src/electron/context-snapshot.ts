@@ -37,7 +37,7 @@ export class ContextSafetyError extends Error {
   }
 }
 
-function sensitivePathReason(path: string): string | undefined {
+export function sensitivePathReason(path: string): string | undefined {
   const segments = path.replaceAll("\\", "/").split("/").filter(Boolean);
   const fileName = segments.at(-1)?.toLowerCase() ?? "";
   if (segments.some((segment) => sensitiveDirectoryNames.has(segment.toLowerCase()))) {
@@ -49,7 +49,7 @@ function sensitivePathReason(path: string): string | undefined {
   return undefined;
 }
 
-function secretContentReason(content: string): string | undefined {
+export function secretContentReason(content: string): string | undefined {
   if (/-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/.test(content)) return "private key material";
   if (/\b(?:sk-(?:proj-)?[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,})\b/.test(content)) {
     return "credential-shaped token";

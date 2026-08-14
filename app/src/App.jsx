@@ -23,6 +23,8 @@ import {
   Clock3,
   Code2,
   Copy,
+  Database,
+  Download,
   Eye,
   FileCode2,
   FilePlus2,
@@ -155,6 +157,7 @@ const fallbackWorkspaceState = showcaseMode
 const fallbackAdapters = [
   { id: "codex", name: "Rux", available: false, detail: "尚未检测本机 Rux" },
   { id: "claude-code", name: "Claude Code", available: false, detail: "尚未检测本机 Claude Code" },
+  { id: "rux-native", name: "Rux Native", available: false, detail: "添加原生 Provider 后即可使用，无需安装 Agent CLI" },
 ];
 
 const providerSurfaces = [
@@ -222,6 +225,7 @@ function ruxAgentLabel(value) {
 
 function ruxAdapterLabel(value) {
   if (value === "codex") return "Rux";
+  if (value === "rux-native") return "Rux Native";
   if (value === "mock") return "Rux Demo";
   return ruxVisibleText(value) || "Rux";
 }
@@ -1238,6 +1242,73 @@ function InlineMessageText({ text }) {
   ));
 }
 
+const unsupportedContentPattern = /^\[暂不支持的内容类型:\s*([^\]]+)\]$/;
+
+function unsupportedContentTypes(text) {
+  const lines = String(text || "").split(/\n+/).map((line) => line.trim()).filter(Boolean);
+  if (!lines.length) return null;
+  const types = [];
+  for (const line of lines) {
+    const match = line.match(unsupportedContentPattern);
+    if (!match) return null;
+    types.push(match[1]);
+  }
+  return types;
+}
+
+function collapseUnsupportedMessages(messages) {
+  return messages.reduce((items, message) => {
+    const types = unsupportedContentTypes(message.text);
+    if (!types) {
+      items.push(message);
+      return items;
+    }
+    const previous = items.at(-1);
+    if (previous?.unsupportedContent && previous.runId === message.runId) {
+      types.forEach((type) => {
+        previous.unsupportedContent.counts[type] = (previous.unsupportedContent.counts[type] || 0) + 1;
+        previous.unsupportedContent.total += 1;
+      });
+      return items;
+    }
+    const counts = {};
+    types.forEach((type) => { counts[type] = (counts[type] || 0) + 1; });
+    items.push({
+      ...message,
+      id: `unsupported-${message.id}`,
+      role: "assistant",
+      text: "",
+      unsupportedContent: { counts, total: types.length },
+    });
+    return items;
+  }, []);
+}
+
+function UnsupportedContentMessage({ message }) {
+  const labels = {
+    mcpToolCall: "工具调用",
+    fileChange: "文件变更",
+    contextCompaction: "上下文压缩",
+  };
+  const entries = Object.entries(message.unsupportedContent.counts)
+    .sort(([, left], [, right]) => right - left);
+  return (
+    <details className="unsupported-content-summary">
+      <summary>
+        <span className="unsupported-content-icon"><Braces size={15} /></span>
+        <span>
+          <strong>已折叠 {message.unsupportedContent.total} 个导入事件</strong>
+          <small>{entries.map(([type, count]) => `${labels[type] || type} ${count}`).join(" · ")}</small>
+        </span>
+        <ChevronRight size={15} className="disclosure-chevron" />
+      </summary>
+      <div>
+        {entries.map(([type, count]) => <span key={type}><b>{labels[type] || type}</b><small>{count} 项</small></span>)}
+      </div>
+    </details>
+  );
+}
+
 function MessageBody({ text }) {
   const blocks = String(text).split(/```([^\n`]*)\n([\s\S]*?)```/g);
   return (
@@ -1272,6 +1343,7 @@ function MessageBody({ text }) {
 }
 
 function Message({ message, agent }) {
+  if (message.unsupportedContent) return <UnsupportedContentMessage message={message} />;
   if (message.role === "assistant") {
     return (
       <article
@@ -1374,7 +1446,7 @@ function ChangedFilesCard({ state, onOpenChanges, onRestoreChanges }) {
   );
 }
 
-function TaskTimeline({ task, streamingMessages = [], changes, onOpenChanges, onRestoreChanges, onOpenRun, onWaitingAction, onPermissionDecision, permissionBusy, permissionError, taskActionError, onDismissTaskActionError, agentRevisionUpdate, onCreateTaskWithLatestAgent, onRetrySession, onCreateFreshTask, onRefreshSession, onOpenSessionVersions, onOpenHandoff, sessionSyncBusy = false, workspacePlaceholder = false }) {
+function TaskTimeline({ task, streamingMessages = [], changes, onOpenChanges, onRestoreChanges, onOpenRun, onWaitingAction, onPermissionDecision, permissionBusy, permissionError, taskActionError, onDismissTaskActionError, agentRevisionUpdate, onCreateTaskWithLatestAgent, onRetrySession, onCreateFreshTask, onRefreshSession, onOpenSessionVersions, onOpenHandoff, onOpenLocalData, sessionSyncBusy = false, workspacePlaceholder = false }) {
   const isWaiting = task.status === "waiting";
   const isCompleted = task.status === "completed";
   const hasOutcome = task.status === "completed" || task.status === "failed";
@@ -1394,6 +1466,7 @@ function TaskTimeline({ task, streamingMessages = [], changes, onOpenChanges, on
       adapter: latestRun?.adapter || runtimeAdapterForTask(task),
     })),
   ];
+  const renderedMessages = collapseUnsupportedMessages(displayMessages);
   const verificationCounts = verifications.reduce((counts, verification) => ({
     ...counts,
     [verification.status]: counts[verification.status] + 1,
@@ -1406,7 +1479,9 @@ function TaskTimeline({ task, streamingMessages = [], changes, onOpenChanges, on
   const elapsed = latestRun?.durationMs ? formatDuration(latestRun.durationMs) : task.elapsed;
   const permissionTargetRef = useRef(null);
   const timelineEndRef = useRef(null);
+  const timelineScrollRef = useRef(null);
   const previousFollowKeyRef = useRef("");
+  const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const streamingLength = streamingMessages.reduce((total, message) => total + message.text.length, 0);
   const followKey = `${task.id}:${task.messages.length}:${streamingMessages.length}:${streamingLength}:${latestRun?.events?.length || 0}:${pendingPermission?.id || ""}:${task.status}`;
   const responseLead = task.status === "running"
@@ -1433,13 +1508,27 @@ function TaskTimeline({ task, streamingMessages = [], changes, onOpenChanges, on
     const frame = window.requestAnimationFrame(() => {
       const target = pendingPermission ? permissionTargetRef.current : timelineEndRef.current;
       target?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      setShowJumpToLatest(false);
     });
     return () => window.cancelAnimationFrame(frame);
   }, [followKey, pendingPermission]);
 
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      const node = timelineScrollRef.current;
+      if (!node) return;
+      setShowJumpToLatest(node.scrollHeight - node.scrollTop - node.clientHeight > 180);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [task.id, renderedMessages.length]);
+
   return (
-    <div className="timeline-scroll">
-      <div className="timeline-content">
+    <div className="timeline-region">
+      <div ref={timelineScrollRef} className="timeline-scroll" onScroll={(event) => {
+        const node = event.currentTarget;
+        setShowJumpToLatest(node.scrollHeight - node.scrollTop - node.clientHeight > 180);
+      }}>
+        <div className="timeline-content">
         {!workspacePlaceholder && !task.importedSession && task.messages.length ? <div className="task-context-actions"><button type="button" onClick={onOpenHandoff}><GitCompareArrows size={13} />复制为新任务</button></div> : null}
         {taskActionError ? (
           <div className="account-error" role="alert">
@@ -1451,11 +1540,12 @@ function TaskTimeline({ task, streamingMessages = [], changes, onOpenChanges, on
         {task.importedSession ? (
           <section className="agent-revision-notice session-imported-notice" aria-label="导入的 Agent 会话">
             <span className="agent-revision-notice-icon"><History size={15} /></span>
-            <span><strong>{task.importedSession.status === "native-unavailable" ? "原会话不可用，本地投影仍可查看" : task.importedSession.mode === "continue" ? "已关联原生会话" : "本地只读投影"}</strong><small>{task.importedSession.source === "codex-import" ? "Codex 导入" : "Claude Code 导入"} · 内容保存在 Rux，本地删除不会影响 Provider 原会话。</small></span>
+            <span><strong>{task.importedSession.status === "unlinked" ? "已解除关联，本地内容仍保留" : task.importedSession.status === "native-unavailable" ? "原会话不可用，本地投影仍可查看" : task.importedSession.mode === "continue" ? "已关联原生会话" : "本地只读投影"}</strong><small>{task.importedSession.source === "codex-import" ? "Codex 导入" : "Claude Code 导入"} · 内容保存在 Rux，本地删除不会影响 Provider 原会话。</small></span>
             <div className="session-imported-actions">
               <button type="button" onClick={onOpenHandoff}><GitCompareArrows size={13} />复制为新任务</button>
-              <button type="button" onClick={onRefreshSession} disabled={sessionSyncBusy}>{sessionSyncBusy ? <LoaderCircle size={13} className="status-running" /> : <RefreshCw size={13} />}刷新原生会话</button>
+              <button type="button" onClick={onRefreshSession} disabled={sessionSyncBusy || task.importedSession.status === "unlinked"}>{sessionSyncBusy ? <LoaderCircle size={13} className="status-running" /> : <RefreshCw size={13} />}刷新原生会话</button>
               <button type="button" onClick={onOpenSessionVersions} disabled={sessionSyncBusy}><History size={13} />版本</button>
+              <button type="button" onClick={onOpenLocalData}><Database size={13} />管理本地数据</button>
             </div>
           </section>
         ) : null}
@@ -1490,8 +1580,8 @@ function TaskTimeline({ task, streamingMessages = [], changes, onOpenChanges, on
             <span>耗时 {elapsed}</span><ChevronRight size={17} />
           </button>
         ) : null}
-        {displayMessages.map((message, index) => {
-          const priorRunId = displayMessages[index - 1]?.runId;
+        {renderedMessages.map((message, index) => {
+          const priorRunId = renderedMessages[index - 1]?.runId;
           const runIndex = message.runId ? task.runs?.findIndex((run) => run.id === message.runId) : -1;
           const showRunDivider = Boolean(message.runId && message.runId !== priorRunId);
           return (
@@ -1615,8 +1705,13 @@ function TaskTimeline({ task, streamingMessages = [], changes, onOpenChanges, on
             ) : null}
           </section>
         )}
-        <div ref={timelineEndRef} aria-hidden="true" />
+          <div ref={timelineEndRef} aria-hidden="true" />
+        </div>
       </div>
+      {showJumpToLatest ? <button type="button" className="timeline-jump-button" onClick={() => {
+        timelineEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+        setShowJumpToLatest(false);
+      }}><ChevronDown size={14} />回到最新</button> : null}
     </div>
   );
 }
@@ -1631,9 +1726,6 @@ function Composer({ task, draft, onDraft, onSend, onAgentChange, onModelChange, 
   const selectedAgentId = task.agentProfileId || runtimeAdapterForTask(task);
   const selectedAgentChoice = agentChoices.find((choice) => choice.id === selectedAgentId);
   const selectedAgentAvailable = Boolean(selectedAgentChoice?.available);
-  const selectedAgentUnavailableReason = selectedAgentChoice?.unavailableReason
-    || selectedAgentChoice?.detail
-    || (selectedAgentChoice ? `${selectedAgentChoice.name} 当前不可用` : "这个任务引用的 Agent Definition 已不存在");
   const submit = () => {
     if (!isActive && selectedAgentAvailable && draft.trim()) onSend();
   };
@@ -1709,6 +1801,7 @@ function Composer({ task, draft, onDraft, onSend, onAgentChange, onModelChange, 
               {!selectedAgentChoice ? <option value={selectedAgentId} disabled>{ruxAgentLabel(task.agent)}（Definition 已删除）</option> : null}
               {agentChoices.map((agent) => <option value={agent.id} key={agent.id} disabled={!agent.available}>{ruxAgentLabel(agent.name)}{agent.available ? "" : "（不可用）"}</option>)}
             </select>
+            {!selectedAgentAvailable ? <button type="button" className="composer-connect-button" onClick={onOpenAccounts}><CircleAlert size={13} />配置连接</button> : null}
             <button type="button" className={`permission-chip ${permissionVisualLabel === "完全访问" ? "is-full-access" : ""}`} onClick={() => setOptionsOpen((open) => !open)} aria-label={`权限：${permissionVisualLabel}`}><ShieldCheck size={16} /><span>{permissionVisualLabel}</span></button>
           </div>
           <div className="composer-submit-area">
@@ -1754,12 +1847,6 @@ function Composer({ task, draft, onDraft, onSend, onAgentChange, onModelChange, 
           </div>
         ) : null}
       </div>
-      {!selectedAgentAvailable ? (
-        <div className="composer-context-row" role="alert">
-          <span className="composer-agent-warning"><CircleAlert size={11} /> {selectedAgentUnavailableReason}</span>
-          <button type="button" className="secondary-button" onClick={onOpenAccounts}>账户与登录</button>
-        </div>
-      ) : null}
       {missingFromCatalog ? (
         <div className="composer-context-row" role="status">
           <span className="composer-agent-warning"><CircleAlert size={11} /> {ruxModelLabel(task.model)} 已不在最新官方目录中，不会自动替换</span>
@@ -2899,7 +2986,7 @@ function useDialogFocus(open, onClose) {
   return dialogRef;
 }
 
-function NewTaskDialog({ open, onClose, onCreate, onOpenAccounts, agentChoices, codexSettings, codexModels, workspace, contextCandidates, onValidateContext }) {
+function NewTaskDialog({ open, onClose, onCreate, onOpenAccounts, agentChoices, initialAgentId, codexSettings, codexModels, workspace, contextCandidates, onValidateContext }) {
   const [prompt, setPrompt] = useState("");
   const [agentId, setAgentId] = useState("codex");
   const [permissionMode, setPermissionMode] = useState(codexSettings.permissionMode || "acceptEdits");
@@ -2929,14 +3016,15 @@ function NewTaskDialog({ open, onClose, onCreate, onOpenAccounts, agentChoices, 
 
   useEffect(() => {
     if (!open) return;
-    const choice = agentChoices.find((item) => item.available)
+    const choice = agentChoices.find((item) => item.id === initialAgentId && item.available)
+      || agentChoices.find((item) => item.available)
       || agentChoices.find((item) => item.id === "codex")
       || agentChoices[0];
     setAgentId(choice?.id || "codex");
     setPermissionMode(choice?.permissionMode || codexSettings.permissionMode || "acceptEdits");
     setModel(choice?.model || codexSettings.model || "Rux default");
     setReasoningEffort(choice?.reasoningEffort || "");
-  }, [open]);
+  }, [open, initialAgentId]);
 
   useEffect(() => {
     if (open) return;
@@ -3070,8 +3158,9 @@ function NewTaskDialog({ open, onClose, onCreate, onOpenAccounts, agentChoices, 
   );
 }
 
-function AccountsDialog({ open, state, adapters, checking, loginProvider, error, notice, onClose, onDetect, onLogin, onCancelLogin, onOpenSettings }) {
+function AccountsDialog({ open, state, adapters, agentChoices, selectedAgentId, canCreateTask, nativeConnections, nativeBusy, checking, loginProvider, error, notice, onClose, onDetect, onLogin, onCancelLogin, onSaveNative, onTestNative, onDeleteNative, onUseAgent, onOpenSettings }) {
   const dialogRef = useDialogFocus(open, onClose);
+  const [nativeDraft, setNativeDraft] = useState({ label: "OpenAI", baseUrl: "https://api.openai.com/v1", defaultModel: "", apiKey: "" });
   if (!open) return null;
   const hasDetected = Boolean(state);
   const checkedAt = state?.checkedAt
@@ -3082,13 +3171,13 @@ function AccountsDialog({ open, state, adapters, checking, loginProvider, error,
     <div className="dialog-backdrop account-dialog-backdrop" role="presentation" onMouseDown={(event) => {
       if (event.target === event.currentTarget) onClose();
     }}>
-      <section ref={dialogRef} tabIndex={-1} className="account-dialog" role="dialog" aria-modal="true" aria-labelledby="account-dialog-title">
+      <section ref={dialogRef} tabIndex={-1} className="account-dialog accounts-dialog" role="dialog" aria-modal="true" aria-labelledby="account-dialog-title">
         <header className="account-dialog-header">
           <div>
             <span className="account-dialog-icon"><UserRound size={18} /></span>
             <span>
               <h2 id="account-dialog-title">Agent 与 Provider</h2>
-              <p>无需 Rux 账号；只在你点击后检查本机 CLI</p>
+              <p>无需 Rux 账号；原生 Provider 无需安装 Agent CLI，本机 CLI 作为可选 Engine</p>
             </span>
           </div>
           <button type="button" className="icon-button" onClick={onClose} aria-label="关闭账户与登录">
@@ -3097,6 +3186,23 @@ function AccountsDialog({ open, state, adapters, checking, loginProvider, error,
         </header>
 
         <div className="account-dialog-body">
+          <section className="native-provider-section" aria-labelledby="native-provider-title">
+            <header><span><strong id="native-provider-title">Rux Native Provider</strong><small>直接使用 Responses-compatible API，不依赖 Codex 或 Claude Code</small></span><span className="account-provider-status is-connected"><Zap size={13} />无需 CLI</span></header>
+            {nativeConnections.length ? <div className="native-provider-connections">{nativeConnections.map((connection) => {
+              const agent = agentChoices.find((choice) => choice.providerConnection?.id === connection.id);
+              const isSelected = Boolean(agent && agent.id === selectedAgentId);
+              return <article key={connection.id}><span><strong>{connection.label}</strong><small>{connection.baseUrl} · {connection.defaultModel}</small>{connection.lastTestDetail ? <small className={connection.lastTestStatus === "error" ? "is-error" : "is-success"}>{connection.lastTestDetail}</small> : null}</span><span className="native-provider-actions">{agent?.available ? <>{isSelected ? <span className="account-current-agent-badge"><Check size={13} />当前使用</span> : null}<button type="button" className="account-use-agent-button" disabled={!canCreateTask} title={canCreateTask ? `使用 ${agent.name} 新建任务` : "请先打开项目"} onClick={() => onUseAgent(agent.id)}><SquarePen size={13} />新建任务</button></> : null}<button type="button" className="secondary-button" disabled={nativeBusy} onClick={() => onTestNative(connection.id)}>测试</button><button type="button" className="danger-ghost-button" disabled={nativeBusy} onClick={() => onDeleteNative(connection.id)}>删除</button></span></article>;
+            })}</div> : null}
+            <form className="native-provider-form" onSubmit={(event) => { event.preventDefault(); if (!nativeDraft.label.trim() || !nativeDraft.defaultModel.trim() || !nativeDraft.apiKey) return; onSaveNative({ label: nativeDraft.label.trim(), providerType: "openai-responses", baseUrl: nativeDraft.baseUrl.trim(), defaultModel: nativeDraft.defaultModel.trim(), apiKey: nativeDraft.apiKey }).then(() => setNativeDraft((draft) => ({ ...draft, apiKey: "" }))).catch(() => undefined); }}>
+              <label><span>名称</span><input value={nativeDraft.label} maxLength={80} onChange={(event) => setNativeDraft((draft) => ({ ...draft, label: event.target.value }))} /></label>
+              <label><span>Base URL</span><input value={nativeDraft.baseUrl} onChange={(event) => setNativeDraft((draft) => ({ ...draft, baseUrl: event.target.value }))} /></label>
+              <label><span>默认模型</span><input value={nativeDraft.defaultModel} placeholder="例如 gpt-5.6" onChange={(event) => setNativeDraft((draft) => ({ ...draft, defaultModel: event.target.value }))} /></label>
+              <label><span>API Key</span><input type="password" autoComplete="off" value={nativeDraft.apiKey} placeholder="仅提交到 Main 安全边界" onChange={(event) => setNativeDraft((draft) => ({ ...draft, apiKey: event.target.value }))} /></label>
+              <button type="submit" className="primary-button" disabled={nativeBusy || !nativeDraft.label.trim() || !nativeDraft.baseUrl.trim() || !nativeDraft.defaultModel.trim() || !nativeDraft.apiKey}>{nativeBusy ? <LoaderCircle size={14} className="status-running" /> : <Plus size={14} />}添加 Connection</button>
+            </form>
+            <p className="native-provider-security"><ShieldCheck size={13} />API Key 由 Main 使用操作系统加密能力保存；Renderer、普通 IPC、日志和导出都不会获得原始值。</p>
+          </section>
+
           <section className="account-detection-card" aria-label="本机 Agent 检测">
             <span className="account-sync-icon">{checking ? <LoaderCircle size={17} className="status-running" /> : <Laptop size={17} />}</span>
             <span>
@@ -3121,6 +3227,8 @@ function AccountsDialog({ open, state, adapters, checking, loginProvider, error,
             </div>
           ) : null}
           {notice ? <div className="account-notice" role="status">{loginProvider ? <LoaderCircle size={15} className="status-running" /> : notice.includes("取消") ? <Circle size={13} /> : <CheckCircle2 size={15} />}<span>{notice}</span></div> : null}
+
+          {agentChoices.some((choice) => choice.available && choice.id !== "mock") ? <div className="account-agent-selection-help"><Bot size={16} /><span><strong>连接不等于当前使用</strong><small>当前任务固定的 Agent 会标记为“当前使用”；选择其他 Agent 会创建新任务，已有任务不会改变。</small></span></div> : null}
 
           <div className="account-provider-list">
             {providerSurfaces.map((surface) => {
@@ -3156,6 +3264,8 @@ function AccountsDialog({ open, state, adapters, checking, loginProvider, error,
               const loginLabel = connected
                 ? ["api-key", "cloud"].includes(provider?.authMethod) ? "改用 OAuth" : "重新登录"
                 : surface.id === "chatgpt" ? "使用 ChatGPT 登录" : "使用 Claude 登录";
+              const agent = agentChoices.find((choice) => choice.id === surface.adapter);
+              const isSelectedAgent = selectedAgentId === surface.adapter;
 
               return (
                 <section className="account-provider" key={surface.id} data-provider={surface.id}>
@@ -3174,6 +3284,7 @@ function AccountsDialog({ open, state, adapters, checking, loginProvider, error,
                       {connected ? <CheckCircle2 size={13} /> : isLoggingIn || phase === "checking" ? <LoaderCircle size={13} className="status-running" /> : phase === "error" || phase === "not-installed" ? <CircleAlert size={13} /> : <Circle size={11} />}
                       {statusCopy}
                     </span>
+                    {connected && agent?.available ? <div className="account-agent-action-row">{isSelectedAgent ? <span className="account-current-agent-badge"><Check size={13} />当前使用</span> : null}<button type="button" className="account-use-agent-button" disabled={!canCreateTask} title={canCreateTask ? `使用 ${agent.name} 新建任务` : "请先打开项目"} onClick={() => onUseAgent(agent.id)}><SquarePen size={13} />新建任务</button></div> : null}
                     {phase === "not-installed" ? (
                       <a className="account-install-link" href={surface.installUrl} target="_blank" rel="noreferrer"><Globe2 size={13} />官方安装说明</a>
                     ) : phase === "error" ? (
@@ -3196,13 +3307,13 @@ function AccountsDialog({ open, state, adapters, checking, loginProvider, error,
           </div>
           <div className="account-dialog-secondary-actions">
             <button type="button" className="secondary-button" onClick={onOpenSettings} disabled={Boolean(loginProvider)}><Settings size={14} /> Rux 设置</button>
-            <p>API Key、Base URL 与云 Provider 继续由对应 CLI 管理；配置后回到这里重新检测。</p>
+            <p>原生 Connection 在上方管理；CLI 自有的 API Key、Base URL 与云 Provider 配置仍由对应 CLI 管理。</p>
           </div>
         </div>
 
         <footer className="account-dialog-footer">
           <ShieldCheck size={15} />
-          <p>Rux 只保存非敏感的 CLI Connection 引用，不读取凭据文件、Keychain 或 Token。登录、凭据存储与刷新均由官方 CLI 管理。</p>
+          <p>原生 API Key 只在 Main/Runtime 特权边界内使用；CLI 登录与 CLI 凭据仍由官方工具管理，二者互不复制。</p>
         </footer>
       </section>
     </div>
@@ -3221,7 +3332,7 @@ function SessionDiscoveryDialog({ open, workspace, engine, state, previewState, 
   const hasResults = groups.some(([key]) => state.result?.[key]?.length);
   const busy = state.status === "loading" || previewState.status === "loading" || previewState.status === "importing";
   const importedBindingFor = (item) => importedTasks.find((task) => task.importedSession?.identityKey === item.identityKey)?.importedSession;
-  const importedStatusLabel = (binding) => binding?.status === "linked" ? "已关联" : binding?.status === "native-unavailable" ? "原会话不可用" : binding ? "仅查看" : "";
+  const importedStatusLabel = (binding) => binding?.status === "linked" ? "已关联" : binding?.status === "unlinked" ? "已解除关联 · 可重新导入" : binding?.status === "native-unavailable" ? "原会话不可用" : binding ? "仅查看" : "";
   return (
     <div className="dialog-backdrop account-dialog-backdrop session-discovery-backdrop" role="presentation" onMouseDown={(event) => {
       if (event.target === event.currentTarget && !busy) onClose();
@@ -3345,7 +3456,59 @@ function ContextHandoffDialog({ state, agents, onChange, onPreview, onGenerateSu
   </section></div>;
 }
 
-function CodexSettingsDialog({ open, connected, catalog, settings, onClose, onReload, onSave, onOpenAccounts }) {
+function localDataSize(bytes = 0) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function LocalDataDialog({ state, task, workspace, onChange, onPreview, onExecute, onExport, onClose }) {
+  const dialogRef = useDialogFocus(state.open, onClose);
+  if (!state.open) return null;
+  const actionCopy = {
+    unlink: ["解除关联", "保留任务、消息、投影版本和 Rux 记录，但停止刷新与继续原生会话。"],
+    "remove-imported": ["删除导入内容", "删除来自原生会话的本地消息和投影版本；保留 Rux 运行记录、任务元数据与上下文交接。"],
+    "delete-task": [state.scope === "workspace" ? "清理工作区任务" : "删除整个任务", "删除范围内任务的全部 Rux 本地记录，包括运行、审批、交接和版本历史。"],
+  };
+  const [actionTitle, actionDetail] = actionCopy[state.action];
+  return <div className="dialog-backdrop account-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !state.loading) onClose(); }}>
+    <section ref={dialogRef} tabIndex={-1} className="account-dialog local-data-dialog" role="dialog" aria-modal="true" aria-labelledby="local-data-title">
+      <header className="account-dialog-header"><div><span className="account-dialog-icon"><Database size={18} /></span><span><h2 id="local-data-title">本地数据与导出</h2><p>{workspace.name} · 本地操作不会删除、归档或修改服务商原生会话</p></span></div><button type="button" className="icon-button" onClick={onClose} aria-label="关闭本地数据管理"><X size={17} /></button></header>
+      <div className="account-dialog-body local-data-body">
+        {state.error ? <div className="account-error" role="alert"><CircleAlert size={15} /><span>{state.error}</span></div> : null}
+        {state.notice ? <div className="account-notice" role="status"><CheckCircle2 size={15} /><span>{state.notice}</span></div> : null}
+        <section className="local-data-summary" aria-label="工作区本地占用">
+          <span><small>预计本地占用</small><strong>{state.summary ? localDataSize(state.summary.estimatedBytes) : "正在计算…"}</strong></span>
+          <span><small>任务</small><strong>{state.summary?.taskCount ?? "—"}</strong></span>
+          <span><small>导入任务</small><strong>{state.summary?.importedTaskCount ?? "—"}</strong></span>
+          <span><small>投影版本</small><strong>{state.summary?.projectionRevisionCount ?? "—"}</strong></span>
+        </section>
+        <section className="local-data-section">
+          <header><span><strong>本地清理</strong><small>先生成影响预览，再明确确认执行。</small></span></header>
+          <div className="local-data-controls">
+            <label><span>范围</span><select aria-label="本地数据范围" value={state.scope} onChange={(event) => onChange({ scope: event.target.value, preview: null, notice: "" })}><option value="task">当前任务{task ? ` · ${task.title}` : ""}</option><option value="workspace">整个工作区</option></select></label>
+            <label><span>操作</span><select aria-label="本地数据操作" value={state.action} onChange={(event) => onChange({ action: event.target.value, preview: null, notice: "" })}><option value="unlink">解除关联</option><option value="remove-imported">删除导入内容</option><option value="delete-task">{state.scope === "workspace" ? "清理工作区任务" : "删除整个任务"}</option></select></label>
+          </div>
+          <div className="local-data-action-copy"><strong>{actionTitle}</strong><small>{actionDetail}</small></div>
+          {!state.preview ? <button type="button" className="secondary-button" onClick={onPreview} disabled={state.loading}>{state.loading ? <LoaderCircle size={14} className="status-running" /> : <Eye size={14} />}生成影响预览</button> : <div className="local-data-impact" role="status">
+            <header><strong>影响预览</strong><span>预计释放 {localDataSize(state.preview.estimatedReclaimableBytes)}</span></header>
+            <ul><li><strong>{state.preview.affectedTaskCount}</strong><span>任务</span></li><li><strong>{state.preview.importedMessageCount}</strong><span>导入消息</span></li><li><strong>{state.preview.affectedProjectionRevisionCount}</strong><span>投影版本</span></li><li><strong>{state.preview.runCount}</strong><span>Rux 运行记录</span></li><li><strong>{state.preview.affectedHandoffCount}</strong><span>上下文交接</span></li></ul>
+            <p><ShieldCheck size={14} /><span><strong>{state.preview.nativeSessions.length} 个原生会话不受影响</strong><small>删除后不承诺恢复本地数据；若原生会话仍存在，可以重新导入。</small></span></p>
+            <button type="button" className={state.action === "unlink" ? "secondary-button" : "danger-ghost-button"} onClick={onExecute} disabled={state.loading}>{state.loading ? <LoaderCircle size={14} className="status-running" /> : state.action === "unlink" ? <Link2 size={14} /> : <Trash2 size={14} />}{actionTitle}</button>
+          </div>}
+        </section>
+        <section className="local-data-section">
+          <header><span><strong>导出</strong><small>Markdown 便于阅读；JSON 保留结构。凭据字段不会写入导出文件。</small></span></header>
+          <div className="local-data-controls"><label><span>格式</span><select aria-label="导出格式" value={state.format} onChange={(event) => onChange({ format: event.target.value })}><option value="markdown">Markdown</option><option value="json">JSON</option></select></label><label><span>投影版本</span><select aria-label="导出版本范围" value={state.revisions} onChange={(event) => onChange({ revisions: event.target.value })}><option value="current">仅当前版本</option><option value="all">包含历史版本</option></select></label></div>
+          <div className="session-import-warning"><CircleAlert size={15} /><span><strong>导出文件可能包含敏感内容</strong><small>包括提示词、文件内容、命令输出和会话消息。请确认保存位置和后续分享范围。</small></span></div>
+          <button type="button" className="primary-button" onClick={onExport} disabled={state.loading}>{state.loading ? <LoaderCircle size={14} className="status-running" /> : <Download size={14} />}确认风险并导出</button>
+        </section>
+      </div>
+    </section>
+  </div>;
+}
+
+function CodexSettingsDialog({ open, connected, catalog, settings, onClose, onReload, onSave, onOpenAccounts, onOpenLocalData }) {
   const [draft, setDraft] = useState(settings);
   const [query, setQuery] = useState("");
   const dialogRef = useDialogFocus(open, onClose);
@@ -3397,6 +3560,7 @@ function CodexSettingsDialog({ open, connected, catalog, settings, onClose, onRe
               <p>个人</p>
               <button type="button" className="is-active"><Settings size={16} /><span>常规</span></button>
               <button type="button" onClick={onOpenAccounts}><UserRound size={16} /><span>账户与登录</span><ArrowRight size={13} /></button>
+              <button type="button" onClick={onOpenLocalData}><Database size={16} /><span>本地数据</span><ArrowRight size={13} /></button>
             </div>
             <div className="rux-settings-nav-group">
               <p>编码</p>
@@ -3439,7 +3603,7 @@ function CodexSettingsDialog({ open, connected, catalog, settings, onClose, onRe
 
             {showGeneral ? (
               <section className="rux-settings-section" id="rux-agent-settings" aria-labelledby="rux-general-settings">
-                <h2 id="rux-general-settings">常规</h2>
+                <h2 id="rux-general-settings">Agent 默认设置</h2>
                 {!connected ? (
                   <div className="settings-login-required" role="status">
                     <Bot size={18} />
@@ -3512,6 +3676,7 @@ const emptyAgentDraft = {
   name: "",
   description: "",
   backend: "codex",
+  providerConnectionId: "",
   model: "",
   reasoningEffort: "",
   instructions: "",
@@ -3521,7 +3686,7 @@ const emptyAgentDraft = {
   enabled: true,
 };
 
-function AgentsDialog({ open, profiles, adapters, busy, error, onClose, onSave, onDelete }) {
+function AgentsDialog({ open, profiles, adapters, nativeConnections, busy, error, onClose, onSave, onDelete }) {
   const [editingId, setEditingId] = useState(null);
   const [draft, setAgentDraft] = useState(emptyAgentDraft);
   const dialogRef = useDialogFocus(open, onClose);
@@ -3532,6 +3697,7 @@ function AgentsDialog({ open, profiles, adapters, busy, error, onClose, onSave, 
       name: profile.name,
       description: profile.description,
       backend: profile.backend,
+      providerConnectionId: profile.providerConnection?.kind === "rux-native" ? profile.providerConnection.id : "",
       model: profile.model || "",
       reasoningEffort: profile.reasoningEffort || "",
       instructions: profile.instructions,
@@ -3548,10 +3714,12 @@ function AgentsDialog({ open, profiles, adapters, busy, error, onClose, onSave, 
   const update = (key, value) => setAgentDraft((current) => ({ ...current, [key]: value }));
   const profileInput = (name = draft.name.trim()) => {
     const splitIds = (value) => value.split(",").map((item) => item.trim()).filter(Boolean);
+    const nativeConnection = nativeConnections.find((connection) => connection.id === draft.providerConnectionId);
     return {
       name,
       description: draft.description.trim(),
       backend: draft.backend,
+      ...(draft.backend === "rux-native" && nativeConnection ? { providerConnection: { id: nativeConnection.id, kind: "rux-native", engine: "rux-native", label: nativeConnection.label } } : {}),
       ...(draft.model.trim() ? { model: draft.model.trim() } : {}),
       ...(draft.reasoningEffort ? { reasoningEffort: draft.reasoningEffort } : {}),
       instructions: draft.instructions.trim(),
@@ -3585,7 +3753,7 @@ function AgentsDialog({ open, profiles, adapters, busy, error, onClose, onSave, 
     }}>
       <section ref={dialogRef} tabIndex={-1} className="agents-dialog" role="dialog" aria-modal="true" aria-labelledby="agents-dialog-title">
         <header className="agents-dialog-header">
-          <div><span className="account-dialog-icon"><Wrench size={18} /></span><span><h2 id="agents-dialog-title">自定义 Agents</h2><p>组合受信任的本机 CLI、指令和 Permission；不保存凭据。</p></span></div>
+          <div><span className="account-dialog-icon"><Wrench size={18} /></span><span><h2 id="agents-dialog-title">自定义 Agents</h2><p>组合 Engine、Provider、指令和 Permission；Agent Revision 不保存凭据。</p></span></div>
           <button type="button" className="icon-button" onClick={onClose} aria-label="关闭 Agents"><X size={17} /></button>
         </header>
         <div className="agents-dialog-body">
@@ -3601,9 +3769,10 @@ function AgentsDialog({ open, profiles, adapters, busy, error, onClose, onSave, 
             {error ? <div className="account-error" role="alert"><CircleAlert size={15} /><span>{error}</span></div> : null}
             <div className="agent-form-grid">
               <label><span>名称</span><input value={draft.name} onChange={(event) => update("name", event.target.value)} maxLength={80} required /></label>
-              <label><span>底座</span><select value={draft.backend} onChange={(event) => update("backend", event.target.value)}>
-                {adapters.filter((item) => item.id === "codex" || item.id === "claude-code").map((adapter) => <option key={adapter.id} value={adapter.id}>{ruxAgentLabel(adapter.name)}{adapter.available ? "" : "（尚未检测或本机组件不可用）"}</option>)}
+              <label><span>底座</span><select value={draft.backend} onChange={(event) => { update("backend", event.target.value); if (event.target.value !== "rux-native") update("providerConnectionId", ""); }}>
+                {adapters.filter((item) => ["codex", "claude-code", "rux-native"].includes(item.id)).map((adapter) => <option key={adapter.id} value={adapter.id}>{ruxAgentLabel(adapter.name)}{adapter.available ? "" : adapter.id === "rux-native" ? "（请先添加 Provider）" : "（尚未检测或本机组件不可用）"}</option>)}
               </select></label>
+              {draft.backend === "rux-native" ? <label><span>原生 Provider</span><select required value={draft.providerConnectionId} onChange={(event) => update("providerConnectionId", event.target.value)}><option value="">选择 Connection</option>{nativeConnections.map((connection) => <option key={connection.id} value={connection.id}>{connection.label} · {connection.defaultModel}</option>)}</select></label> : null}
               <label className="is-wide"><span>描述</span><input value={draft.description} onChange={(event) => update("description", event.target.value)} maxLength={400} /></label>
               <label><span>模型（可选）</span><input value={draft.model} onChange={(event) => update("model", event.target.value)} placeholder="使用底座默认模型" /></label>
               <label><span>推理强度（可选）</span><input value={draft.reasoningEffort} onChange={(event) => update("reasoningEffort", event.target.value)} placeholder="使用模型默认值" /></label>
@@ -3619,7 +3788,7 @@ function AgentsDialog({ open, profiles, adapters, busy, error, onClose, onSave, 
               {editingId ? <button type="button" className="danger-ghost-button" onClick={() => {
                 if (window.confirm(`删除自定义 Agent「${draft.name}」？`)) onDelete(editingId).then(reset).catch(() => undefined);
               }} disabled={busy}><Trash2 size={14} /> 删除</button> : <span />}
-              <button type="submit" className="primary-button" disabled={busy || !draft.name.trim() || !draft.instructions.trim()}>{busy ? <LoaderCircle size={14} className="status-running" /> : <Check size={14} />}{editingId ? "保存 Agent" : "创建 Agent"}</button>
+              <button type="submit" className="primary-button" disabled={busy || !draft.name.trim() || !draft.instructions.trim() || (draft.backend === "rux-native" && !draft.providerConnectionId)}>{busy ? <LoaderCircle size={14} className="status-running" /> : <Check size={14} />}{editingId ? "保存 Agent" : "创建 Agent"}</button>
             </footer>
           </form>
         </div>
@@ -3665,10 +3834,13 @@ export function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(Boolean(uiPreferences.sidebarCollapsed));
   const [newTaskOpen, setNewTaskOpen] = useState(false);
+  const [newTaskAgentId, setNewTaskAgentId] = useState("");
   const [agentsOpen, setAgentsOpen] = useState(false);
   const [agentProfiles, setAgentProfiles] = useState([]);
   const [agentProfileBusy, setAgentProfileBusy] = useState(false);
   const [agentProfileError, setAgentProfileError] = useState("");
+  const [nativeConnections, setNativeConnections] = useState([]);
+  const [nativeProviderBusy, setNativeProviderBusy] = useState(false);
   const [accountsOpen, setAccountsOpen] = useState(false);
   const [sessionDiscoveryOpen, setSessionDiscoveryOpen] = useState(false);
   const [sessionDiscoveryEngine, setSessionDiscoveryEngine] = useState("codex");
@@ -3676,6 +3848,7 @@ export function App() {
   const [sessionPreviewState, setSessionPreviewState] = useState({ status: "idle", operationId: "", item: null, preview: null, error: "" });
   const [sessionSyncState, setSessionSyncState] = useState({ open: false, loading: false, error: "", result: null, revisions: null });
   const [handoffState, setHandoffState] = useState({ open: false, loading: false, error: "", targetAgentId: "", messageIds: [], filePaths: [], agentSummary: "", agentSummaryGenerationId: "", summaryProvenance: null, constraints: "", preview: null, source: { messages: [], files: [] } });
+  const [localDataState, setLocalDataState] = useState({ open: false, loading: false, error: "", notice: "", summary: null, preview: null, scope: "task", action: "unlink", format: "markdown", revisions: "current" });
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [authState, setAuthState] = useState(null);
   const [authChecking, setAuthChecking] = useState(false);
@@ -3720,14 +3893,20 @@ export function App() {
     if (window.rux) setHydratedWorkspaceId(null);
 
     const hydrate = async () => {
-      const [agentResult, profileResult, nextState] = await Promise.all([
+      const [agentResult, profileResult, connectionResult, nextState] = await Promise.all([
         window.rux ? Promise.resolve({ adapters: fallbackAdapters }) : runtime.listAgents(),
         runtime.listAgentProfiles(),
+        runtime.listProviderConnections(),
         window.rux ? window.rux.getWorkspaceState() : Promise.resolve(null),
       ]);
       if (disposed) return;
-      setAdapters(agentResult.adapters);
+      setAdapters(agentResult.adapters.map((adapter) => adapter.id === "rux-native" ? {
+        ...adapter,
+        available: connectionResult.length > 0,
+        detail: connectionResult.length ? `${connectionResult.length} 个原生 Provider Connection` : adapter.detail,
+      } : adapter));
       setAgentProfiles(profileResult.profiles);
+      setNativeConnections(connectionResult);
       setAgentProfileError("");
 
       if (window.rux && nextState) {
@@ -3836,7 +4015,10 @@ export function App() {
         setInspectorOpen(false);
         setTerminalOpen(false);
         if (workspaceState.active.placeholder) void chooseWorkspace();
-        else setNewTaskOpen(true);
+        else {
+          setNewTaskAgentId("");
+          setNewTaskOpen(true);
+        }
       }
     };
 
@@ -3899,7 +4081,7 @@ export function App() {
         unavailableReason: !adapter.available
           ? authState
             ? `未找到可用的 ${adapter.id === "claude-code" ? "Claude Code" : "Rux"} 本机组件`
-            : "请先在账户与登录中检测本机 Agent"
+            : "请配置 Rux Native Provider，或检测可选的本机 Agent CLI"
           : !authenticationReady
             ? `请先在账户与登录中连接 ${adapter.id === "claude-code" ? "Claude Code" : "Rux"}`
             : "",
@@ -3916,7 +4098,8 @@ export function App() {
     const custom = agentProfiles.map((profile) => {
       const backend = adapters.find((adapter) => adapter.id === profile.backend);
       const provider = authProviderForAdapter(authState, profile.backend);
-      const authenticationReady = provider?.status === "connected";
+      const nativeConnectionReady = profile.backend === "rux-native" && nativeConnections.some((connection) => connection.id === profile.providerConnection.id && connection.hasCredential);
+      const authenticationReady = profile.backend === "rux-native" ? nativeConnectionReady : provider?.status === "connected";
       const verifiedModels = verifiedModelHistory(tasks, profile.backend, profile.providerConnection.id);
       return {
         id: profile.id,
@@ -3930,14 +4113,16 @@ export function App() {
         unavailableReason: !profile.enabled
           ? "这个自定义 Agent 已停用"
           : !backend?.available
-            ? authState
+            ? profile.backend === "rux-native"
+              ? "原生 Provider Connection 当前不可用"
+              : authState
               ? `未找到可用的 ${profile.backend === "claude-code" ? "Claude Code" : "Rux"} 本机组件`
-              : "请先在账户与登录中检测本机 Agent"
+              : "请配置 Rux Native Provider，或检测可选的本机 Agent CLI"
             : !authenticationReady
               ? `请先在账户与登录中连接 ${profile.backend === "claude-code" ? "Claude Code" : "Rux"}`
               : "",
         requiresLogin: Boolean(backend?.available) && provider?.status === "signed-out",
-        model: profile.model || (profile.backend === "codex" ? codexSettings.model : "Claude default"),
+        model: profile.model || (profile.backend === "codex" ? codexSettings.model : profile.backend === "rux-native" ? nativeConnections.find((connection) => connection.id === profile.providerConnection.id)?.defaultModel || "Provider default" : "Claude default"),
         modelSource: profile.modelSource,
         modelVerificationStatus: profile.modelVerificationStatus,
         verifiedModels,
@@ -3946,7 +4131,7 @@ export function App() {
       };
     });
     return [...builtIns.filter((item) => item.id !== "mock"), ...custom, ...builtIns.filter((item) => item.id === "mock")];
-  }, [adapters, agentProfiles, authState, codexCatalog.models, codexSettings, tasks]);
+  }, [adapters, agentProfiles, authState, codexCatalog.models, codexSettings, nativeConnections, tasks]);
 
   const taskAgentChoices = useMemo(() => {
     if (!selectedTask.agentProfileId) return agentChoices;
@@ -3954,7 +4139,8 @@ export function App() {
     if (existing) return agentChoices;
     const backend = adapters.find((adapter) => adapter.id === runtimeAdapterForTask(selectedTask));
     const provider = authProviderForAdapter(authState, runtimeAdapterForTask(selectedTask));
-    const available = Boolean(backend?.available) && provider?.status === "connected";
+    const nativeReady = runtimeAdapterForTask(selectedTask) === "rux-native" && nativeConnections.some((connection) => connection.id === selectedTask.providerConnection?.id && connection.hasCredential);
+    const available = Boolean(backend?.available) && (nativeReady || provider?.status === "connected");
     return [...agentChoices, {
       id: selectedTask.agentProfileId,
       name: selectedTask.agent,
@@ -3966,8 +4152,8 @@ export function App() {
       detail: `已删除 Definition 的历史 Revision ${agentRevisionNumber(selectedTask.agentRevisionId) || ""}`.trim(),
       unavailableReason: !backend?.available
         ? "这个历史 Agent 的本机组件不可用"
-        : provider?.status !== "connected" ? "请先在账户与登录中连接对应 Provider" : "",
-      requiresLogin: Boolean(backend?.available) && provider?.status === "signed-out",
+        : !nativeReady && provider?.status !== "connected" ? "请先在账户与登录中连接对应 Provider" : "",
+      requiresLogin: runtimeAdapterForTask(selectedTask) !== "rux-native" && Boolean(backend?.available) && provider?.status === "signed-out",
       model: selectedTask.model,
       modelSource: selectedTask.modelSource,
       modelVerificationStatus: selectedTask.modelVerificationStatus,
@@ -3976,7 +4162,7 @@ export function App() {
       permissionMode: selectedTask.permissionMode || "acceptEdits",
       historical: true,
     }];
-  }, [adapters, agentChoices, authState, selectedTask, tasks]);
+  }, [adapters, agentChoices, authState, nativeConnections, selectedTask, tasks]);
 
   const selectedAgentRevisionUpdate = useMemo(() => {
     const update = agentRevisionUpdateForTask(selectedTask, agentProfiles);
@@ -4405,6 +4591,9 @@ export function App() {
     if (taskSnapshot.importedSession?.status === "native-unavailable") {
       return { ok: false, error: "原生会话当前不可用。本地 Projection 仍可查看；请先刷新确认，或通过上下文交接创建新任务。" };
     }
+    if (taskSnapshot.importedSession?.status === "unlinked") {
+      return { ok: false, error: "该会话已解除关联。本地内容仍可查看；请重新导入原生会话，或通过上下文交接创建新任务。" };
+    }
     if (!taskSnapshot.agentRevisionId || !taskSnapshot.providerConnection?.id) {
       return { ok: false, error: "这个任务缺少可验证的 Agent Revision 或 Provider Connection，请新建任务。" };
     }
@@ -4469,6 +4658,7 @@ export function App() {
         sessionId,
         profileId: taskSnapshot.agentProfileId,
         agentRevisionId: taskSnapshot.agentRevisionId,
+        providerConnectionId: taskSnapshot.providerConnection.id,
         contextFiles: taskSnapshot.contextFiles || [],
       }, (event) => receiveRunEvent(taskId, token, event));
     } catch (error) {
@@ -4912,6 +5102,7 @@ export function App() {
   const createTaskInWorkspace = async (path) => {
     const activated = await activateWorkspace(path);
     if (!activated) return;
+    setNewTaskAgentId("");
     setNewTaskOpen(true);
   };
 
@@ -5447,6 +5638,63 @@ export function App() {
     }
   };
 
+  const openLocalData = async (scope = "task") => {
+    setSettingsOpen(false);
+    setLocalDataState((state) => ({ ...state, open: true, loading: true, error: "", notice: "", preview: null, scope }));
+    try {
+      const summary = await runtimeRef.current.getLocalDataSummary();
+      setLocalDataState((state) => ({ ...state, loading: false, summary }));
+    } catch (error) {
+      setLocalDataState((state) => ({ ...state, loading: false, error: error instanceof Error ? error.message : String(error) }));
+    }
+  };
+
+  const previewLocalData = async () => {
+    const current = localDataState;
+    setLocalDataState((state) => ({ ...state, loading: true, error: "", notice: "" }));
+    try {
+      const preview = await runtimeRef.current.previewLocalData({ scope: current.scope, ...(current.scope === "task" ? { taskId: selectedTask.id } : {}), action: current.action });
+      setLocalDataState((state) => ({ ...state, loading: false, preview }));
+    } catch (error) {
+      setLocalDataState((state) => ({ ...state, loading: false, error: error instanceof Error ? error.message : String(error) }));
+    }
+  };
+
+  const executeLocalData = async () => {
+    const current = localDataState;
+    if (!current.preview) return;
+    const confirmation = current.action === "unlink"
+      ? "确认解除关联？本地内容会保留，但必须重新导入后才能刷新或继续原生会话。"
+      : "确认执行本地删除？Provider 原生会话不受影响，但 Rux 不承诺恢复被删除的本地数据。";
+    if (!window.confirm(confirmation)) return;
+    setLocalDataState((state) => ({ ...state, loading: true, error: "", notice: "" }));
+    try {
+      await runtimeRef.current.executeLocalData({ scope: current.scope, ...(current.scope === "task" ? { taskId: selectedTask.id } : {}), action: current.action, fingerprint: current.preview.fingerprint, confirmed: true });
+      const stored = await window.rux.loadTaskState(workspaceState.active.id);
+      const nextActiveTasks = stored.tasks.length
+        ? stored.tasks.map((task) => normalizePersistedTask(task, workspaceState.active.id))
+        : [normalizePersistedTask(createWorkspaceStarterTask(workspaceState.active, codexSettings), workspaceState.active.id)];
+      setTasks((items) => [...nextActiveTasks, ...items.filter((task) => task.workspaceId !== workspaceState.active.id)]);
+      setSelectedTaskId((currentId) => nextActiveTasks.some((task) => task.id === currentId) ? currentId : nextActiveTasks[0].id);
+      const summary = await runtimeRef.current.getLocalDataSummary();
+      setSessionSyncState({ open: false, loading: false, error: "", result: null, revisions: null });
+      setLocalDataState((state) => ({ ...state, loading: false, summary, preview: null, notice: current.action === "unlink" ? "已解除关联，本地内容与版本仍保留。" : "本地清理已完成；Provider 原生会话未被修改。" }));
+    } catch (error) {
+      setLocalDataState((state) => ({ ...state, loading: false, error: error instanceof Error ? error.message : String(error) }));
+    }
+  };
+
+  const exportLocalData = async () => {
+    const current = localDataState;
+    setLocalDataState((state) => ({ ...state, loading: true, error: "", notice: "" }));
+    try {
+      const result = await runtimeRef.current.exportLocalData({ scope: current.scope, ...(current.scope === "task" ? { taskId: selectedTask.id } : {}), format: current.format, revisions: current.revisions, confirmedSensitiveContent: true });
+      setLocalDataState((state) => ({ ...state, loading: false, notice: result.saved ? `已导出 ${localDataSize(result.bytes || 0)} 本地数据。` : "已取消导出。" }));
+    } catch (error) {
+      setLocalDataState((state) => ({ ...state, loading: false, error: error instanceof Error ? error.message : String(error) }));
+    }
+  };
+
   const openContextHandoff = () => {
     const latestRun = selectedTask.runs?.at(-1);
     const messages = selectedTask.messages.slice(-20);
@@ -5517,6 +5765,79 @@ export function App() {
     }
   };
 
+  const saveNativeProvider = async (input) => {
+    const runtime = runtimeRef.current;
+    if (!runtime) throw new Error("Rux Runtime 尚未就绪");
+    setNativeProviderBusy(true);
+    setAuthError("");
+    try {
+      const saved = await runtime.saveProviderConnection(input);
+      setNativeConnections((items) => [...items.filter((item) => item.id !== saved.id), saved]);
+      setAdapters((items) => items.map((adapter) => adapter.id === "rux-native" ? { ...adapter, available: true, detail: "原生 Provider 已配置，无需 Agent CLI" } : adapter));
+      if (!agentProfiles.some((profile) => profile.providerConnection?.id === saved.id)) {
+        const profile = await runtime.createAgentProfile({
+          name: `Rux Native · ${saved.label}`,
+          description: "Rux 内置 Responses API coding agent，无需安装外部 Agent CLI",
+          backend: "rux-native",
+          providerConnection: { id: saved.id, kind: "rux-native", engine: "rux-native", label: saved.label },
+          model: saved.defaultModel,
+          modelSource: "manual",
+          modelVerificationStatus: "unverified",
+          instructions: "You are a coding agent working inside the active Rux workspace. Inspect relevant files before editing, keep changes scoped, explain important decisions, and use only the tools exposed by Rux.",
+          permissionMode: "acceptEdits",
+          skillIds: [],
+          toolIds: ["read_file", "list_files", "write_file"],
+          enabled: true,
+        });
+        setAgentProfiles((items) => [...items, profile]);
+      }
+      setAuthNotice(`已安全保存 ${saved.label}，并创建可直接使用的 Rux Native Agent。`);
+      return saved;
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : String(error));
+      throw error;
+    } finally {
+      setNativeProviderBusy(false);
+    }
+  };
+
+  const testNativeProvider = async (id) => {
+    const runtime = runtimeRef.current;
+    if (!runtime || nativeProviderBusy) return;
+    setNativeProviderBusy(true);
+    setAuthError("");
+    try {
+      const result = await runtime.testProviderConnection(id);
+      const refreshed = await runtime.listProviderConnections();
+      setNativeConnections(refreshed);
+      if (!result.ok) throw new Error(result.detail);
+      setAuthNotice(result.detail);
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setNativeProviderBusy(false);
+    }
+  };
+
+  const deleteNativeProvider = async (id) => {
+    const runtime = runtimeRef.current;
+    const connection = nativeConnections.find((item) => item.id === id);
+    if (!runtime || nativeProviderBusy || !connection || !window.confirm(`删除原生 Connection「${connection.label}」及其本地加密凭据？此操作不会撤销 Provider 侧 API Key。`)) return;
+    setNativeProviderBusy(true);
+    setAuthError("");
+    try {
+      await runtime.deleteProviderConnection(id);
+      const next = nativeConnections.filter((item) => item.id !== id);
+      setNativeConnections(next);
+      if (!next.length) setAdapters((items) => items.map((adapter) => adapter.id === "rux-native" ? { ...adapter, available: false, detail: "添加原生 Provider 后即可使用，无需安装 Agent CLI" } : adapter));
+      setAuthNotice(`已删除 ${connection.label} 的本地 Connection 和加密凭据；Provider 侧 Key 未被撤销。`);
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setNativeProviderBusy(false);
+    }
+  };
+
   const loginWithProvider = async (provider = "chatgpt") => {
     const runtime = runtimeRef.current;
     if (!runtime || authLoginProvider || authChecking) return;
@@ -5558,6 +5879,20 @@ export function App() {
   const closeAccounts = () => {
     if (authLoginProvider) void cancelLoginWithProvider(authLoginProvider);
     setAccountsOpen(false);
+  };
+
+  const useAgentForNewTask = (agentId) => {
+    const choice = agentChoices.find((item) => item.id === agentId && item.available);
+    if (!choice) return;
+    if (workspaceState.active.placeholder) {
+      setTaskActionError("请先打开项目，再使用 Agent 创建任务。");
+      closeAccounts();
+      void chooseWorkspace();
+      return;
+    }
+    setNewTaskAgentId(choice.id);
+    setAccountsOpen(false);
+    setNewTaskOpen(true);
   };
 
   const openSettings = () => {
@@ -5649,7 +5984,13 @@ export function App() {
         tasks={tasks}
         selectedTaskId={selectedTask.id}
         onSelectTask={selectWorkspaceTask}
-        onNewTask={() => workspaceState.active.placeholder ? void chooseWorkspace() : setNewTaskOpen(true)}
+        onNewTask={() => {
+          if (workspaceState.active.placeholder) void chooseWorkspace();
+          else {
+            setNewTaskAgentId("");
+            setNewTaskOpen(true);
+          }
+        }}
         searchQuery={searchQuery}
         onSearch={setSearchQuery}
         sidebarOpen={sidebarOpen}
@@ -5739,6 +6080,7 @@ export function App() {
             onRefreshSession={() => void refreshImportedSession()}
             onOpenSessionVersions={() => void loadSessionRevisions()}
             onOpenHandoff={openContextHandoff}
+            onOpenLocalData={() => void openLocalData("task")}
             sessionSyncBusy={sessionSyncState.loading}
             workspacePlaceholder={workspaceState.active.placeholder}
           />
@@ -5756,7 +6098,7 @@ export function App() {
             agentChoices={taskAgentChoices}
             codexModels={codexCatalog.models}
             codexCatalog={codexCatalog}
-            canRun={appReady && selectedTask.importedSession?.mode !== "view"}
+            canRun={appReady && selectedTask.importedSession?.mode !== "view" && selectedTask.importedSession?.status !== "unlinked"}
           />
         </section>
 
@@ -5800,6 +6142,7 @@ export function App() {
         onCreate={createTask}
         onOpenAccounts={openAccounts}
         agentChoices={agentChoices}
+        initialAgentId={newTaskAgentId}
         codexSettings={codexSettings}
         codexModels={codexCatalog.models}
         workspace={workspaceState.active}
@@ -5810,6 +6153,11 @@ export function App() {
         open={accountsOpen}
         state={authState}
         adapters={adapters}
+        agentChoices={agentChoices}
+        selectedAgentId={selectedTask.agentProfileId || runtimeAdapterForTask(selectedTask)}
+        canCreateTask={!workspaceState.active.placeholder}
+        nativeConnections={nativeConnections}
+        nativeBusy={nativeProviderBusy}
         checking={authChecking}
         loginProvider={authLoginProvider}
         error={authError}
@@ -5818,6 +6166,10 @@ export function App() {
         onDetect={() => void detectProviders()}
         onLogin={loginWithProvider}
         onCancelLogin={cancelLoginWithProvider}
+        onSaveNative={saveNativeProvider}
+        onTestNative={(id) => void testNativeProvider(id)}
+        onDeleteNative={(id) => void deleteNativeProvider(id)}
+        onUseAgent={useAgentForNewTask}
         onOpenSettings={openSettings}
       />
       <SessionDiscoveryDialog
@@ -5860,6 +6212,16 @@ export function App() {
         onCommit={() => void commitContextHandoff()}
         onClose={() => setHandoffState((state) => ({ ...state, open: false }))}
       />
+      <LocalDataDialog
+        state={localDataState}
+        task={selectedTask}
+        workspace={workspaceState.active}
+        onChange={(patch) => setLocalDataState((state) => ({ ...state, ...patch }))}
+        onPreview={() => void previewLocalData()}
+        onExecute={() => void executeLocalData()}
+        onExport={() => void exportLocalData()}
+        onClose={() => setLocalDataState((state) => ({ ...state, open: false }))}
+      />
       <CodexSettingsDialog
         open={settingsOpen}
         connected={codexConnected}
@@ -5869,11 +6231,13 @@ export function App() {
         onReload={() => void loadCodexModels()}
         onSave={saveCodexSettings}
         onOpenAccounts={openAccounts}
+        onOpenLocalData={() => void openLocalData("workspace")}
       />
       <AgentsDialog
         open={agentsOpen}
         profiles={agentProfiles}
         adapters={adapters}
+        nativeConnections={nativeConnections}
         busy={agentProfileBusy}
         error={agentProfileError}
         onClose={() => setAgentsOpen(false)}
