@@ -246,11 +246,18 @@ test("performs the initialize/thread/start/turn/start handshake and streams rich
     { text: "Ship", completed: false },
   ]);
   assert.deepEqual(collector.events.find((event) => event.type === "run.usage").usage, {
+    source: "engine",
+    scope: "task",
+    aggregation: "cumulative",
+    isEstimate: false,
     inputTokens: 10,
     cachedInputTokens: 3,
     outputTokens: 5,
     reasoningOutputTokens: 2,
+    totalTokens: 15,
+    reportedAt: collector.events.find((event) => event.type === "run.usage").usage.reportedAt,
   });
+  assert.match(collector.events.find((event) => event.type === "run.usage").usage.reportedAt, /^\d{4}-\d{2}-\d{2}T/);
   const verification = collector.events.find((event) => event.type === "verification.recorded").verification;
   assert.equal(verification.command, "npm test");
   assert.equal(verification.status, "passed");

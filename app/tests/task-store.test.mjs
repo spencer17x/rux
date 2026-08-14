@@ -383,7 +383,18 @@ test("persists Task, Message, Run, and event data across store reopen", async ()
 
   try {
     const writer = createTaskStore(databasePath);
-    writer.save(taskState("workspace-a"));
+    const state = taskState("workspace-a");
+    state.tasks[0].runs[0].modelDecision = {
+      id: "model-decision:run-1", runId: "run-1", mode: "fixed", classification: "fixed",
+      actualModel: "sonnet", modelSource: "manual", reasonCodes: ["user-selected"],
+      rationale: "The Task selected a fixed model.", allowlist: [], engine: "claude-code",
+      providerConnectionId: providerConnection.id, agentRevisionId: agentRevision.id, decidedAt: savedAt,
+    };
+    state.tasks[0].runs[0].tokenUsage = {
+      source: "engine", scope: "task", aggregation: "cumulative", isEstimate: false,
+      inputTokens: 12, cachedInputTokens: 3, outputTokens: 5, totalTokens: 17, reportedAt: savedAt,
+    };
+    writer.save(state);
     writer.close();
 
     const reader = createTaskStore(databasePath);
@@ -402,6 +413,8 @@ test("persists Task, Message, Run, and event data across store reopen", async ()
     assert.equal(loaded.tasks[0].runs[0].gitBaseline.id, "baseline-1");
     assert.equal(loaded.tasks[0].runs[0].gitPatch.files[0].path, "src/index.ts");
     assert.equal(loaded.tasks[0].runs[0].sessionLink.nativeSessionId, "claude-session-1");
+    assert.equal(loaded.tasks[0].runs[0].modelDecision.actualModel, "sonnet");
+    assert.equal(loaded.tasks[0].runs[0].tokenUsage.totalTokens, 17);
   } finally {
     await rm(temporaryRoot, { recursive: true, force: true });
   }
@@ -740,6 +753,16 @@ test("merges stale cross-client snapshots without dropping messages, run events,
       createdAt: desktopSnapshot.updatedAt,
     });
     desktopSnapshot.tasks[0].runs[0].updatedAt = desktopSnapshot.updatedAt;
+    desktopSnapshot.tasks[0].runs[0].modelDecision = {
+      id: "model-decision:run-1", runId: "run-1", mode: "fixed", classification: "fixed",
+      actualModel: "sonnet", modelSource: "manual", reasonCodes: ["user-selected"],
+      rationale: "The Task selected a fixed model.", allowlist: [], engine: "claude-code",
+      providerConnectionId: providerConnection.id, agentRevisionId: agentRevision.id, decidedAt: desktopSnapshot.updatedAt,
+    };
+    desktopSnapshot.tasks[0].runs[0].tokenUsage = {
+      source: "engine", scope: "task", aggregation: "cumulative", isEstimate: false,
+      inputTokens: 20, outputTokens: 8, totalTokens: 28, reportedAt: desktopSnapshot.updatedAt,
+    };
     desktopSnapshot.tasks[0].runs[0].events.push({
       id: "run-1:2",
       sequence: 2,
@@ -831,9 +854,17 @@ test("merges stale cross-client snapshots without dropping messages, run events,
     assert.equal(loaded.tasks[0].runs[0].contextSnapshot.instructions[0].path, "AGENTS.md");
     assert.equal(loaded.tasks[0].runs[0].gitBaseline.id, "baseline-1");
     assert.equal(loaded.tasks[0].runs[0].gitPatch.id, "patch-1");
+    assert.equal(loaded.tasks[0].runs[0].modelDecision.actualModel, "sonnet");
+    assert.equal(loaded.tasks[0].runs[0].tokenUsage.totalTokens, 28);
 
     tuiStore.save(tuiSnapshot);
     assert.equal(desktopStore.load("workspace-a").tasks[0].runs[0].events.length, 3);
+    const conflicting = structuredClone(desktopStore.load("workspace-a"));
+    conflicting.updatedAt = "2026-08-10T10:03:00.000Z";
+    conflicting.tasks[0].updatedAtIso = conflicting.updatedAt;
+    conflicting.tasks[0].runs[0].updatedAt = conflicting.updatedAt;
+    conflicting.tasks[0].runs[0].modelDecision.rationale = "A client attempted to rewrite immutable routing evidence.";
+    assert.throws(() => tuiStore.save(conflicting), /Model Decision is immutable/);
   } finally {
     desktopStore.close();
     tuiStore.close();

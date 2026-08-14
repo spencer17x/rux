@@ -60,6 +60,7 @@ let threadId = `thread-${scenario}`;
 let turnId = `turn-${scenario}`;
 let runtimeSequence = 0;
 let pendingApproval;
+let modelCatalogCycles = 0;
 let completed = false;
 
 function record(value) {
@@ -434,7 +435,9 @@ lines.on("line", (line) => {
   }
   if (message.method === "initialized") return;
   if (message.method === "model/list") {
+    if (!message.params?.cursor) modelCatalogCycles += 1;
     const secondPage = message.params?.cursor === "models-page-2";
+    const dropDefaultModel = process.env.RUX_FAKE_CODEX_DROP_DEFAULT_AFTER_CATALOG === "1" && modelCatalogCycles >= 4;
     const model = secondPage
       ? {
           id: "fake-fast",
@@ -451,7 +454,18 @@ lines.on("line", (line) => {
           supportsPersonality: false,
           isDefault: false,
         }
-      : {
+      : dropDefaultModel ? {
+          id: "fake-replacement",
+          model: "fake-replacement",
+          displayName: "Fake Replacement",
+          description: "Replacement after a catalog removal.",
+          hidden: false,
+          supportedReasoningEfforts: [{ reasoningEffort: "medium", description: "Balanced" }],
+          defaultReasoningEffort: "medium",
+          inputModalities: ["text"],
+          supportsPersonality: false,
+          isDefault: true,
+        } : {
           id: "fake-model",
           model: "fake-model",
           displayName: "Fake Model",

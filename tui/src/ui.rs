@@ -224,13 +224,30 @@ fn transcript_lines(app: &App) -> Vec<Line<'static>> {
                 )));
                 push_text(&mut lines, text, TEXT);
             }
-            TranscriptEntry::Assistant { text, .. } => {
+            TranscriptEntry::Assistant {
+                text,
+                model,
+                classification,
+                total_tokens,
+                ..
+            } => {
+                let evidence = format!(
+                    " · {}{} · {}",
+                    model.as_deref().unwrap_or("model not reported"),
+                    classification
+                        .as_deref()
+                        .map_or_else(String::new, |value| format!(" · Auto {value}")),
+                    total_tokens.map_or_else(
+                        || "tokens not reported".into(),
+                        |value| format!("{value} tokens")
+                    ),
+                );
                 lines.push(Line::from(vec![
                     Span::styled(
                         "AGENT",
                         Style::default().fg(GREEN).add_modifier(Modifier::BOLD),
                     ),
-                    Span::styled(" · streamed event", Style::default().fg(MUTED)),
+                    Span::styled(evidence, Style::default().fg(MUTED)),
                 ]));
                 push_text(&mut lines, text, TEXT);
             }
@@ -930,6 +947,9 @@ mod tests {
         app.entries.push(TranscriptEntry::Assistant {
             run_id: "run-1".into(),
             text: "Inspecting the failure".into(),
+            model: Some("gpt-test".into()),
+            classification: Some("simple".into()),
+            total_tokens: Some(12),
         });
         app.run_state = RunState::Running {
             run_id: "run-1".into(),
@@ -937,6 +957,7 @@ mod tests {
         let text = buffer_text(&app, 100, 30);
         assert!(text.contains("SCROLLBACK"));
         assert!(text.contains("Fix the tests"));
+        assert!(text.contains("gpt-test · Auto simple · 12 tokens"));
         assert!(text.contains("MESSAGE · FOCUSED"));
         assert!(text.contains("Ctrl+C cancel"));
         assert!(text.contains("RUNNING"));

@@ -226,6 +226,8 @@ flowchart LR
 
 实现状态（2026-08-13）：P1-E5 已完成。设置页和导入 Task 均可打开 Workspace 本地数据页，查看估算占用、Task、导入 Task、Projection Revision 与 Handoff 数量。解除关联、删除导入内容和删除 Task/Workspace Tasks 使用不同范围，并在执行前展示影响、预计释放空间和不会被修改的 Native Session；Main 在事务中复核预览指纹。Markdown/JSON 导出支持 Task/Workspace 和当前/全部 Revision，使用原生保存对话框，排除结构化凭据字段并在写入前提示潜在敏感内容。删除后只承诺可从仍存在的原生会话重新导入，不承诺恢复本地数据。
 
+P1 发布状态（2026-08-14）：P1-E6 已在同一隔离打包应用中完成发现、预览、导入并继续、刷新版本、Context Handoff、重启恢复和本地数据影响预览。验收修复了 `解除关联` 错误暗示会删除本地内容的问题；现在 unlink 明确保留 Task、消息和投影版本，而删除导入内容与删除 Task 分别显示自己的不可恢复边界。完整证据见 `design-audit/p1-release-candidate/`。
+
 ### 5.15 嵌套 Workspace 采用最具体归属
 
 - 会话归属判断必须在 Main/Runtime 的授权边界内完成，Renderer 不直接解析或探测本地路径。
@@ -270,7 +272,7 @@ flowchart LR
 
 ### 5.18 Auto 模型路由与 Token 证据（P2）
 
-实现状态：需求已确认，尚未实现。该能力不依赖 RUX 原生 API Provider，可以先基于现有 Codex/Claude Code Engine 与非敏感 Connection 落地。
+实现状态（2026-08-14）：P2-E0 已实现并完成隔离打包桌面验收。能力同时覆盖 Codex/Claude Code Engine 合同与 Rux Native；不依赖用户安装任一 Agent CLI。
 
 - Composer 增加 `Auto` 模式，与“固定模型”和“Engine 默认”并列。Auto 只负责为当前 Run 选择模型，不改变 Agent、Engine、Provider Connection、权限或 Workspace。
 - 第一版只分“简单任务”和“复杂任务”两级。默认使用可解释的确定性信号，例如用户意图、上下文规模、文件/工具需求、跨文件范围、失败记录和是否需要多步骤计划；不额外调用模型做分类。
@@ -637,7 +639,7 @@ P0 实现状态（2026-08-12）：Desktop 本地 Release Candidate 已通过隔�
 | 账户界面 | 已采用无 RUX 账号前置的“Agent 与 Provider”语义，管理 Rux Native、Codex 与 Claude Code | 后续扩展更多原生协议和 Connection 编辑体验 |
 | 登录状态同步 | 已提供用户显式触发的统一检测；启动和打开面板均不自动读取状态 | 保持用户主动与 CLI 凭据边界 |
 | 模型目录 | Codex 已有结构化模型目录基础；其他 Engine 和自定义配置能力不一致 | 增加 Engine 优先目录、手动输入、运行验证和来源状态 |
-| Auto 模型路由 | 尚未实现；当前 Task/Run 使用用户选择或 Engine 默认模型 | P2 增加 Revision-owned Policy、Run Model Decision、同 Connection 白名单与逐 Run Token 证据 |
+| Auto 模型路由 | 已实现 Revision-owned Policy、确定性简单/复杂分类、同 Connection 白名单、显式回退、Run Model Decision 与逐 Turn Token 证据 | 后续若引入模型型路由器，必须独立记录其用量与来源 |
 | RUX 原生 API Provider | P2-E1 首版已实现；无需外部 Agent CLI，可配置 Responses-compatible Base URL、模型和 API Key | 后续增加命令沙箱、流式输出、目录/能力协商、更多协议与凭据影响预览 |
 | 自定义 Agent | 已有不可变 Revision、Task/Run 固定、版本提示与“使用新版创建新任务”分支 | P1 增加可预览确认的跨 Agent Context Handoff |
 | Context Handoff | 已实现确定性事实包、来源 Agent 隔离摘要、可编辑预览、确认事务和双向来源追踪 | P1-E4 已完成；后续仅做体验优化 |

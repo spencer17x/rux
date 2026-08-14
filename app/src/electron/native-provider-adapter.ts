@@ -48,11 +48,25 @@ function usageFromResponse(response: JsonRecord) {
   const usage = isRecord(response.usage) ? response.usage : {};
   const inputDetails = isRecord(usage.input_tokens_details) ? usage.input_tokens_details : {};
   const outputDetails = isRecord(usage.output_tokens_details) ? usage.output_tokens_details : {};
+  const inputTokens = typeof usage.input_tokens === "number" ? usage.input_tokens : undefined;
+  const cachedInputTokens = typeof inputDetails.cached_tokens === "number" ? inputDetails.cached_tokens : undefined;
+  const outputTokens = typeof usage.output_tokens === "number" ? usage.output_tokens : undefined;
+  const reasoningOutputTokens = typeof outputDetails.reasoning_tokens === "number" ? outputDetails.reasoning_tokens : undefined;
+  const totalTokens = typeof usage.total_tokens === "number"
+    ? usage.total_tokens
+    : inputTokens !== undefined && outputTokens !== undefined ? inputTokens + outputTokens : undefined;
+  if ([inputTokens, cachedInputTokens, outputTokens, reasoningOutputTokens, totalTokens].every((value) => value === undefined)) return undefined;
   return {
-    inputTokens: typeof usage.input_tokens === "number" ? usage.input_tokens : 0,
-    cachedInputTokens: typeof inputDetails.cached_tokens === "number" ? inputDetails.cached_tokens : 0,
-    outputTokens: typeof usage.output_tokens === "number" ? usage.output_tokens : 0,
-    reasoningOutputTokens: typeof outputDetails.reasoning_tokens === "number" ? outputDetails.reasoning_tokens : 0,
+    source: "provider" as const,
+    scope: "task" as const,
+    aggregation: "incremental" as const,
+    isEstimate: false,
+    ...(inputTokens === undefined ? {} : { inputTokens }),
+    ...(cachedInputTokens === undefined ? {} : { cachedInputTokens }),
+    ...(outputTokens === undefined ? {} : { outputTokens }),
+    ...(reasoningOutputTokens === undefined ? {} : { reasoningOutputTokens }),
+    ...(totalTokens === undefined ? {} : { totalTokens }),
+    reportedAt: new Date().toISOString(),
   };
 }
 
@@ -181,7 +195,7 @@ export class NativeProviderAdapter {
           this.emit({ type: "run.metadata", runId: params.runId, sessionId: responseId, model });
         }
         const usage = usageFromResponse(payload);
-        this.emit({ type: "run.usage", runId: params.runId, usage });
+        if (usage) this.emit({ type: "run.usage", runId: params.runId, usage });
         const output = Array.isArray(payload.output) ? payload.output.filter(isRecord) as ResponseOutput[] : [];
         const calls = output.filter((item) => item.type === "function_call" && item.call_id && item.name);
         const text = extractText(output);

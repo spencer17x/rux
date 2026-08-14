@@ -1142,14 +1142,27 @@ export class CodexAppServerAdapter {
     if (method === "thread/tokenUsage/updated") {
       const tokenUsage = isRecord(params.tokenUsage) ? params.tokenUsage : {};
       const total = isRecord(tokenUsage.total) ? tokenUsage.total : {};
+      const inputTokens = numberValue(total.inputTokens);
+      const cachedInputTokens = numberValue(total.cachedInputTokens);
+      const outputTokens = numberValue(total.outputTokens);
+      const reasoningOutputTokens = numberValue(total.reasoningOutputTokens);
+      const totalTokens = numberValue(total.totalTokens)
+        ?? (inputTokens !== undefined && outputTokens !== undefined ? inputTokens + outputTokens : undefined);
+      if ([inputTokens, cachedInputTokens, outputTokens, reasoningOutputTokens, totalTokens].every((value) => value === undefined)) return;
       this.emit({
         type: "run.usage",
         runId: run.params.runId,
         usage: {
-          inputTokens: numberValue(total.inputTokens) ?? 0,
-          cachedInputTokens: numberValue(total.cachedInputTokens) ?? 0,
-          outputTokens: numberValue(total.outputTokens) ?? 0,
-          reasoningOutputTokens: numberValue(total.reasoningOutputTokens) ?? 0,
+          source: "engine",
+          scope: "task",
+          aggregation: "cumulative",
+          isEstimate: false,
+          ...(inputTokens === undefined ? {} : { inputTokens }),
+          ...(cachedInputTokens === undefined ? {} : { cachedInputTokens }),
+          ...(outputTokens === undefined ? {} : { outputTokens }),
+          ...(reasoningOutputTokens === undefined ? {} : { reasoningOutputTokens }),
+          ...(totalTokens === undefined ? {} : { totalTokens }),
+          reportedAt: new Date().toISOString(),
         },
       });
       return;

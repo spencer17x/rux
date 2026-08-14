@@ -511,6 +511,14 @@ function mergeRunEvents(
 
 function mergeRun(current: PersistedRun, incoming: PersistedRun): PersistedRun {
   const base = newest(current, incoming, (run) => run.updatedAt);
+  if (current.modelDecision && incoming.modelDecision
+    && JSON.stringify(current.modelDecision) !== JSON.stringify(incoming.modelDecision)) {
+    throw new Error(`Run ${current.id} Model Decision is immutable`);
+  }
+  const modelDecision = current.modelDecision ?? incoming.modelDecision;
+  const tokenUsage = current.tokenUsage && incoming.tokenUsage
+    ? newest(current.tokenUsage, incoming.tokenUsage, (usage) => usage.reportedAt)
+    : current.tokenUsage ?? incoming.tokenUsage;
   const gitPatch = base.gitPatch ?? current.gitPatch ?? incoming.gitPatch;
   const preferredBaseline = base.gitBaseline ?? current.gitBaseline ?? incoming.gitBaseline;
   const gitBaseline = gitPatch
@@ -552,6 +560,8 @@ function mergeRun(current: PersistedRun, incoming: PersistedRun): PersistedRun {
     ...(base.contextSnapshot ?? current.contextSnapshot ?? incoming.contextSnapshot
       ? { contextSnapshot: base.contextSnapshot ?? current.contextSnapshot ?? incoming.contextSnapshot }
       : {}),
+    ...(modelDecision ? { modelDecision } : {}),
+    ...(tokenUsage ? { tokenUsage } : {}),
     ...(gitBaseline ? { gitBaseline } : {}),
     ...(gitPatch ? { gitPatch } : {}),
     contextFiles: base.contextFiles ?? current.contextFiles ?? incoming.contextFiles ?? [],

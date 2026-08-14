@@ -176,6 +176,9 @@ pub enum TranscriptEntry {
     Assistant {
         run_id: String,
         text: String,
+        model: Option<String>,
+        classification: Option<String>,
+        total_tokens: Option<u64>,
     },
     Activity {
         run_id: String,
@@ -186,6 +189,13 @@ pub enum TranscriptEntry {
     },
     System(String),
     Error(String),
+}
+
+#[derive(Clone, Debug, Default)]
+struct RunTurnEvidence {
+    model: Option<String>,
+    classification: Option<String>,
+    total_tokens: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -409,6 +419,7 @@ pub struct App {
     next_request_number: u64,
     pending_requests: BTreeMap<String, String>,
     profile_revisions: BTreeMap<String, ProfileRevisionRef>,
+    run_evidence: BTreeMap<String, RunTurnEvidence>,
     persistence: TaskPersistence,
     changes_snapshot_id: Option<String>,
     changed_paths: Vec<String>,
@@ -455,6 +466,7 @@ impl App {
             next_request_number: 1,
             pending_requests: BTreeMap::new(),
             profile_revisions: BTreeMap::new(),
+            run_evidence: BTreeMap::new(),
             persistence,
             changes_snapshot_id: None,
             changed_paths: Vec::new(),
@@ -714,9 +726,7 @@ impl App {
                 Value::String(self.run_configuration.permission_mode.clone()),
             ),
         ]);
-        if let Some(model) = &self.run_configuration.model {
-            params.insert("model".into(), Value::String(model.clone()));
-        }
+        self.append_model_params(&mut params);
         if let Some(profile_id) = &self.run_configuration.profile_id {
             params.insert("profileId".into(), Value::String(profile_id.clone()));
         }
@@ -824,6 +834,27 @@ impl App {
             self.run_configuration.model_verification_status = "not-required".into();
         }
         self.status_hint = format!("Next run: {}", self.run_configuration.summary());
+    }
+
+    fn append_model_params(&self, params: &mut serde_json::Map<String, Value>) {
+        params.insert(
+            "modelSource".into(),
+            Value::String(self.run_configuration.model_source.clone()),
+        );
+        params.insert(
+            "modelVerificationStatus".into(),
+            Value::String(self.run_configuration.model_verification_status.clone()),
+        );
+        let Some(model) = &self.run_configuration.model else {
+            params.insert("modelMode".into(), Value::String("fixed".into()));
+            return;
+        };
+        if model.eq_ignore_ascii_case("auto") {
+            params.insert("modelMode".into(), Value::String("auto".into()));
+        } else {
+            params.insert("modelMode".into(), Value::String("fixed".into()));
+            params.insert("model".into(), Value::String(model.clone()));
+        }
     }
 
     fn configure_agent(&mut self, arguments: &str) -> Vec<Effect> {
@@ -1777,6 +1808,7 @@ impl App {
             evidence,
             pending_permission,
         } = task;
+        self.run_evidence.clear();
         self.entries = messages
             .into_iter()
             .filter_map(|(role, text)| match role.as_str() {
@@ -1784,6 +1816,9 @@ impl App {
                 "assistant" => Some(TranscriptEntry::Assistant {
                     run_id: "persisted".into(),
                     text,
+                    model: None,
+                    classification: None,
+                    total_tokens: None,
                 }),
                 _ => None,
             })
@@ -1875,6 +1910,7 @@ impl App {
                 }
             }
             "run.metadata" => self.apply_run_metadata(event),
+            "run.model-decision" => self.apply_model_decision(event),
             "run.context-snapshot" => self.apply_context_snapshot(event),
             "run.git-baseline" => self.apply_git_baseline(event),
             "run.git-patch" => self.apply_git_patch(event),
@@ -1941,16 +1977,48 @@ impl App {
         if let Some(TranscriptEntry::Assistant {
             run_id: last_run_id,
             text: current,
+            ..
         }) = self.entries.last_mut()
             && last_run_id == run_id
         {
             current.push_str(text);
         } else {
+            let evidence = self.run_evidence.get(run_id).cloned().unwrap_or_default();
             self.entries.push(TranscriptEntry::Assistant {
                 run_id: run_id.into(),
                 text: text.into(),
+                model: evidence.model,
+                classification: evidence.classification,
+                total_tokens: evidence.total_tokens,
             });
         }
+    }
+
+    fn apply_model_decision(&mut self, event: &RuntimeEvent) {
+        let (Some(run_id), Some(decision)) = (event.string("runId"), event.object("decision"))
+        else {
+            return;
+        };
+        let model = decision
+            .get("actualModel")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        let classification = decision
+            .get("classification")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        let current_tokens = self
+            .run_evidence
+            .get(run_id)
+            .and_then(|value| value.total_tokens);
+        self.run_evidence.insert(
+            run_id.into(),
+            RunTurnEvidence {
+                model,
+                classification,
+                total_tokens: current_tokens,
+            },
+        );
     }
 
     fn clear_terminal_permission(&mut self) {
@@ -2116,17 +2184,33 @@ impl App {
     }
 
     fn apply_usage(&mut self, event: &RuntimeEvent) {
-        if let Some(usage) = event.object("usage") {
-            let input = usage
-                .get("inputTokens")
-                .and_then(Value::as_u64)
-                .unwrap_or(0);
-            let output = usage
-                .get("outputTokens")
-                .and_then(Value::as_u64)
-                .unwrap_or(0);
-            self.status_hint = format!("Usage · {input} input / {output} output tokens");
+        let (Some(run_id), Some(usage)) = (event.string("runId"), event.object("usage")) else {
+            return;
+        };
+        let input = usage.get("inputTokens").and_then(Value::as_u64);
+        let output = usage.get("outputTokens").and_then(Value::as_u64);
+        let total = usage
+            .get("totalTokens")
+            .and_then(Value::as_u64)
+            .or_else(|| input.zip(output).map(|(left, right)| left + right));
+        let mut evidence = self.run_evidence.get(run_id).cloned().unwrap_or_default();
+        evidence.total_tokens = total;
+        self.run_evidence.insert(run_id.into(), evidence);
+        for entry in &mut self.entries {
+            if let TranscriptEntry::Assistant {
+                run_id: entry_run_id,
+                total_tokens,
+                ..
+            } = entry
+                && entry_run_id == run_id
+            {
+                *total_tokens = total;
+            }
         }
+        self.status_hint = total.map_or_else(
+            || "Usage · Engine did not report a total".into(),
+            |value| format!("Usage · {value} total tokens"),
+        );
     }
 
     fn apply_run_log(&mut self, event: &RuntimeEvent) {
@@ -2688,6 +2772,7 @@ mod tests {
         assert_eq!(request.method, "run.start");
         assert_eq!(request.params["adapter"], "claude-code");
         assert_eq!(request.params["model"], "opus");
+        assert_eq!(request.params["modelMode"], "fixed");
         assert_eq!(request.params["permissionMode"], "plan");
         assert_eq!(request.params["profileId"], "custom-reviewer");
         assert_eq!(
@@ -2830,5 +2915,50 @@ mod tests {
                     && request.params["confirmed"] == true
                     && request.params["expectedSnapshotId"] == snapshot_id
         )));
+    }
+
+    #[test]
+    fn model_decision_and_usage_are_attached_to_the_assistant_turn() {
+        let mut app = App::new(
+            PathBuf::from("/workspace"),
+            RuntimeDescriptor::process("runtime-host"),
+            FileIndex::default(),
+        );
+        let event = |event_type: &str, fields: Value| {
+            RuntimeEvent::new(
+                event_type,
+                fields
+                    .as_object()
+                    .unwrap()
+                    .iter()
+                    .map(|(key, value)| (key.clone(), value.clone()))
+                    .collect(),
+            )
+        };
+        app.apply_event(&event(
+            "run.model-decision",
+            json!({
+                "runId": "run-auto",
+                "decision": {"actualModel": "gpt-complex", "classification": "complex"}
+            }),
+        ));
+        app.apply_event(&event(
+            "assistant.message",
+            json!({
+                "runId": "run-auto", "text": "Implemented the migration."
+            }),
+        ));
+        app.apply_event(&event(
+            "run.usage",
+            json!({
+                "runId": "run-auto",
+                "usage": {"source": "engine", "totalTokens": 42}
+            }),
+        ));
+        assert!(matches!(
+            app.entries.last(),
+            Some(TranscriptEntry::Assistant { model: Some(model), classification: Some(classification), total_tokens: Some(42), .. })
+                if model == "gpt-complex" && classification == "complex"
+        ));
     }
 }

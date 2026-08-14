@@ -74,6 +74,7 @@ test("standalone JSONL Runtime runs Codex and custom Agent profiles over stdio",
       RUX_FAKE_CODEX_SCENARIO: "runtime-echo",
       RUX_FAKE_CODEX_AUTH_METHOD: "api-key",
       RUX_FAKE_CODEX_REQUIRE_CUSTOM_PROVIDER: "1",
+      RUX_FAKE_CODEX_DROP_DEFAULT_AFTER_CATALOG: "1",
       OPENAI_BASE_URL: "https://provider.example.invalid/v1",
       OPENAI_API_KEY: "sk-proj-rux-fixture-secret-123456",
     },
@@ -289,6 +290,18 @@ test("standalone JSONL Runtime runs Codex and custom Agent profiles over stdio",
       name: "Review Agent",
       backend: "codex",
       model: "fake-model",
+      modelSource: "engine-catalog",
+      modelVerificationStatus: "not-required",
+      autoModelPolicy: {
+        simpleModel: { model: "fake-model", source: "engine-catalog" },
+        complexModel: { model: "fake-fast", source: "engine-catalog" },
+        strategy: "balanced",
+        fallbackEnabled: true,
+        allowlist: [
+          { model: "fake-model", source: "engine-catalog" },
+          { model: "fake-fast", source: "engine-catalog" },
+        ],
+      },
       reasoningEffort: "high",
       instructions: "Always review the evidence first.",
       permissionMode: "plan",
@@ -298,6 +311,28 @@ test("standalone JSONL Runtime runs Codex and custom Agent profiles over stdio",
     message.kind === "response" && message.id === "profile-create");
   assert.equal(created.ok, true);
   assert.equal(created.result.providerConnection.id, "cli:codex:default");
+
+  child.stdin.write(`${JSON.stringify({
+    kind: "request",
+    id: "profile-create-unverified-auto",
+    method: "agent.profile.create",
+    params: {
+      name: "Invalid Auto Agent",
+      backend: "codex",
+      instructions: "This save must fail closed.",
+      autoModelPolicy: {
+        simpleModel: { model: "unverified-manual", source: "verified-history" },
+        complexModel: { model: "unverified-manual", source: "verified-history" },
+        strategy: "balanced",
+        fallbackEnabled: true,
+        allowlist: [{ model: "unverified-manual", source: "verified-history" }],
+      },
+    },
+  })}\n`);
+  const unverifiedAuto = await waitFor(messages, (message) =>
+    message.kind === "response" && message.id === "profile-create-unverified-auto");
+  assert.equal(unverifiedAuto.ok, false);
+  assert.match(unverifiedAuto.error.message, /verified Connection history/);
 
   child.stdin.write(`${JSON.stringify({
     kind: "request",
@@ -335,6 +370,7 @@ test("standalone JSONL Runtime runs Codex and custom Agent profiles over stdio",
       runId: "stdio-run",
       adapter: "codex",
       prompt: "Only report the result.",
+      modelMode: "auto",
       permissionMode: "plan",
       profileId: created.result.id,
       agentRevisionId: created.result.latestRevisionId,
@@ -351,10 +387,21 @@ test("standalone JSONL Runtime runs Codex and custom Agent profiles over stdio",
     message.kind === "event" && message.event.type === "run.started" && message.event.runId === "stdio-run");
   assert.equal(started.event.adapter, "codex");
   assert.equal(started.event.permissionMode, "plan");
-  assert.equal(started.event.model, "fake-model");
+  assert.equal(started.event.model, "fake-fast");
   assert.equal(started.event.reasoningEffort, "high");
   assert.equal(started.event.profileId, created.result.id);
   assert.equal(started.event.agentRevisionId, created.result.latestRevisionId);
+  const decision = messages.find((message) =>
+    message.kind === "event" && message.event.type === "run.model-decision" && message.event.runId === "stdio-run");
+  assert.equal(decision.event.decision.mode, "auto");
+  assert.equal(decision.event.decision.classification, "simple");
+  assert.equal(decision.event.decision.actualModel, "fake-fast");
+  assert.deepEqual(decision.event.decision.allowlist, ["fake-model", "fake-fast"]);
+  assert.deepEqual(decision.event.decision.fallback, {
+    fromModel: "fake-model",
+    toModel: "fake-fast",
+    reason: "原选择模型已不在当前 Engine 目录或 Connection 验证历史中",
+  });
   const agentSnapshot = messages.find((message) =>
     message.kind === "event"
       && message.event.type === "run.agent-snapshot"

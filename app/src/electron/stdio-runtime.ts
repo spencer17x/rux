@@ -47,6 +47,7 @@ import {
   permissionDecideParamsSchema,
   runCancelParamsSchema,
   runStartParamsSchema,
+  runModelDecisionSchema,
   sessionCancelParamsSchema,
   sessionDiscoverParamsSchema,
   sessionPreviewParamsSchema,
@@ -66,11 +67,14 @@ import {
   type AgentRevision,
   type ContextSnapshot,
   type RunStartParams,
+  type RunModelDecision,
+  defaultProviderConnectionForAdapter,
 } from "../shared/protocol";
 import { createContextSnapshot, contextSnapshotPrompt } from "./context-snapshot.ts";
 import { RunPermissionGate, type PendingPermissionRun } from "./permission-gate.ts";
 import { awaitAllCleanup } from "./child-process-lifecycle.ts";
 import { generateIsolatedHandoffSummary } from "./handoff-summary.ts";
+import { selectAutoModel } from "../auto-model-routing.ts";
 
 const startedAt = new Date().toISOString();
 const configuredRoot = resolve(process.env.RUX_WORKSPACE_ROOT ?? process.cwd());
@@ -235,7 +239,61 @@ type PreparedRun = {
   params: RunStartParams;
   context: ContextSnapshot;
   profile?: AgentRevision;
+  modelDecision: RunModelDecision;
 };
+
+function verifiedModelsForConnection(adapter: RunStartParams["adapter"], providerConnectionId: string): Set<string> {
+  const verified = new Set<string>();
+  for (const task of taskStore.load(workspaceId).tasks) {
+    for (const run of task.runs) {
+      if (run.adapter === adapter && run.providerConnection.id === providerConnectionId && run.status === "completed" && run.model
+        && (run.modelVerificationStatus === "verified" || run.modelSource === "verified-history")) verified.add(run.model);
+    }
+  }
+  return verified;
+}
+
+async function availableAutoModels(profile: Pick<AgentRevision, "backend" | "providerConnection" | "autoModelPolicy">): Promise<Set<string>> {
+  const verified = verifiedModelsForConnection(profile.backend, profile.providerConnection.id);
+  let catalog = new Set<string>();
+  if (profile.backend === "codex" && profile.autoModelPolicy?.allowlist.some((candidate) => candidate.source === "engine-catalog")) {
+    let cursor: string | null | undefined;
+    for (let page = 0; page < 10; page += 1) {
+      const result = await codex.listModels({ adapter: "codex", limit: 100, includeHidden: false, ...(cursor ? { cursor } : {}) });
+      result.models.forEach((model) => { catalog.add(model.id); catalog.add(model.model); });
+      cursor = result.nextCursor;
+      if (!cursor) break;
+    }
+  }
+  return new Set((profile.autoModelPolicy?.allowlist ?? []).filter((candidate) => (
+    candidate.source === "engine-catalog" ? catalog.has(candidate.model) : verified.has(candidate.model)
+  )).map((candidate) => candidate.model));
+}
+
+async function validateAutoPolicy(profile: Pick<AgentRevision, "backend" | "providerConnection" | "autoModelPolicy">): Promise<void> {
+  if (!profile.autoModelPolicy) return;
+  const available = await availableAutoModels(profile);
+  const invalid = profile.autoModelPolicy.allowlist.filter((candidate) => !available.has(candidate.model));
+  if (invalid.length) throw new Error(`Auto model ${invalid.map((candidate) => candidate.model).join(", ")} is not in the current Engine catalog or verified Connection history`);
+}
+
+function modelDecision(params: RunStartParams, profile?: AgentRevision): RunModelDecision {
+  return runModelDecisionSchema.parse({
+    id: `model-decision:${params.runId}`,
+    runId: params.runId,
+    mode: "fixed",
+    classification: "fixed",
+    actualModel: params.model ?? profile?.model ?? "engine-default",
+    modelSource: params.modelSource ?? profile?.modelSource ?? (params.model ? "manual" : "engine-default"),
+    reasonCodes: ["user-selected"],
+    rationale: "This Run uses its fixed Task model or the Engine default.",
+    allowlist: [],
+    engine: params.adapter,
+    providerConnectionId: params.providerConnectionId ?? profile?.providerConnection.id ?? `cli:${params.adapter}:default`,
+    agentRevisionId: params.agentRevisionId,
+    decidedAt: new Date().toISOString(),
+  });
+}
 
 async function prepareRun(params: ReturnType<typeof runStartParamsSchema.parse>): Promise<PreparedRun> {
   if (params.adapter === "mock") {
@@ -243,6 +301,7 @@ async function prepareRun(params: ReturnType<typeof runStartParamsSchema.parse>)
   }
   let effectiveParams: RunStartParams = params;
   let profileSnapshot: AgentRevision | undefined;
+  let decision: RunModelDecision | undefined;
   const runContextSnapshot = await contextSnapshot({ selectedFiles: params.contextFiles });
   const promptSections: string[] = [];
   if (params.profileId) {
@@ -255,17 +314,54 @@ async function prepareRun(params: ReturnType<typeof runStartParamsSchema.parse>)
     }
     profileSnapshot = profile;
     promptSections.push(`Custom Agent instructions:\n${profile.instructions}`);
+    if (params.modelMode === "auto") {
+      if (!profile.autoModelPolicy) throw new Error("This Agent Revision has no Auto Model Policy");
+      const available = await availableAutoModels(profile);
+      const selection = selectAutoModel(profile.autoModelPolicy, params.prompt);
+      let actualModel = selection.model;
+      let fallback;
+      if (!available.has(actualModel)) {
+        const alternate = selection.classification === "complex" ? profile.autoModelPolicy.simpleModel.model : profile.autoModelPolicy.complexModel.model;
+        if (!profile.autoModelPolicy.fallbackEnabled || alternate === actualModel || !available.has(alternate)) {
+          throw new Error(`Auto selected model ${actualModel} is no longer available; update the Agent Revision`);
+        }
+        fallback = { fromModel: actualModel, toModel: alternate, reason: "原选择模型已不在当前 Engine 目录或 Connection 验证历史中" };
+        actualModel = alternate;
+      }
+      decision = runModelDecisionSchema.parse({
+        id: `model-decision:${params.runId}`,
+        runId: params.runId,
+        mode: "auto",
+        classification: selection.classification,
+        actualModel,
+        modelSource: profile.autoModelPolicy.allowlist.find((candidate) => candidate.model === actualModel)?.source ?? "verified-history",
+        strategy: profile.autoModelPolicy.strategy,
+        score: selection.score,
+        threshold: selection.threshold,
+        reasonCodes: selection.reasonCodes,
+        rationale: selection.rationale,
+        allowlist: profile.autoModelPolicy.allowlist.map((candidate) => candidate.model),
+        engine: params.adapter,
+        providerConnectionId: profile.providerConnection.id,
+        agentRevisionId: profile.id,
+        ...(fallback ? { fallback } : {}),
+        decidedAt: new Date().toISOString(),
+      });
+      effectiveParams = { ...effectiveParams, model: actualModel, modelMode: "auto" };
+    }
     effectiveParams = {
-      ...params,
-      model: params.model ?? profile.model,
+      ...effectiveParams,
+      model: effectiveParams.model ?? profile.model,
       reasoningEffort: params.reasoningEffort ?? profile.reasoningEffort,
     };
   }
   promptSections.push(contextSnapshotPrompt(runContextSnapshot));
   promptSections.push(`User request:\n${params.prompt}`);
+  decision ??= modelDecision(effectiveParams, profileSnapshot);
   return {
     params: { ...effectiveParams, prompt: promptSections.join("\n\n") },
     context: runContextSnapshot,
+    modelDecision: decision,
     ...(profileSnapshot ? { profile: profileSnapshot } : {}),
   };
 }
@@ -320,10 +416,13 @@ function recoverPendingRun(runId: string, requestId: string): PendingPermissionR
         prompt: run.prompt,
         permissionMode: "acceptEdits",
         ...(run.model ? { model: run.model } : {}),
+        modelSource: run.modelSource,
+        modelVerificationStatus: run.modelVerificationStatus,
         ...(run.reasoningEffort ? { reasoningEffort: run.reasoningEffort } : {}),
         ...(run.sessionId ? { sessionId: run.sessionId } : {}),
         ...(run.profileId ? { profileId: run.profileId } : {}),
         agentRevisionId: run.agentRevisionId,
+        providerConnectionId: run.providerConnection.id,
         contextFiles: run.contextFiles,
       },
     };
@@ -404,11 +503,27 @@ async function handleRequest(input: unknown): Promise<void> {
       case "agent.profile.list":
         result = { profiles: profiles.list() };
         break;
-      case "agent.profile.create":
-        result = profiles.create(agentProfileInputSchema.parse(request.params));
+      case "agent.profile.create": {
+        const input = agentProfileInputSchema.parse(request.params);
+        await validateAutoPolicy({
+          backend: input.backend,
+          providerConnection: input.providerConnection ?? defaultProviderConnectionForAdapter(input.backend),
+          autoModelPolicy: input.autoModelPolicy,
+        });
+        result = profiles.create(input);
         break;
+      }
       case "agent.profile.update": {
         const params = agentProfileUpdateParamsSchema.parse(request.params);
+        const current = profiles.get(params.id);
+        if (!current) throw new Error(`Agent profile not found: ${params.id}`);
+        const backend = params.patch.backend ?? current.backend;
+        await validateAutoPolicy({
+          backend,
+          providerConnection: params.patch.providerConnection
+            ?? (backend === current.backend ? current.providerConnection : defaultProviderConnectionForAdapter(backend)),
+          autoModelPolicy: params.patch.autoModelPolicy === null ? undefined : params.patch.autoModelPolicy ?? current.autoModelPolicy,
+        });
         result = profiles.update(params.id, params.patch);
         break;
       }
@@ -432,6 +547,7 @@ async function handleRequest(input: unknown): Promise<void> {
         activeRunIds.add(params.runId);
         try {
           const prepared = await prepareRun(params);
+          emit({ type: "run.model-decision", runId: params.runId, decision: prepared.modelDecision });
           result = await permissionGate.start(prepared.params);
           emit({
             type: "run.context-snapshot",

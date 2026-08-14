@@ -94,6 +94,7 @@ import {
   latestCompatibleSessionLink,
   resumeFailureForTask,
 } from "./session-link.js";
+import { mergeTokenUsage, tokenUsageTotal } from "./token-usage-state.js";
 import {
   agentRevisionIdFor,
   builtInAgentRevisionId,
@@ -367,11 +368,14 @@ function agentRevisionUpdateForTask(task, profiles) {
 
 function normalizePersistedTask(task, workspaceId = task.workspaceId) {
   const now = isoNow();
-  const migrateEmptyWorkspaceStarter = task.id === `workspace-${workspaceId}`
-    && !(task.messages || []).length
-    && !(task.runs || []).length;
   const adapter = task.adapter
     || (task.agent === "Claude Code" ? "claude-code" : ["Codex", "Rux"].includes(task.agent) ? "codex" : "mock");
+  const migrateEmptyWorkspaceStarter = task.id === `workspace-${workspaceId}`
+    && !(task.messages || []).length
+    && !(task.runs || []).length
+    && !task.agentProfileId
+    && adapter === "codex"
+    && (!task.agentRevisionId || task.agentRevisionId === builtInAgentRevisionId("codex"));
   const agentRevisionId = task.agentRevisionId
     || (task.agentProfileId ? agentRevisionIdFor(task.agentProfileId, 1) : builtInAgentRevisionId(adapter));
   const providerConnection = task.providerConnection || defaultProviderConnectionForAdapter(adapter);
@@ -526,6 +530,7 @@ function recordRuntimeEvent(task, event) {
     permissionMode: "acceptEdits",
     model: task.model,
     agentRevisionId: taskRevisionId,
+    ...(task.agentProfileId ? { profileId: task.agentProfileId } : {}),
     providerConnection: taskConnection,
     ...taskModelState,
     ...(task.reasoningEffort ? { reasoningEffort: task.reasoningEffort } : {}),
@@ -570,8 +575,12 @@ function recordRuntimeEvent(task, event) {
       ...(event.profileId ? { profileId: event.profileId } : {}),
       agentRevisionId: event.agentRevisionId || taskRevisionId,
       providerConnection: event.providerConnection || taskConnection,
-      modelSource: event.modelSource || taskModelState.modelSource,
-      modelVerificationStatus: event.modelVerificationStatus || taskModelState.modelVerificationStatus,
+      modelSource: nextRun.modelDecision?.modelSource || event.modelSource || taskModelState.modelSource,
+      modelVerificationStatus: nextRun.modelDecision?.modelSource === "verified-history"
+        ? "verified"
+        : nextRun.modelDecision?.modelSource === "engine-catalog"
+          ? "not-required"
+          : event.modelVerificationStatus || taskModelState.modelVerificationStatus,
       ...(resumeFrom ? { resumeFrom, sessionLink: resumeFrom } : {}),
     };
   } else if (event.type === "permission.requested") {
@@ -591,8 +600,12 @@ function recordRuntimeEvent(task, event) {
       ...(event.profileId ? { profileId: event.profileId } : {}),
       agentRevisionId: event.agentRevisionId || taskRevisionId,
       providerConnection: event.providerConnection || taskConnection,
-      modelSource: event.modelSource || taskModelState.modelSource,
-      modelVerificationStatus: event.modelVerificationStatus || taskModelState.modelVerificationStatus,
+      modelSource: nextRun.modelDecision?.modelSource || event.modelSource || taskModelState.modelSource,
+      modelVerificationStatus: nextRun.modelDecision?.modelSource === "verified-history"
+        ? "verified"
+        : nextRun.modelDecision?.modelSource === "engine-catalog"
+          ? "not-required"
+          : event.modelVerificationStatus || taskModelState.modelVerificationStatus,
     };
   } else if (event.type === "permission.decided") {
     const permissionRequests = Array.isArray(nextRun.permissionRequests) ? nextRun.permissionRequests : [];
@@ -637,9 +650,28 @@ function recordRuntimeEvent(task, event) {
       profileId: event.profile.profileId,
       agentRevisionId: event.profile.id,
       providerConnection: event.profile.providerConnection,
-      modelSource: event.profile.modelSource,
-      modelVerificationStatus: event.profile.modelVerificationStatus,
+      modelSource: nextRun.modelDecision?.modelSource || event.profile.modelSource,
+      modelVerificationStatus: nextRun.modelDecision?.modelSource === "verified-history"
+        ? "verified"
+        : nextRun.modelDecision?.modelSource === "engine-catalog"
+          ? "not-required"
+          : event.profile.modelVerificationStatus,
       agentSnapshot: event.profile,
+    };
+  } else if (event.type === "run.model-decision") {
+    if (!nextRun.modelDecision) {
+      nextRun = {
+        ...nextRun,
+        model: event.decision.actualModel,
+        modelSource: event.decision.modelSource,
+        modelVerificationStatus: event.decision.modelSource === "verified-history" ? "verified" : event.decision.modelSource === "engine-catalog" ? "not-required" : nextRun.modelVerificationStatus,
+        modelDecision: event.decision,
+      };
+    }
+  } else if (event.type === "run.usage") {
+    nextRun = {
+      ...nextRun,
+      tokenUsage: mergeTokenUsage(nextRun.tokenUsage, event.usage),
     };
   } else if (event.type === "run.context-snapshot") {
     nextRun = {
@@ -711,6 +743,7 @@ function recordRuntimeEvent(task, event) {
       ? { agentRevisionSnapshot: event.profile }
       : {}),
     updatedAtIso: now,
+    ...(tokenUsageTotal(nextRun.tokenUsage) === undefined ? {} : { tokens: tokenUsageTotal(nextRun.tokenUsage).toLocaleString("en-US") }),
     runs: existing
       ? runs.map((run) => run.id === event.runId ? nextRun : run)
       : [...runs, nextRun],
@@ -1342,7 +1375,7 @@ function MessageBody({ text }) {
   );
 }
 
-function Message({ message, agent }) {
+function Message({ message, agent, run }) {
   if (message.unsupportedContent) return <UnsupportedContentMessage message={message} />;
   if (message.role === "assistant") {
     return (
@@ -1354,6 +1387,11 @@ function Message({ message, agent }) {
           {ruxAgentLabel(message.agent || agent)}
           <span>{message.adapter ? `${ruxAdapterLabel(message.adapter)} · ` : ""}{message.time || "现在"}</span>
         </div>
+        {run ? <div className="message-run-evidence" aria-label="本回合模型与 Token 证据">
+          <span><Bot size={11} />{ruxModelLabel(run.model || run.modelDecision?.actualModel || "未报告")}</span>
+          {run.modelDecision?.mode === "auto" ? <span>Auto · {run.modelDecision.classification === "complex" ? "复杂任务" : "简单任务"}</span> : null}
+          <span>{tokenUsageTotal(run.tokenUsage) === undefined ? "Token 未报告" : `${tokenUsageTotal(run.tokenUsage).toLocaleString("en-US")} tokens`}</span>
+        </div> : null}
         <MessageBody text={message.text} />
       </article>
     );
@@ -1592,7 +1630,7 @@ function TaskTimeline({ task, streamingMessages = [], changes, onOpenChanges, on
                   <small>{ruxAgentLabel(message.agent || task.agent)}{message.adapter ? ` · ${ruxAdapterLabel(message.adapter)}` : ""}</small>
                 </div>
               ) : null}
-              <Message message={message} agent={task.agent} />
+              <Message message={message} agent={task.agent} run={message.runId ? task.runs?.find((run) => run.id === message.runId) : undefined} />
             </React.Fragment>
           );
         })}
@@ -1725,12 +1763,15 @@ function Composer({ task, draft, onDraft, onSend, onAgentChange, onModelChange, 
   const isActive = task.status === "running" || task.status === "blocked";
   const selectedAgentId = task.agentProfileId || runtimeAdapterForTask(task);
   const selectedAgentChoice = agentChoices.find((choice) => choice.id === selectedAgentId);
+  const taskAutoModelPolicy = task.agentRevisionSnapshot?.autoModelPolicy
+    || (selectedAgentChoice?.agentRevisionId === task.agentRevisionId ? selectedAgentChoice.autoModelPolicy : undefined);
   const selectedAgentAvailable = Boolean(selectedAgentChoice?.available);
   const submit = () => {
     if (!isActive && selectedAgentAvailable && draft.trim()) onSend();
   };
   const modelOptions = Array.from(new Set([
     task.model,
+    ...(taskAutoModelPolicy ? ["Auto"] : []),
     ...(selectedAgentChoice?.verifiedModels || []).map((item) => item.model),
     ...(runtimeAdapterForTask(task) === "codex"
       ? ["Rux default", ...(codexModels || []).map((model) => model.model)]
@@ -2269,11 +2310,34 @@ function RunPane({ task, onToggleRun, runReviewState, onOpenRunDiff, onAcceptRun
           <div><dt>Model state</dt><dd>{modelStateLabel(inspectedRun?.modelSource || task.modelSource, inspectedRun?.modelVerificationStatus || task.modelVerificationStatus)}</dd></div>
           <div><dt>Reasoning</dt><dd>{reasoningEffortLabel(inspectedRun?.reasoningEffort || task.reasoningEffort)}</dd></div>
           <div><dt>Elapsed</dt><dd>{formatDuration(inspectedRun?.durationMs) || (isLatest ? task.elapsed : "—")}</dd></div>
-          <div><dt>Tokens</dt><dd>{isLatest ? task.tokens : "见 Run usage events"}</dd></div>
+          <div><dt>Tokens</dt><dd>{tokenUsageTotal(inspectedRun?.tokenUsage) === undefined ? "未报告" : tokenUsageTotal(inspectedRun.tokenUsage).toLocaleString("en-US")}</dd></div>
           {inspectedRun?.costUsd === undefined ? null : <div><dt>Cost</dt><dd>${inspectedRun.costUsd.toFixed(4)}</dd></div>}
           <div><dt>Permission</dt><dd><ShieldCheck size={13} /> {permissionLabel(inspectedRun?.permissionMode || task.permissionMode)}</dd></div>
           <div><dt>Session</dt><dd title={inspectedRun?.sessionLink?.nativeSessionId || inspectedRun?.sessionId || ""}>{inspectedRun?.sessionLink?.kind === "codex-thread" ? "Codex Thread" : inspectedRun?.sessionLink?.kind === "claude-session" ? "Claude Session" : inspectedRun?.sessionId ? "Native Session" : "尚未建立"}{inspectedRun?.sessionLink?.nativeSessionId || inspectedRun?.sessionId ? ` · ${inspectedRun?.sessionLink?.nativeSessionId || inspectedRun?.sessionId}` : ""}</dd></div>
         </dl>
+      </section>
+
+      {inspectedRun?.modelDecision ? <section className="run-section run-model-decision" aria-label="模型路由决定">
+        <h3>Model decision</h3>
+        <dl>
+          <div><dt>Mode</dt><dd>{inspectedRun.modelDecision.mode === "auto" ? `Auto · ${inspectedRun.modelDecision.classification === "complex" ? "复杂任务" : "简单任务"}` : "固定模型"}</dd></div>
+          <div><dt>Actual model</dt><dd>{ruxModelLabel(inspectedRun.modelDecision.actualModel)}</dd></div>
+          {inspectedRun.modelDecision.strategy ? <div><dt>Strategy</dt><dd>{inspectedRun.modelDecision.strategy} · score {inspectedRun.modelDecision.score} / {inspectedRun.modelDecision.threshold}</dd></div> : null}
+          <div><dt>Reason</dt><dd>{inspectedRun.modelDecision.rationale}</dd></div>
+          {inspectedRun.modelDecision.fallback ? <div><dt>Fallback</dt><dd>{ruxModelLabel(inspectedRun.modelDecision.fallback.fromModel)} → {ruxModelLabel(inspectedRun.modelDecision.fallback.toModel)} · {inspectedRun.modelDecision.fallback.reason}</dd></div> : null}
+        </dl>
+      </section> : null}
+
+      <section className="run-section run-token-usage" aria-label="Token 用量明细">
+        <h3>Token usage</h3>
+        {inspectedRun?.tokenUsage ? <dl>
+          <div><dt>Input</dt><dd>{inspectedRun.tokenUsage.inputTokens?.toLocaleString("en-US") ?? "未报告"}</dd></div>
+          <div><dt>Cached input</dt><dd>{inspectedRun.tokenUsage.cachedInputTokens?.toLocaleString("en-US") ?? "未报告"}</dd></div>
+          <div><dt>Output</dt><dd>{inspectedRun.tokenUsage.outputTokens?.toLocaleString("en-US") ?? "未报告"}</dd></div>
+          <div><dt>Reasoning</dt><dd>{inspectedRun.tokenUsage.reasoningOutputTokens?.toLocaleString("en-US") ?? "未报告"}</dd></div>
+          <div><dt>Total</dt><dd>{tokenUsageTotal(inspectedRun.tokenUsage)?.toLocaleString("en-US") ?? "未报告"}{inspectedRun.tokenUsage.isEstimate ? " · 估算" : ""}</dd></div>
+          <div><dt>Source</dt><dd>{inspectedRun.tokenUsage.source === "engine" ? "Engine 报告" : inspectedRun.tokenUsage.source === "provider" ? "Provider 报告" : "Rux 估算"}</dd></div>
+        </dl> : <p>Engine / Provider 未报告本次 Run 的 Token 用量；Rux 不会把估算值冒充为计费事实。</p>}
       </section>
 
       {permissionRequests.length ? (
@@ -3005,6 +3069,7 @@ function NewTaskDialog({ open, onClose, onCreate, onOpenAccounts, agentChoices, 
   const selectedModel = model || selectedChoice?.model || "";
   const modelOptions = Array.from(new Set([
     selectedModel,
+    ...(selectedChoice?.autoModelPolicy ? ["Auto"] : []),
     ...(selectedChoice?.verifiedModels || []).map((item) => item.model),
     ...(selectedChoice?.adapter === "codex"
       ? ["Rux default", ...(codexModels || []).map((item) => item.model)]
@@ -3493,7 +3558,11 @@ function LocalDataDialog({ state, task, workspace, onChange, onPreview, onExecut
           {!state.preview ? <button type="button" className="secondary-button" onClick={onPreview} disabled={state.loading}>{state.loading ? <LoaderCircle size={14} className="status-running" /> : <Eye size={14} />}生成影响预览</button> : <div className="local-data-impact" role="status">
             <header><strong>影响预览</strong><span>预计释放 {localDataSize(state.preview.estimatedReclaimableBytes)}</span></header>
             <ul><li><strong>{state.preview.affectedTaskCount}</strong><span>任务</span></li><li><strong>{state.preview.importedMessageCount}</strong><span>导入消息</span></li><li><strong>{state.preview.affectedProjectionRevisionCount}</strong><span>投影版本</span></li><li><strong>{state.preview.runCount}</strong><span>Rux 运行记录</span></li><li><strong>{state.preview.affectedHandoffCount}</strong><span>上下文交接</span></li></ul>
-            <p><ShieldCheck size={14} /><span><strong>{state.preview.nativeSessions.length} 个原生会话不受影响</strong><small>删除后不承诺恢复本地数据；若原生会话仍存在，可以重新导入。</small></span></p>
+            <p><ShieldCheck size={14} /><span><strong>{state.preview.nativeSessions.length} 个原生会话不受影响</strong><small>{state.action === "unlink"
+              ? "Task、消息和投影版本会完整保留；重新导入可以恢复刷新与继续。"
+              : state.action === "remove-imported"
+                ? "导入内容删除后不承诺本地恢复；若原生会话仍存在，可以重新导入。"
+                : "Task 本地数据删除后不承诺恢复；Provider 原生会话不会被删除或归档。"}</small></span></p>
             <button type="button" className={state.action === "unlink" ? "secondary-button" : "danger-ghost-button"} onClick={onExecute} disabled={state.loading}>{state.loading ? <LoaderCircle size={14} className="status-running" /> : state.action === "unlink" ? <Link2 size={14} /> : <Trash2 size={14} />}{actionTitle}</button>
           </div>}
         </section>
@@ -3678,6 +3747,12 @@ const emptyAgentDraft = {
   backend: "codex",
   providerConnectionId: "",
   model: "",
+  autoEnabled: false,
+  autoSimpleModel: "",
+  autoComplexModel: "",
+  autoStrategy: "balanced",
+  autoFallbackEnabled: true,
+  autoAllowlist: [],
   reasoningEffort: "",
   instructions: "",
   permissionMode: "acceptEdits",
@@ -3686,7 +3761,7 @@ const emptyAgentDraft = {
   enabled: true,
 };
 
-function AgentsDialog({ open, profiles, adapters, nativeConnections, busy, error, onClose, onSave, onDelete }) {
+function AgentsDialog({ open, profiles, adapters, nativeConnections, codexModels, tasks, busy, error, onClose, onSave, onDelete }) {
   const [editingId, setEditingId] = useState(null);
   const [draft, setAgentDraft] = useState(emptyAgentDraft);
   const dialogRef = useDialogFocus(open, onClose);
@@ -3699,6 +3774,12 @@ function AgentsDialog({ open, profiles, adapters, nativeConnections, busy, error
       backend: profile.backend,
       providerConnectionId: profile.providerConnection?.kind === "rux-native" ? profile.providerConnection.id : "",
       model: profile.model || "",
+      autoEnabled: Boolean(profile.autoModelPolicy),
+      autoSimpleModel: profile.autoModelPolicy?.simpleModel.model || "",
+      autoComplexModel: profile.autoModelPolicy?.complexModel.model || "",
+      autoStrategy: profile.autoModelPolicy?.strategy || "balanced",
+      autoFallbackEnabled: profile.autoModelPolicy?.fallbackEnabled ?? true,
+      autoAllowlist: profile.autoModelPolicy?.allowlist.map((candidate) => candidate.model) || [],
       reasoningEffort: profile.reasoningEffort || "",
       instructions: profile.instructions,
       permissionMode: profile.permissionMode,
@@ -3712,6 +3793,24 @@ function AgentsDialog({ open, profiles, adapters, nativeConnections, busy, error
     setAgentDraft(emptyAgentDraft);
   };
   const update = (key, value) => setAgentDraft((current) => ({ ...current, [key]: value }));
+  const selectedProfile = profiles.find((profile) => profile.id === editingId);
+  const selectedConnectionId = draft.backend === "rux-native"
+    ? draft.providerConnectionId
+    : selectedProfile?.backend === draft.backend
+      ? selectedProfile.providerConnection.id
+      : defaultProviderConnectionForAdapter(draft.backend).id;
+  const verifiedModels = verifiedModelHistory(tasks, draft.backend, selectedConnectionId);
+  const autoCandidates = Array.from(new Map([
+    ...verifiedModels.map((item) => [item.model, { model: item.model, source: "verified-history" }]),
+    ...(draft.backend === "codex" ? codexModels.map((item) => [item.model, { model: item.model, source: "engine-catalog" }]) : []),
+  ]).values());
+  const candidateFor = (model) => autoCandidates.find((candidate) => candidate.model === model);
+  const autoPolicyValid = !draft.autoEnabled || Boolean(
+    candidateFor(draft.autoSimpleModel)
+    && candidateFor(draft.autoComplexModel)
+    && draft.autoAllowlist.includes(draft.autoSimpleModel)
+    && draft.autoAllowlist.includes(draft.autoComplexModel)
+  );
   const profileInput = (name = draft.name.trim()) => {
     const splitIds = (value) => value.split(",").map((item) => item.trim()).filter(Boolean);
     const nativeConnection = nativeConnections.find((connection) => connection.id === draft.providerConnectionId);
@@ -3721,6 +3820,13 @@ function AgentsDialog({ open, profiles, adapters, nativeConnections, busy, error
       backend: draft.backend,
       ...(draft.backend === "rux-native" && nativeConnection ? { providerConnection: { id: nativeConnection.id, kind: "rux-native", engine: "rux-native", label: nativeConnection.label } } : {}),
       ...(draft.model.trim() ? { model: draft.model.trim() } : {}),
+      ...(draft.autoEnabled ? { autoModelPolicy: {
+        simpleModel: candidateFor(draft.autoSimpleModel),
+        complexModel: candidateFor(draft.autoComplexModel),
+        strategy: draft.autoStrategy,
+        fallbackEnabled: draft.autoFallbackEnabled,
+        allowlist: draft.autoAllowlist.map(candidateFor).filter(Boolean),
+      } } : editingId ? { autoModelPolicy: null } : {}),
       ...(draft.reasoningEffort ? { reasoningEffort: draft.reasoningEffort } : {}),
       instructions: draft.instructions.trim(),
       permissionMode: draft.permissionMode,
@@ -3730,7 +3836,7 @@ function AgentsDialog({ open, profiles, adapters, nativeConnections, busy, error
     };
   };
   const submit = () => {
-    if (!draft.name.trim() || !draft.instructions.trim()) return;
+    if (!draft.name.trim() || !draft.instructions.trim() || !autoPolicyValid) return;
     onSave(editingId, profileInput()).then(() => reset()).catch(() => undefined);
   };
   const duplicate = () => {
@@ -3743,7 +3849,9 @@ function AgentsDialog({ open, profiles, adapters, nativeConnections, busy, error
       name = `${baseName} ${suffix}`;
       suffix += 1;
     }
-    onSave(null, profileInput(name)).then((profile) => editProfile(profile)).catch(() => undefined);
+    const input = profileInput(name);
+    if (input.autoModelPolicy === null) delete input.autoModelPolicy;
+    onSave(null, input).then((profile) => editProfile(profile)).catch(() => undefined);
   };
 
   if (!open) return null;
@@ -3777,6 +3885,22 @@ function AgentsDialog({ open, profiles, adapters, nativeConnections, busy, error
               <label><span>模型（可选）</span><input value={draft.model} onChange={(event) => update("model", event.target.value)} placeholder="使用底座默认模型" /></label>
               <label><span>推理强度（可选）</span><input value={draft.reasoningEffort} onChange={(event) => update("reasoningEffort", event.target.value)} placeholder="使用模型默认值" /></label>
               <label><span>Permission</span><select value={draft.permissionMode} onChange={(event) => update("permissionMode", event.target.value)}>{permissionOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}</select></label>
+              <fieldset className="agent-auto-policy is-wide">
+                <legend>Auto 模型路由</legend>
+                <label className="agent-enabled-toggle"><input type="checkbox" checked={draft.autoEnabled} onChange={(event) => update("autoEnabled", event.target.checked)} /><span>允许新 Task 选择 Auto 模式</span></label>
+                {draft.autoEnabled ? <>
+                  <p>候选模型只来自当前 Engine 目录或这个 Connection 的成功验证历史。未验证的手动模型不会出现在这里。</p>
+                  {!autoCandidates.length ? <div className="account-error" role="alert"><CircleAlert size={14} /><span>当前 Connection 没有可用于 Auto 的目录或已验证模型。请先刷新模型目录或用固定模型成功运行一次。</span></div> : null}
+                  <div className="agent-auto-grid">
+                    <label><span>简单任务模型</span><select aria-label="Auto 简单任务模型" value={draft.autoSimpleModel} onChange={(event) => { update("autoSimpleModel", event.target.value); if (!draft.autoAllowlist.includes(event.target.value)) update("autoAllowlist", [...draft.autoAllowlist, event.target.value].filter(Boolean)); }}><option value="">选择模型</option>{autoCandidates.map((candidate) => <option key={`simple-${candidate.model}`} value={candidate.model}>{candidate.model} · {candidate.source === "engine-catalog" ? "官方目录" : "已验证"}</option>)}</select></label>
+                    <label><span>复杂任务模型</span><select aria-label="Auto 复杂任务模型" value={draft.autoComplexModel} onChange={(event) => { update("autoComplexModel", event.target.value); if (!draft.autoAllowlist.includes(event.target.value)) update("autoAllowlist", [...draft.autoAllowlist, event.target.value].filter(Boolean)); }}><option value="">选择模型</option>{autoCandidates.map((candidate) => <option key={`complex-${candidate.model}`} value={candidate.model}>{candidate.model} · {candidate.source === "engine-catalog" ? "官方目录" : "已验证"}</option>)}</select></label>
+                    <label><span>路由策略</span><select aria-label="Auto 路由策略" value={draft.autoStrategy} onChange={(event) => update("autoStrategy", event.target.value)}><option value="conservative">保守 · 更多简单模型</option><option value="balanced">均衡</option><option value="quality">质量优先 · 更早使用复杂模型</option></select></label>
+                  </div>
+                  <div className="agent-auto-allowlist" role="group" aria-label="Auto 模型白名单">{autoCandidates.map((candidate) => <label key={`allow-${candidate.model}`}><input type="checkbox" checked={draft.autoAllowlist.includes(candidate.model)} disabled={[draft.autoSimpleModel, draft.autoComplexModel].includes(candidate.model)} onChange={(event) => update("autoAllowlist", event.target.checked ? [...new Set([...draft.autoAllowlist, candidate.model])] : draft.autoAllowlist.filter((model) => model !== candidate.model))} /><span>{candidate.model}</span><small>{candidate.source === "engine-catalog" ? "官方目录" : "已验证"}</small></label>)}</div>
+                  <label className="agent-enabled-toggle"><input type="checkbox" checked={draft.autoFallbackEnabled} onChange={(event) => update("autoFallbackEnabled", event.target.checked)} /><span>仅在明确模型不兼容时允许白名单内回退</span></label>
+                  {!autoPolicyValid ? <small className="agent-form-error">简单与复杂模型必须都在白名单中。</small> : null}
+                </> : null}
+              </fieldset>
               <label className="is-wide"><span>系统指令</span><textarea value={draft.instructions} onChange={(event) => update("instructions", event.target.value)} rows={7} maxLength={20000} required /></label>
               <label><span>Skill IDs（逗号分隔）</span><input value={draft.skillIds} onChange={(event) => update("skillIds", event.target.value)} /></label>
               <label><span>Tool IDs（逗号分隔）</span><input value={draft.toolIds} onChange={(event) => update("toolIds", event.target.value)} /></label>
@@ -3788,7 +3912,7 @@ function AgentsDialog({ open, profiles, adapters, nativeConnections, busy, error
               {editingId ? <button type="button" className="danger-ghost-button" onClick={() => {
                 if (window.confirm(`删除自定义 Agent「${draft.name}」？`)) onDelete(editingId).then(reset).catch(() => undefined);
               }} disabled={busy}><Trash2 size={14} /> 删除</button> : <span />}
-              <button type="submit" className="primary-button" disabled={busy || !draft.name.trim() || !draft.instructions.trim() || (draft.backend === "rux-native" && !draft.providerConnectionId)}>{busy ? <LoaderCircle size={14} className="status-running" /> : <Check size={14} />}{editingId ? "保存 Agent" : "创建 Agent"}</button>
+              <button type="submit" className="primary-button" disabled={busy || !draft.name.trim() || !draft.instructions.trim() || !autoPolicyValid || (draft.backend === "rux-native" && !draft.providerConnectionId)}>{busy ? <LoaderCircle size={14} className="status-running" /> : <Check size={14} />}{editingId ? "保存 Agent" : "创建 Agent"}</button>
             </footer>
           </form>
         </div>
@@ -4125,6 +4249,7 @@ export function App() {
         model: profile.model || (profile.backend === "codex" ? codexSettings.model : profile.backend === "rux-native" ? nativeConnections.find((connection) => connection.id === profile.providerConnection.id)?.defaultModel || "Provider default" : "Claude default"),
         modelSource: profile.modelSource,
         modelVerificationStatus: profile.modelVerificationStatus,
+        autoModelPolicy: profile.autoModelPolicy,
         verifiedModels,
         reasoningEffort: profile.reasoningEffort || (profile.backend === "codex" ? codexSettings.reasoningEffort : ""),
         permissionMode: profile.permissionMode,
@@ -4448,7 +4573,7 @@ export function App() {
       if (event.type === "run.metadata") {
         return {
           ...task,
-          model: event.model || task.model,
+          model: task.model === "Auto" ? "Auto" : event.model || task.model,
           reasoningEffort: event.reasoningEffort || task.reasoningEffort,
         };
       }
@@ -4498,14 +4623,13 @@ export function App() {
         };
       }
       if (event.type === "run.usage") {
-        const total = event.usage.inputTokens + event.usage.outputTokens;
-        return { ...task, tokens: total.toLocaleString("en-US") };
+        return task;
       }
       if (event.type === "run.completed") {
         const completedRun = task.runs?.find((run) => run.id === event.runId);
         const hasFailureEvidence = task.activity.some((item) => item.state === "error")
           || completedRun?.verifications?.some((verification) => verification.status === "failed");
-        const verifiedModelUpdate = completedRun?.modelVerificationStatus === "verified"
+        const verifiedModelUpdate = task.model !== "Auto" && completedRun?.modelVerificationStatus === "verified"
           && ["manual", "verified-history"].includes(completedRun.modelSource)
           ? { modelSource: "verified-history", modelVerificationStatus: "verified" }
           : {};
@@ -4597,6 +4721,13 @@ export function App() {
     if (!taskSnapshot.agentRevisionId || !taskSnapshot.providerConnection?.id) {
       return { ok: false, error: "这个任务缺少可验证的 Agent Revision 或 Provider Connection，请新建任务。" };
     }
+    if (taskSnapshot.model === "Auto") {
+      const pinnedPolicy = taskSnapshot.agentRevisionSnapshot?.autoModelPolicy
+        || (selectedAgentChoice?.agentRevisionId === taskSnapshot.agentRevisionId ? selectedAgentChoice.autoModelPolicy : undefined);
+      if (!pinnedPolicy) {
+        return { ok: false, error: "这个 Task 固定的 Agent Revision 未配置 Auto Model Policy。请改用固定模型，或基于最新 Revision 新建 Task。" };
+      }
+    }
     if (!runtime || !appReady) {
       const reason = persistenceError
         ? `任务状态尚未安全保存：${persistenceError}`
@@ -4654,6 +4785,9 @@ export function App() {
         adapter,
         permissionMode: taskSnapshot.permissionMode || "acceptEdits",
         model: requestedModel,
+        modelMode: taskSnapshot.model === "Auto" ? "auto" : "fixed",
+        modelSource: taskSnapshot.modelSource,
+        modelVerificationStatus: taskSnapshot.modelVerificationStatus,
         reasoningEffort: taskSnapshot.reasoningEffort || undefined,
         sessionId,
         profileId: taskSnapshot.agentProfileId,
@@ -5200,6 +5334,7 @@ export function App() {
           permissionMode: choice.permissionMode || task.permissionMode || "acceptEdits",
           ...(choice.profileId ? { agentProfileId: choice.profileId } : { agentProfileId: undefined }),
           agentRevisionId: choice.agentRevisionId,
+          agentRevisionSnapshot: undefined,
           providerConnection: choice.providerConnection,
           modelSource: choice.modelSource,
           modelVerificationStatus: choice.modelVerificationStatus,
@@ -6004,7 +6139,7 @@ export function App() {
         onCollapse={() => setSidebarCollapsed(true)}
         onOpenAccounts={openAccounts}
         onOpenSettings={openSettings}
-        onOpenAgents={() => { setAgentsOpen(true); setSidebarOpen(false); setAgentProfileError(""); }}
+        onOpenAgents={() => { setAgentsOpen(true); setSidebarOpen(false); setAgentProfileError(""); if (codexConnected) void loadCodexModels(); }}
         onOpenSessionDiscovery={openSessionDiscovery}
         onOpenEnvironment={openEnvironment}
         onOpenChanges={() => openChanges()}
@@ -6238,6 +6373,8 @@ export function App() {
         profiles={agentProfiles}
         adapters={adapters}
         nativeConnections={nativeConnections}
+        codexModels={codexCatalog.models}
+        tasks={tasks}
         busy={agentProfileBusy}
         error={agentProfileError}
         onClose={() => setAgentsOpen(false)}

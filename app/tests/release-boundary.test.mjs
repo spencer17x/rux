@@ -307,6 +307,8 @@ test("local data cleanup and export are impact-previewed, confirmation-gated, an
   assert.match(rendererSource, /本地数据与导出/);
   assert.match(rendererSource, /先生成影响预览，再明确确认执行/);
   assert.match(rendererSource, /原生会话不受影响/);
+  assert.match(rendererSource, /Task、消息和投影版本会完整保留；重新导入可以恢复刷新与继续/);
+  assert.match(rendererSource, /Provider 原生会话不会被删除或归档/);
   assert.match(rendererSource, /导出文件可能包含敏感内容/);
   assert.match(rendererSource, /confirmedSensitiveContent: true/);
   assert.match(preloadSource, /IPC_CHANNELS\.localDataPreview/);
@@ -330,10 +332,14 @@ test("renderer keeps Agent setup actionable and resumes the selected task sessio
   assert.match(rendererSource, /onClick=\{onOpenAccounts\}>账户与登录<\/button>/);
   assert.match(rendererSource, /const preflight = runPreflight\(selectedTask, prompt\)/);
   assert.match(rendererSource, /const sessionLink = latestCompatibleSessionLink\(taskSnapshot\);\s+const sessionId = sessionLink\?\.nativeSessionId/);
-  assert.match(rendererSource, /model: requestedModel,\s+reasoningEffort: taskSnapshot\.reasoningEffort \|\| undefined,\s+sessionId,\s+profileId: taskSnapshot\.agentProfileId,\s+agentRevisionId:/);
+  assert.match(rendererSource, /model: requestedModel,\s+modelMode: taskSnapshot\.model === "Auto" \? "auto" : "fixed",\s+modelSource: taskSnapshot\.modelSource,\s+modelVerificationStatus: taskSnapshot\.modelVerificationStatus,\s+reasoningEffort: taskSnapshot\.reasoningEffort \|\| undefined,\s+sessionId,\s+profileId: taskSnapshot\.agentProfileId,\s+agentRevisionId:/);
   assert.match(rendererSource, /runtime\.listAgentModels\(\{ adapter: "codex", limit: 100/);
   assert.match(rendererSource, /const \[drafts, setDrafts\] = useState/);
   assert.match(rendererSource, /composerInputRef\.current\?\.focus\(\)/);
+  assert.match(rendererSource, /&& !task\.agentProfileId\s+&& adapter === "codex"\s+&& \(!task\.agentRevisionId \|\| task\.agentRevisionId === builtInAgentRevisionId\("codex"\)\)/);
+  assert.match(rendererSource, /agentRevisionId: choice\.agentRevisionId,\s+agentRevisionSnapshot: undefined,/);
+  assert.match(rendererSource, /agentRevisionId: taskRevisionId,\s+\.\.\.\(task\.agentProfileId \? \{ profileId: task\.agentProfileId \} : \{\}\),/);
+  assert.match(await readFile(path.join(root, "src/runtime.js"), "utf8"), /isSessionModelSwitchRestriction = \/Native Session \.\*按 Run 切换模型\//);
   assert.doesNotMatch(rendererSource, /selectedTask\.messages\[0\]\?\.text \|\| selectedTask\.title/);
 });
 
@@ -367,6 +373,7 @@ test("renderer makes Native Session resume failure recoverable without silent fa
   assert.match(renderer, /Revision<\/dt>/);
   assert.match(renderer, /Connection<\/dt>/);
   assert.match(runtime, /resumeSessionId: normalized\.options\.sessionId/);
+  assert.match(runtime, /modelMode: normalized\.options\.modelMode/);
 });
 
 test("renderer exposes truthful model source, manual verification, and catalog-removal states", async () => {
@@ -379,4 +386,17 @@ test("renderer exposes truthful model source, manual verification, and catalog-r
   assert.match(renderer, /\^codex default\$.*Rux default/);
   assert.match(modelState, /providerConnection\?\.id !== connectionId/);
   assert.match(modelState, /model\[_ -\]not\[_ -\]found/);
+});
+
+test("renderer exposes Revision-owned Auto policy, actual per-turn model, and sourced Token evidence", async () => {
+  const renderer = await readFile(path.join(root, "src", "App.jsx"), "utf8");
+  assert.match(renderer, /Auto 简单任务模型/);
+  assert.match(renderer, /Auto 复杂任务模型/);
+  assert.match(renderer, /Auto 模型白名单/);
+  assert.match(renderer, /未验证的手动模型不会出现在这里/);
+  assert.match(renderer, /本回合模型与 Token 证据/);
+  assert.match(renderer, /Auto · \{run\.modelDecision\.classification === "complex" \? "复杂任务" : "简单任务"\}/);
+  assert.match(renderer, /Engine \/ Provider 未报告本次 Run 的 Token 用量/);
+  assert.match(renderer, /Cached input/);
+  assert.match(renderer, /Rux 估算/);
 });

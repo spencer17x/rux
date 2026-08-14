@@ -43,6 +43,7 @@ import {
   permissionDecideParamsSchema,
   runCancelParamsSchema,
   runStartParamsSchema,
+  runModelDecisionSchema,
   sessionCancelParamsSchema,
   sessionDiscoverParamsSchema,
   sessionPreviewParamsSchema,
@@ -66,11 +67,14 @@ import {
   type AgentRevision,
   type ContextSnapshot,
   type RunStartParams,
+  type RunModelDecision,
+  defaultProviderConnectionForAdapter,
 } from "../shared/protocol";
 import { createContextSnapshot, contextSnapshotPrompt } from "./context-snapshot.ts";
 import { RunPermissionGate, type PendingPermissionRun } from "./permission-gate.ts";
 import { awaitAllCleanup, forceKillProcessTree, processGroupExists } from "./child-process-lifecycle.ts";
 import { generateIsolatedHandoffSummary } from "./handoff-summary.ts";
+import { assertNativeSessionModelCompatibility, selectAutoModel } from "../auto-model-routing.ts";
 
 const parentPort = process.parentPort;
 if (!parentPort) {
@@ -372,7 +376,83 @@ type PreparedRun = {
   params: RunStartParams;
   context: ContextSnapshot;
   profile?: AgentRevision;
+  modelDecision: RunModelDecision;
 };
+
+function verifiedModelsForConnection(adapter: RunStartParams["adapter"], providerConnectionId: string): Set<string> {
+  const verified = new Set<string>();
+  for (const task of taskStore.load(workspaceId).tasks) {
+    for (const run of task.runs) {
+      if (run.adapter !== adapter || run.providerConnection.id !== providerConnectionId || run.status !== "completed" || !run.model) continue;
+      if (run.modelVerificationStatus === "verified" || run.modelSource === "verified-history") verified.add(run.model);
+    }
+  }
+  return verified;
+}
+
+async function availableAutoModels(profile: Pick<AgentRevision, "backend" | "providerConnection" | "autoModelPolicy">): Promise<Set<string>> {
+  const verified = verifiedModelsForConnection(profile.backend, profile.providerConnection.id);
+  let catalog = new Set<string>();
+  if (profile.backend === "codex" && profile.autoModelPolicy?.allowlist.some((candidate) => candidate.source === "engine-catalog")) {
+    let cursor: string | null | undefined;
+    for (let page = 0; page < 10; page += 1) {
+      const result = await codex.listModels({ adapter: "codex", limit: 100, includeHidden: false, ...(cursor ? { cursor } : {}) });
+      result.models.forEach((model) => { catalog.add(model.id); catalog.add(model.model); });
+      cursor = result.nextCursor;
+      if (!cursor) break;
+    }
+  }
+  return new Set((profile.autoModelPolicy?.allowlist ?? []).filter((candidate) => (
+    candidate.source === "engine-catalog" ? catalog.has(candidate.model) : verified.has(candidate.model)
+  )).map((candidate) => candidate.model));
+}
+
+async function validateAutoPolicyForSave(profile: Pick<AgentRevision, "backend" | "providerConnection" | "autoModelPolicy">): Promise<void> {
+  if (!profile.autoModelPolicy) return;
+  const available = await availableAutoModels(profile);
+  const invalid = profile.autoModelPolicy.allowlist.filter((candidate) => !available.has(candidate.model));
+  if (invalid.length) {
+    throw new Error(`Auto 白名单只接受当前 Engine 目录或这个 Connection 的已验证模型：${invalid.map((candidate) => candidate.model).join("、")}`);
+  }
+}
+
+function previousSessionModel(sessionId: string, adapter: RunStartParams["adapter"], providerConnectionId: string): string | undefined {
+  let latest: { model: string; updatedAt: string } | undefined;
+  for (const task of taskStore.load(workspaceId).tasks) {
+    for (const run of task.runs) {
+      if (run.adapter !== adapter || run.providerConnection.id !== providerConnectionId || !run.model) continue;
+      if (run.sessionId !== sessionId && run.sessionLink?.nativeSessionId !== sessionId) continue;
+      if (!latest || run.updatedAt > latest.updatedAt) latest = { model: run.model, updatedAt: run.updatedAt };
+    }
+  }
+  return latest?.model;
+}
+
+function assertSessionModelSelection(params: RunStartParams, actualModel: string): void {
+  if (!params.sessionId) return;
+  const previousModel = previousSessionModel(params.sessionId, params.adapter, params.providerConnectionId ?? "");
+  if (!previousModel || previousModel === actualModel) return;
+  assertNativeSessionModelCompatibility(params.adapter, previousModel, actualModel);
+}
+
+function fixedModelDecision(params: RunStartParams, profile?: AgentRevision): RunModelDecision {
+  const providerConnectionId = params.providerConnectionId ?? profile?.providerConnection.id ?? defaultProviderConnectionForAdapter(params.adapter).id;
+  return runModelDecisionSchema.parse({
+    id: `model-decision:${params.runId}`,
+    runId: params.runId,
+    mode: "fixed",
+    classification: "fixed",
+    actualModel: params.model ?? profile?.model ?? "engine-default",
+    modelSource: params.modelSource ?? profile?.modelSource ?? (params.model ? "manual" : "engine-default"),
+    reasonCodes: ["user-selected"],
+    rationale: "本次 Run 使用 Task 固定模型或 Engine 默认模型，未执行 Auto 分类。",
+    allowlist: [],
+    engine: params.adapter,
+    providerConnectionId,
+    agentRevisionId: params.agentRevisionId,
+    decidedAt: new Date().toISOString(),
+  });
+}
 
 async function prepareRun(params: ReturnType<typeof runStartParamsSchema.parse>): Promise<PreparedRun> {
   if (params.adapter === "mock" && !mockEnabled) {
@@ -380,6 +460,7 @@ async function prepareRun(params: ReturnType<typeof runStartParamsSchema.parse>)
   }
   let effectiveParams: RunStartParams = params;
   let profileSnapshot: AgentRevision | undefined;
+  let modelDecision: RunModelDecision | undefined;
   const runContextSnapshot = await contextSnapshot({ selectedFiles: params.contextFiles });
   const promptSections: string[] = [];
   if (params.profileId) {
@@ -395,18 +476,58 @@ async function prepareRun(params: ReturnType<typeof runStartParamsSchema.parse>)
       throw new Error("Custom Agent Connection does not match its immutable Revision");
     }
     promptSections.push(`Custom Agent instructions:\n${profile.instructions}`);
+    if (params.modelMode === "auto") {
+      if (!profile.autoModelPolicy) throw new Error("这个 Agent Revision 未配置 Auto Model Policy，请保存新 Revision 或改用固定模型。");
+      const available = await availableAutoModels(profile);
+      const selection = selectAutoModel(profile.autoModelPolicy, params.prompt);
+      let actualModel = selection.model;
+      let fallback;
+      if (!available.has(actualModel)) {
+        const alternate = selection.classification === "complex"
+          ? profile.autoModelPolicy.simpleModel.model
+          : profile.autoModelPolicy.complexModel.model;
+        if (!profile.autoModelPolicy.fallbackEnabled || alternate === actualModel || !available.has(alternate)) {
+          throw new Error(`Auto 选择的模型「${actualModel}」已不在当前目录或验证历史中；本次 Run 未启动。请更新 Agent Revision。`);
+        }
+        fallback = { fromModel: actualModel, toModel: alternate, reason: "原选择模型已不在当前 Engine 目录或 Connection 验证历史中" };
+        actualModel = alternate;
+      }
+      assertSessionModelSelection({ ...params, providerConnectionId: profile.providerConnection.id }, actualModel);
+      modelDecision = runModelDecisionSchema.parse({
+        id: `model-decision:${params.runId}`,
+        runId: params.runId,
+        mode: "auto",
+        classification: selection.classification,
+        actualModel,
+        modelSource: profile.autoModelPolicy.allowlist.find((candidate) => candidate.model === actualModel)?.source ?? "verified-history",
+        strategy: profile.autoModelPolicy.strategy,
+        score: selection.score,
+        threshold: selection.threshold,
+        reasonCodes: selection.reasonCodes,
+        rationale: selection.rationale,
+        allowlist: profile.autoModelPolicy.allowlist.map((candidate) => candidate.model),
+        engine: params.adapter,
+        providerConnectionId: profile.providerConnection.id,
+        agentRevisionId: profile.id,
+        ...(fallback ? { fallback } : {}),
+        decidedAt: new Date().toISOString(),
+      });
+      effectiveParams = { ...effectiveParams, model: actualModel, modelMode: "auto" };
+    }
     effectiveParams = {
-      ...params,
-      model: params.model ?? profile.model,
+      ...effectiveParams,
+      model: effectiveParams.model ?? profile.model,
       reasoningEffort: params.reasoningEffort ?? profile.reasoningEffort,
       providerConnectionId: profile.providerConnection.id,
     };
   }
   promptSections.push(contextSnapshotPrompt(runContextSnapshot));
   promptSections.push(`User request:\n${params.prompt}`);
+  modelDecision ??= fixedModelDecision(effectiveParams, profileSnapshot);
   return {
     params: { ...effectiveParams, prompt: promptSections.join("\n\n") },
     context: runContextSnapshot,
+    modelDecision,
     ...(profileSnapshot ? { profile: profileSnapshot } : {}),
   };
 }
@@ -432,7 +553,7 @@ async function launchPreparedRun(params: RunStartParams): Promise<{
         ? codex.start(params)
         : params.adapter === "rux-native"
           ? nativeProvider.start(params)
-        : startMockRun({ ...params, contextFiles: params.contextFiles ?? [] }));
+        : startMockRun({ ...params, modelMode: params.modelMode ?? "fixed", contextFiles: params.contextFiles ?? [] }));
   } catch (error) {
     runGitBaselines.delete(params.runId);
     throw error;
@@ -463,6 +584,8 @@ function recoverPendingRun(runId: string, requestId: string): PendingPermissionR
         prompt: run.prompt,
         permissionMode: "acceptEdits",
         ...(run.model ? { model: run.model } : {}),
+        modelSource: run.modelSource,
+        modelVerificationStatus: run.modelVerificationStatus,
         ...(run.reasoningEffort ? { reasoningEffort: run.reasoningEffort } : {}),
         ...(run.sessionId ? { sessionId: run.sessionId } : {}),
         ...(run.profileId ? { profileId: run.profileId } : {}),
@@ -600,11 +723,27 @@ async function handleRequest(input: unknown): Promise<void> {
       case "agent.profile.list":
         result = { profiles: profiles().list() };
         break;
-      case "agent.profile.create":
-        result = profiles().create(agentProfileInputSchema.parse(request.params));
+      case "agent.profile.create": {
+        const input = agentProfileInputSchema.parse(request.params);
+        await validateAutoPolicyForSave({
+          backend: input.backend,
+          providerConnection: input.providerConnection ?? defaultProviderConnectionForAdapter(input.backend),
+          autoModelPolicy: input.autoModelPolicy,
+        });
+        result = profiles().create(input);
         break;
+      }
       case "agent.profile.update": {
         const params = agentProfileUpdateParamsSchema.parse(request.params);
+        const current = profiles().get(params.id);
+        if (!current) throw new Error(`Agent profile not found: ${params.id}`);
+        const backend = params.patch.backend ?? current.backend;
+        await validateAutoPolicyForSave({
+          backend,
+          providerConnection: params.patch.providerConnection
+            ?? (backend === current.backend ? current.providerConnection : defaultProviderConnectionForAdapter(backend)),
+          autoModelPolicy: params.patch.autoModelPolicy === null ? undefined : params.patch.autoModelPolicy ?? current.autoModelPolicy,
+        });
         result = profiles().update(params.id, params.patch);
         break;
       }
@@ -640,7 +779,8 @@ async function handleRequest(input: unknown): Promise<void> {
         activeRunIds.add(params.runId);
         try {
           const prepared = await prepareRun(params);
-          result = await permissionGate.start(prepared.params);
+          emit({ type: "run.model-decision", runId: params.runId, decision: prepared.modelDecision });
+          result = await permissionGate.start({ ...prepared.params, modelMode: prepared.params.modelMode ?? "fixed" });
           emit({
             type: "run.context-snapshot",
             runId: params.runId,

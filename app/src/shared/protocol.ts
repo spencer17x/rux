@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const RUX_PROTOCOL_VERSION = 6 as const;
+export const RUX_PROTOCOL_VERSION = 7 as const;
 
 export const IPC_CHANNELS = {
   request: "rux:runtime:request",
@@ -295,6 +295,70 @@ export const modelVerificationStatuses = [
 ] as const;
 export type ModelVerificationStatus = (typeof modelVerificationStatuses)[number];
 
+export const autoModelStrategies = ["conservative", "balanced", "quality"] as const;
+export type AutoModelStrategy = (typeof autoModelStrategies)[number];
+export const autoModelCandidateSources = ["engine-catalog", "verified-history"] as const;
+export type AutoModelCandidateSource = (typeof autoModelCandidateSources)[number];
+export const runModelClassifications = ["fixed", "simple", "complex"] as const;
+export type RunModelClassification = (typeof runModelClassifications)[number];
+export const tokenUsageSources = ["engine", "provider", "estimate"] as const;
+export type TokenUsageSource = (typeof tokenUsageSources)[number];
+
+export interface AutoModelCandidate {
+  model: string;
+  source: AutoModelCandidateSource;
+}
+
+/** Immutable Auto configuration stored inside one Agent Revision. */
+export interface AutoModelPolicy {
+  simpleModel: AutoModelCandidate;
+  complexModel: AutoModelCandidate;
+  strategy: AutoModelStrategy;
+  fallbackEnabled: boolean;
+  allowlist: AutoModelCandidate[];
+}
+
+export interface RunModelFallback {
+  fromModel: string;
+  toModel: string;
+  reason: string;
+}
+
+/** One pre-execution model resolution. It is immutable for the lifetime of a Run. */
+export interface RunModelDecision {
+  id: string;
+  runId: string;
+  mode: "fixed" | "auto";
+  classification: RunModelClassification;
+  actualModel: string;
+  modelSource: ModelSource;
+  strategy?: AutoModelStrategy;
+  score?: number;
+  threshold?: number;
+  reasonCodes: string[];
+  rationale: string;
+  allowlist: string[];
+  engine: RunAdapter;
+  providerConnectionId: string;
+  agentRevisionId: string;
+  fallback?: RunModelFallback;
+  decidedAt: string;
+}
+
+/** Engine/Provider reported usage. Missing usage is represented by an absent value, never invented zeros. */
+export interface TokenUsage {
+  source: TokenUsageSource;
+  scope: "task" | "router";
+  aggregation: "cumulative" | "incremental";
+  isEstimate: boolean;
+  inputTokens?: number;
+  cachedInputTokens?: number;
+  outputTokens?: number;
+  reasoningOutputTokens?: number;
+  totalTokens?: number;
+  reportedAt: string;
+}
+
 export const agentRevisionOrigins = ["profile-store", "legacy-task"] as const;
 export type AgentRevisionOrigin = (typeof agentRevisionOrigins)[number];
 
@@ -355,6 +419,7 @@ export interface AgentProfileInput {
   model?: string;
   modelSource?: ModelSource;
   modelVerificationStatus?: ModelVerificationStatus;
+  autoModelPolicy?: AutoModelPolicy;
   reasoningEffort?: ReasoningEffort;
   instructions: string;
   permissionMode?: PermissionMode;
@@ -372,6 +437,7 @@ export interface AgentProfile {
   model?: string;
   modelSource: ModelSource;
   modelVerificationStatus: ModelVerificationStatus;
+  autoModelPolicy?: AutoModelPolicy;
   reasoningEffort?: ReasoningEffort;
   instructions: string;
   permissionMode: PermissionMode;
@@ -397,6 +463,7 @@ export interface AgentRevision {
   model?: string;
   modelSource: ModelSource;
   modelVerificationStatus: ModelVerificationStatus;
+  autoModelPolicy?: AutoModelPolicy;
   reasoningEffort?: ReasoningEffort;
   instructions: string;
   permissionMode: PermissionMode;
@@ -408,7 +475,7 @@ export interface AgentRevision {
 
 export interface AgentProfileUpdateParams {
   id: string;
-  patch: Partial<AgentProfileInput>;
+  patch: Partial<AgentProfileInput> & { autoModelPolicy?: AutoModelPolicy | null };
 }
 
 export interface AgentProfileDeleteParams {
@@ -420,6 +487,9 @@ export interface RunStartParams {
   adapter: RunAdapter;
   prompt: string;
   model?: string;
+  modelMode?: "fixed" | "auto";
+  modelSource?: ModelSource;
+  modelVerificationStatus?: ModelVerificationStatus;
   reasoningEffort?: ReasoningEffort;
   permissionMode: PermissionMode;
   sessionId?: string;
@@ -1293,6 +1363,8 @@ export interface PersistedRun {
   providerConnection: ProviderConnectionRef;
   modelSource: ModelSource;
   modelVerificationStatus: ModelVerificationStatus;
+  modelDecision?: RunModelDecision;
+  tokenUsage?: TokenUsage;
   agentSnapshot?: AgentRevision;
   contextFiles: string[];
   contextSnapshot?: ContextSnapshot;
@@ -1679,6 +1751,11 @@ export type RuntimeEvent =
       profile: AgentRevision;
     }
   | {
+      type: "run.model-decision";
+      runId: string;
+      decision: RunModelDecision;
+    }
+  | {
       type: "run.context-snapshot";
       runId: string;
       snapshot: ContextSnapshot;
@@ -1747,12 +1824,7 @@ export type RuntimeEvent =
   | {
       type: "run.usage";
       runId: string;
-      usage: {
-        inputTokens: number;
-        cachedInputTokens: number;
-        outputTokens: number;
-        reasoningOutputTokens: number;
-      };
+      usage: TokenUsage;
     }
   | {
       type: "run.log";
@@ -1914,7 +1986,10 @@ export const runStartParamsSchema = z.object({
   runId: z.string().min(1).max(120),
   adapter: z.enum(runAdapters),
   prompt: z.string().min(1).max(100_000),
-  model: z.string().min(1).max(120).optional(),
+  model: z.string().min(1).max(240).optional(),
+  modelMode: z.enum(["fixed", "auto"]).default("fixed"),
+  modelSource: z.enum(modelSources).optional(),
+  modelVerificationStatus: z.enum(modelVerificationStatuses).optional(),
   reasoningEffort: reasoningEffortSchema.optional(),
   permissionMode: z.enum(permissionModes),
   sessionId: z.string().min(1).max(500).optional(),
@@ -1948,7 +2023,7 @@ export const permissionDecideParamsSchema = z.object({
 const agentIdentifierSchema = z.string().trim().min(1).max(120).regex(/^[a-z0-9][a-z0-9._/-]*$/i);
 const agentProfileNameSchema = z.string().trim().min(1).max(80);
 const agentProfileDescriptionSchema = z.string().trim().max(400);
-const agentProfileModelSchema = z.string().trim().min(1).max(120);
+const agentProfileModelSchema = z.string().trim().min(1).max(240);
 const agentProfileInstructionsSchema = z.string().trim().min(1).max(20_000);
 const agentProfileSkillIdsSchema = z.array(agentIdentifierSchema).max(64);
 const agentProfileToolIdsSchema = z.array(agentIdentifierSchema).max(64);
@@ -2261,6 +2336,92 @@ export const sessionRevisionRestoreParamsSchema = z.object({
 
 export const modelSourceSchema = z.enum(modelSources);
 export const modelVerificationStatusSchema = z.enum(modelVerificationStatuses);
+export const autoModelStrategySchema = z.enum(autoModelStrategies);
+export const autoModelCandidateSchema = z.object({
+  model: z.string().trim().min(1).max(240),
+  source: z.enum(autoModelCandidateSources),
+}).strict();
+export const autoModelPolicySchema = z.object({
+  simpleModel: autoModelCandidateSchema,
+  complexModel: autoModelCandidateSchema,
+  strategy: autoModelStrategySchema,
+  fallbackEnabled: z.boolean(),
+  allowlist: z.array(autoModelCandidateSchema).min(1).max(100),
+}).strict().superRefine((policy, context) => {
+  const allowed = new Set(policy.allowlist.map((candidate) => candidate.model));
+  if (!allowed.has(policy.simpleModel.model)) {
+    context.addIssue({ code: "custom", path: ["simpleModel"], message: "Simple model must be in the Auto allowlist" });
+  }
+  if (!allowed.has(policy.complexModel.model)) {
+    context.addIssue({ code: "custom", path: ["complexModel"], message: "Complex model must be in the Auto allowlist" });
+  }
+  if (allowed.size !== policy.allowlist.length) {
+    context.addIssue({ code: "custom", path: ["allowlist"], message: "Auto allowlist models must be unique" });
+  }
+});
+
+export const runModelDecisionSchema = z.object({
+  id: z.string().trim().min(1).max(240),
+  runId: z.string().trim().min(1).max(120),
+  mode: z.enum(["fixed", "auto"]),
+  classification: z.enum(runModelClassifications),
+  actualModel: z.string().trim().min(1).max(240),
+  modelSource: modelSourceSchema,
+  strategy: autoModelStrategySchema.optional(),
+  score: z.number().int().optional(),
+  threshold: z.number().int().nonnegative().optional(),
+  reasonCodes: z.array(z.string().trim().min(1).max(120)).max(100),
+  rationale: z.string().trim().min(1).max(4_000),
+  allowlist: z.array(z.string().trim().min(1).max(240)).max(100),
+  engine: z.enum(runAdapters),
+  providerConnectionId: z.string().trim().min(1).max(240),
+  agentRevisionId: agentRevisionIdentifierSchema,
+  fallback: z.object({
+    fromModel: z.string().trim().min(1).max(240),
+    toModel: z.string().trim().min(1).max(240),
+    reason: z.string().trim().min(1).max(4_000),
+  }).strict().optional(),
+  decidedAt: z.iso.datetime({ offset: true }),
+}).strict().superRefine((decision, context) => {
+  if (decision.mode === "fixed" && decision.classification !== "fixed") {
+    context.addIssue({ code: "custom", path: ["classification"], message: "Fixed decisions must use the fixed classification" });
+  }
+  if (decision.mode === "auto" && decision.classification === "fixed") {
+    context.addIssue({ code: "custom", path: ["classification"], message: "Auto decisions must classify the Run" });
+  }
+  if (decision.mode === "auto" && !decision.allowlist.includes(decision.actualModel)) {
+    context.addIssue({ code: "custom", path: ["actualModel"], message: "Auto decision must stay inside its allowlist" });
+  }
+  if (decision.fallback && (decision.fallback.toModel !== decision.actualModel
+    || !decision.allowlist.includes(decision.fallback.fromModel)
+    || !decision.allowlist.includes(decision.fallback.toModel))) {
+    context.addIssue({ code: "custom", path: ["fallback"], message: "Fallback must resolve inside the allowlist to the actual model" });
+  }
+});
+
+const tokenCountSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+export const tokenUsageSchema = z.object({
+  source: z.enum(tokenUsageSources),
+  scope: z.enum(["task", "router"]),
+  aggregation: z.enum(["cumulative", "incremental"]),
+  isEstimate: z.boolean(),
+  inputTokens: tokenCountSchema.optional(),
+  cachedInputTokens: tokenCountSchema.optional(),
+  outputTokens: tokenCountSchema.optional(),
+  reasoningOutputTokens: tokenCountSchema.optional(),
+  totalTokens: tokenCountSchema.optional(),
+  reportedAt: z.iso.datetime({ offset: true }),
+}).strict().superRefine((usage, context) => {
+  if (usage.source === "estimate" && !usage.isEstimate) {
+    context.addIssue({ code: "custom", path: ["isEstimate"], message: "Estimated usage must be labeled" });
+  }
+  if (usage.source !== "estimate" && usage.isEstimate) {
+    context.addIssue({ code: "custom", path: ["source"], message: "Exact usage cannot use an estimated label" });
+  }
+  if ([usage.inputTokens, usage.cachedInputTokens, usage.outputTokens, usage.reasoningOutputTokens, usage.totalTokens].every((value) => value === undefined)) {
+    context.addIssue({ code: "custom", message: "Token usage must contain at least one reported value" });
+  }
+});
 
 export const agentProfileInputSchema = z.object({
   name: agentProfileNameSchema,
@@ -2270,6 +2431,7 @@ export const agentProfileInputSchema = z.object({
   model: agentProfileModelSchema.optional(),
   modelSource: modelSourceSchema.optional(),
   modelVerificationStatus: modelVerificationStatusSchema.optional(),
+  autoModelPolicy: autoModelPolicySchema.optional(),
   reasoningEffort: reasoningEffortSchema.optional(),
   instructions: agentProfileInstructionsSchema,
   permissionMode: z.enum(permissionModes).default("acceptEdits"),
@@ -2283,6 +2445,7 @@ export const agentProfileSchema = agentProfileInputSchema.extend({
   providerConnection: providerConnectionRefSchema,
   modelSource: modelSourceSchema,
   modelVerificationStatus: modelVerificationStatusSchema,
+  autoModelPolicy: autoModelPolicySchema.optional(),
   latestRevisionId: agentRevisionIdentifierSchema,
   revisionNumber: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
   createdAt: z.iso.datetime({ offset: true }),
@@ -2308,6 +2471,7 @@ export const agentRevisionSchema = z.object({
   model: agentProfileModelSchema.optional(),
   modelSource: modelSourceSchema,
   modelVerificationStatus: modelVerificationStatusSchema,
+  autoModelPolicy: autoModelPolicySchema.optional(),
   reasoningEffort: reasoningEffortSchema.optional(),
   instructions: agentProfileInstructionsSchema,
   permissionMode: z.enum(permissionModes),
@@ -2339,6 +2503,7 @@ export const agentProfilePatchSchema = z.object({
   model: agentProfileModelSchema.optional(),
   modelSource: modelSourceSchema.optional(),
   modelVerificationStatus: modelVerificationStatusSchema.optional(),
+  autoModelPolicy: autoModelPolicySchema.nullable().optional(),
   reasoningEffort: reasoningEffortSchema.optional(),
   instructions: agentProfileInstructionsSchema.optional(),
   permissionMode: z.enum(permissionModes).optional(),
@@ -2711,7 +2876,7 @@ export const persistedRunSchema = z.object({
   status: z.enum(persistedRunStatuses),
   prompt: z.string().max(100_000),
   permissionMode: z.enum(permissionModes),
-  model: z.string().max(120).optional(),
+  model: z.string().max(240).optional(),
   reasoningEffort: reasoningEffortSchema.optional(),
   sessionId: z.string().max(500).optional(),
   sessionLink: nativeSessionLinkSchema.optional(),
@@ -2722,6 +2887,8 @@ export const persistedRunSchema = z.object({
   providerConnection: providerConnectionRefSchema,
   modelSource: modelSourceSchema,
   modelVerificationStatus: modelVerificationStatusSchema,
+  modelDecision: runModelDecisionSchema.optional(),
+  tokenUsage: tokenUsageSchema.optional(),
   agentSnapshot: agentRevisionSchema.optional(),
   contextFiles: z.array(z.string().min(1).max(4_096)).max(500).default([]),
   contextSnapshot: contextSnapshotSchema.optional(),
@@ -2742,6 +2909,19 @@ export const persistedRunSchema = z.object({
   verifications: z.array(verificationEvidenceSchema).max(20_000).default([]),
   events: z.array(persistedRunEventSchema).max(50_000),
 }).strict().superRefine((run, context) => {
+  if (run.modelDecision) {
+    if (run.modelDecision.runId !== run.id) {
+      context.addIssue({ code: "custom", path: ["modelDecision", "runId"], message: "Model Decision must match its Run" });
+    }
+    if (run.modelDecision.engine !== run.adapter
+      || run.modelDecision.providerConnectionId !== run.providerConnection.id
+      || run.modelDecision.agentRevisionId !== run.agentRevisionId) {
+      context.addIssue({ code: "custom", path: ["modelDecision"], message: "Model Decision must stay inside Run Agent, Engine, and Connection boundaries" });
+    }
+    if (run.model && run.modelDecision.actualModel !== run.model) {
+      context.addIssue({ code: "custom", path: ["modelDecision", "actualModel"], message: "Model Decision must match the Run model" });
+    }
+  }
   if (run.providerConnection.engine !== run.adapter) {
     context.addIssue({ code: "custom", path: ["providerConnection", "engine"], message: "Run Connection Engine must match its adapter" });
   }

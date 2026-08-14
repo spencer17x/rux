@@ -26,7 +26,7 @@ const init = {
 };
 if (resumeIndex < 0) init.session_id = 'fresh-session-id';
 console.log(JSON.stringify(init));
-console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false }));
+console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false, usage: { input_tokens: 7, cache_creation_input_tokens: 2, cache_read_input_tokens: 3, output_tokens: 5 } }));
 `, "utf8");
   chmodSync(executable, 0o755);
 
@@ -99,6 +99,13 @@ console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false
   assert.equal(resumedMetadata.sessionId, "existing-session-id");
   const resumedStarted = events.find((event) => event.type === "run.started" && event.runId === "resumed-run");
   assert.equal(resumedStarted.resumeSessionId, "existing-session-id");
+  const usage = events.find((event) => event.type === "run.usage" && event.runId === "fresh-run").usage;
+  assert.equal(usage.source, "engine");
+  assert.equal(usage.aggregation, "cumulative");
+  assert.equal(usage.inputTokens, 12);
+  assert.equal(usage.cachedInputTokens, 3);
+  assert.equal(usage.outputTokens, 5);
+  assert.equal(usage.totalTokens, 17);
 });
 
 test("fails and terminates Claude when one JSONL line exceeds the bounded buffer", async (t) => {

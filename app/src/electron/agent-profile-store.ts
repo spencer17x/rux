@@ -116,6 +116,14 @@ function cloneProfile(profile: AgentProfile): AgentProfile {
   return {
     ...profile,
     providerConnection: { ...profile.providerConnection },
+    ...(profile.autoModelPolicy ? {
+      autoModelPolicy: {
+        ...profile.autoModelPolicy,
+        simpleModel: { ...profile.autoModelPolicy.simpleModel },
+        complexModel: { ...profile.autoModelPolicy.complexModel },
+        allowlist: profile.autoModelPolicy.allowlist.map((candidate) => ({ ...candidate })),
+      },
+    } : {}),
     skillIds: [...profile.skillIds],
     toolIds: [...profile.toolIds],
   };
@@ -125,6 +133,14 @@ function cloneRevision(revision: AgentRevision): AgentRevision {
   return {
     ...revision,
     providerConnection: { ...revision.providerConnection },
+    ...(revision.autoModelPolicy ? {
+      autoModelPolicy: {
+        ...revision.autoModelPolicy,
+        simpleModel: { ...revision.autoModelPolicy.simpleModel },
+        complexModel: { ...revision.autoModelPolicy.complexModel },
+        allowlist: revision.autoModelPolicy.allowlist.map((candidate) => ({ ...candidate })),
+      },
+    } : {}),
     skillIds: [...revision.skillIds],
     toolIds: [...revision.toolIds],
   };
@@ -155,6 +171,7 @@ function revisionFromProfile(profile: AgentProfile, createdAt: string): AgentRev
     ...(profile.model ? { model: profile.model } : {}),
     modelSource: profile.modelSource,
     modelVerificationStatus: profile.modelVerificationStatus,
+    ...(profile.autoModelPolicy ? { autoModelPolicy: profile.autoModelPolicy } : {}),
     ...(profile.reasoningEffort ? { reasoningEffort: profile.reasoningEffort } : {}),
     instructions: profile.instructions,
     permissionMode: profile.permissionMode,
@@ -279,6 +296,7 @@ export class AgentProfileStore {
       const profile = agentProfileSchema.parse({
         ...current,
         ...parsedPatch,
+        ...(parsedPatch.autoModelPolicy === null ? { autoModelPolicy: undefined } : {}),
         ...modelState,
         providerConnection: parsedPatch.providerConnection
           ?? (backend === current.backend ? current.providerConnection : officialCliProviderConnection(backend)),

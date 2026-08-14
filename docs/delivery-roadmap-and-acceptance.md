@@ -84,8 +84,8 @@ P1 明确不包含：
 | P1-E3 | 已验证 | 显式刷新、安全追加、外部差异候选、确认重建、旧 Revision 恢复与非敏感审计已通过存储和边界自动化 |
 | P1-E4 | 已完成 | Handoff 主链路与用户触发的来源 Agent 隔离摘要均已验证 |
 | P1-E5 | 已实现 | Task/Workspace 占用、影响预览、解除关联、分层删除、Markdown/JSON 导出与安全负向测试已完成 |
-| P1-E6 | 未开始 | 后续完成 P1 全链路桌面发布验收 |
-| P2-E0 | 已规划 | Auto Model Policy、确定性简单/复杂路由、同 Connection 白名单、Run Model Decision 与 Token Usage |
+| P1-E6 | 已完成 | 同一隔离打包环境已贯通显式检测、归属发现、预览导入、刷新版本、Handoff、重启恢复与本地数据影响预览；验收中发现的解除关联误导文案已修复并复测 |
+| P2-E0 | 已完成 | Auto Model Policy、确定性简单/复杂路由、同 Connection 白名单、Run Model Decision、显式回退与 Token Usage 已通过自动化和打包桌面验收 |
 | P2-E1 | 首版已实现 | Responses-compatible Connection、OS 加密凭据、Renderer 隔离、显式测试与无需 CLI 的文件工具 Run；命令沙箱、更多协议和能力协商待续 |
 
 ## 4. 依赖顺序
@@ -357,7 +357,9 @@ flowchart LR
 
 退出条件：全部 P1 验收项通过，且 P1 发布门禁满足。
 
-## P2 已确认规划
+实现记录（2026-08-14）：P1-E6 已完成。同一未签名 macOS 打包应用在独立 `--user-data-dir`、临时 Workspace、Fake Codex App Server 与 Fake Claude CLI 中完成干净启动、显式 Agent 检测、当前/待归属/需授权会话发现、选择后预览、导入并继续、手动刷新与版本审计、确认式 Context Handoff、重启恢复和本地数据影响预览。验收发现 `解除关联` 错误复用了删除动作的不可恢复说明；Renderer 已按 unlink、remove-imported 和 delete-task 分别显示准确后果，重新打包复测通过。证据见 `design-audit/p1-release-candidate/`；导出和分层删除桌面证据由 `design-audit/p1-local-data-management/` 补充。例行旅程未访问真实 Provider、真实完整历史或真实凭据。
+
+## P2 交付状态
 
 ### P2-E0：Auto 模型路由与 Token 证据
 
@@ -374,6 +376,8 @@ flowchart LR
 - 未报告 Token 保持未知，估算值显式标记；未来模型型路由器单独记录用量与来源。
 
 退出条件：P2-AUTO-001 至 P2-AUTO-012 全部通过。
+
+实现记录（2026-08-14）：协议升级到 v7，Desktop Runtime、stdio Host、Renderer fallback 和 Rust TUI 已共享 Auto Policy、Model Decision 与 Token Usage 合同。隔离打包应用验证了 Revision 配置、简单 `fake-fast`、复杂 `fake-model`、Engine Token 明细、未报告状态、目录移除后 `fake-model → fake-fast` 白名单内回退，以及 Rux Native Session 不声明逐 Run 换模时阻止 `native-a → native-b` 并要求保持固定模型或创建新 Task。验收中修复了空 Workspace Starter 切换自定义 Agent 被重置为内置 Revision，以及预执行失败 Run 遗失自定义 `profileId` 导致无法持久化的问题。证据见 `design-audit/p2-auto-model-routing/`。
 
 ### P2-E1：RUX 原生 API Provider
 
@@ -566,7 +570,7 @@ flowchart LR
 | P1-DATA-009 | 导出不含凭据，并提示潜在敏感内容 | U/I/S：Secret fixture/export scan | D-P1-24 |
 | P1-DATA-010 | 删除后可从仍存在的 Native Session 重新导入，不承诺本地恢复 | I/R：Delete/reimport test | D-P1-25 重新导入 |
 
-### 9.7 P2 Auto 模型路由验收矩阵（规划）
+### 9.7 P2 Auto 模型路由验收矩阵（已通过）
 
 | ID | 验收行为 | 自动化证据 | 桌面证据 |
 | --- | --- | --- | --- |
@@ -636,7 +640,7 @@ flowchart LR
 | 数据安全 | 导出扫描、删除范围、Revision 恢复和 Native Session 无副作用测试通过 |
 | 证据 | `design-audit/p1-session-ingestion/` 保存稳定截图、路径、结果和已知限制 |
 
-### 10.4 P2-E0 Auto Release Gate（规划）
+### 10.4 P2-E0 Auto Release Gate（已通过）
 
 | Gate | 必须满足 |
 | --- | --- |
@@ -683,7 +687,7 @@ flowchart LR
 - Workspace 存储占用、解除关联、删除范围预览。
 - Markdown/JSON 导出选择与敏感内容提示。
 
-### P2-E0 最小证据集（规划）
+### P2-E0 最小证据集（已完成）
 
 - Agent Revision 中的简单模型、复杂模型、策略和白名单。
 - 同一 Task 的简单任务与复杂任务实际模型对比。

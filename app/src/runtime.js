@@ -46,6 +46,9 @@ function normalizeRunArguments(options, emit) {
       adapter,
       permissionMode: options?.permissionMode || "acceptEdits",
       model: options?.model,
+      modelMode: options?.modelMode || "fixed",
+      modelSource: options?.modelSource,
+      modelVerificationStatus: options?.modelVerificationStatus,
       reasoningEffort: options?.reasoningEffort,
       sessionId: options?.sessionId,
       profileId: options?.profileId,
@@ -321,6 +324,7 @@ export function createMockRuntime() {
           prompt,
           permissionMode: "acceptEdits",
           model: normalized.options.model,
+          modelMode: normalized.options.modelMode,
           reasoningEffort: normalized.options.reasoningEffort,
           profileId: normalized.options.profileId,
           agentRevisionId: normalized.options.agentRevisionId,
@@ -554,6 +558,9 @@ function createDesktopRuntime(api) {
         prompt,
         permissionMode: normalized.options.permissionMode,
         ...(normalized.options.model ? { model: normalized.options.model } : {}),
+        modelMode: normalized.options.modelMode,
+        ...(normalized.options.modelSource ? { modelSource: normalized.options.modelSource } : {}),
+        ...(normalized.options.modelVerificationStatus ? { modelVerificationStatus: normalized.options.modelVerificationStatus } : {}),
         ...(normalized.options.reasoningEffort ? { reasoningEffort: normalized.options.reasoningEffort } : {}),
         ...(normalized.options.sessionId ? { sessionId: normalized.options.sessionId } : {}),
         ...(normalized.options.profileId ? { profileId: normalized.options.profileId } : {}),
@@ -563,11 +570,15 @@ function createDesktopRuntime(api) {
       }).catch((error) => {
         const emit = activeRuns.get(runId);
         if (!emit) return;
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        const isSessionModelSwitchRestriction = /Native Session .*按 Run 切换模型/.test(errorMessage);
         emit({
           type: "run.failed",
           runId,
-          error: error instanceof Error ? error.message : String(error),
-          ...(normalized.options.sessionId ? { resumeSessionId: normalized.options.sessionId } : {}),
+          error: errorMessage,
+          ...(normalized.options.sessionId && !isSessionModelSwitchRestriction
+            ? { resumeSessionId: normalized.options.sessionId }
+            : {}),
         });
         activeRuns.delete(runId);
       });

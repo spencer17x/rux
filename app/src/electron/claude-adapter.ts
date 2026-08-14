@@ -556,6 +556,35 @@ export class ClaudeCodeAdapter {
       return;
     }
 
+    const usage = isRecord(event.usage) ? event.usage : undefined;
+    if (usage) {
+      const uncachedInput = numberValue(usage.input_tokens);
+      const cacheCreationInput = numberValue(usage.cache_creation_input_tokens) ?? 0;
+      const cachedInputTokens = numberValue(usage.cache_read_input_tokens);
+      const outputTokens = numberValue(usage.output_tokens);
+      const inputTokens = uncachedInput === undefined && cachedInputTokens === undefined && cacheCreationInput === 0
+        ? undefined
+        : (uncachedInput ?? 0) + cacheCreationInput + (cachedInputTokens ?? 0);
+      const totalTokens = inputTokens !== undefined && outputTokens !== undefined ? inputTokens + outputTokens : undefined;
+      if ([inputTokens, cachedInputTokens, outputTokens, totalTokens].some((value) => value !== undefined)) {
+        this.emit({
+          type: "run.usage",
+          runId,
+          usage: {
+            source: "engine",
+            scope: "task",
+            aggregation: "cumulative",
+            isEstimate: false,
+            ...(inputTokens === undefined ? {} : { inputTokens }),
+            ...(cachedInputTokens === undefined ? {} : { cachedInputTokens }),
+            ...(outputTokens === undefined ? {} : { outputTokens }),
+            ...(totalTokens === undefined ? {} : { totalTokens }),
+            reportedAt: new Date().toISOString(),
+          },
+        });
+      }
+    }
+
     this.emit({
       type: "run.completed",
       runId,
