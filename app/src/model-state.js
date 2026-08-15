@@ -19,7 +19,7 @@ export function modelSelectionState(adapter, model, catalogModels = [], verified
   if (!value || /\bdefault\b/i.test(value)) {
     return { modelSource: "engine-default", modelVerificationStatus: "not-required" };
   }
-  if (adapter === "codex" && catalogModels.some((item) => item.model === value || item.id === value)) {
+  if (catalogModels.some((item) => item.model === value || item.id === value)) {
     return { modelSource: "engine-catalog", modelVerificationStatus: "not-required" };
   }
   if (verifiedModels.some((item) => (typeof item === "string" ? item : item.model) === value)) {

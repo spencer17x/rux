@@ -1772,6 +1772,7 @@ function Composer({ task, draft, onDraft, onSend, onAgentChange, onModelChange, 
   const modelOptions = Array.from(new Set([
     task.model,
     ...(taskAutoModelPolicy ? ["Auto"] : []),
+    ...(selectedAgentChoice?.catalogModels || []).map((item) => item.model || item.id),
     ...(selectedAgentChoice?.verifiedModels || []).map((item) => item.model),
     ...(runtimeAdapterForTask(task) === "codex"
       ? ["Rux default", ...(codexModels || []).map((model) => model.model)]
@@ -3070,6 +3071,7 @@ function NewTaskDialog({ open, onClose, onCreate, onOpenAccounts, agentChoices, 
   const modelOptions = Array.from(new Set([
     selectedModel,
     ...(selectedChoice?.autoModelPolicy ? ["Auto"] : []),
+    ...(selectedChoice?.catalogModels || []).map((item) => item.model || item.id),
     ...(selectedChoice?.verifiedModels || []).map((item) => item.model),
     ...(selectedChoice?.adapter === "codex"
       ? ["Rux default", ...(codexModels || []).map((item) => item.model)]
@@ -3226,6 +3228,7 @@ function NewTaskDialog({ open, onClose, onCreate, onOpenAccounts, agentChoices, 
 function AccountsDialog({ open, state, adapters, agentChoices, selectedAgentId, canCreateTask, nativeConnections, nativeBusy, checking, loginProvider, error, notice, onClose, onDetect, onLogin, onCancelLogin, onSaveNative, onTestNative, onDeleteNative, onUseAgent, onOpenSettings }) {
   const dialogRef = useDialogFocus(open, onClose);
   const [nativeDraft, setNativeDraft] = useState({ label: "OpenAI", baseUrl: "https://api.openai.com/v1", defaultModel: "", apiKey: "" });
+  const [editingConnectionId, setEditingConnectionId] = useState("");
   if (!open) return null;
   const hasDetected = Boolean(state);
   const checkedAt = state?.checkedAt
@@ -3256,14 +3259,15 @@ function AccountsDialog({ open, state, adapters, agentChoices, selectedAgentId, 
             {nativeConnections.length ? <div className="native-provider-connections">{nativeConnections.map((connection) => {
               const agent = agentChoices.find((choice) => choice.providerConnection?.id === connection.id);
               const isSelected = Boolean(agent && agent.id === selectedAgentId);
-              return <article key={connection.id}><span><strong>{connection.label}</strong><small>{connection.baseUrl} · {connection.defaultModel}</small>{connection.lastTestDetail ? <small className={connection.lastTestStatus === "error" ? "is-error" : "is-success"}>{connection.lastTestDetail}</small> : null}</span><span className="native-provider-actions">{agent?.available ? <>{isSelected ? <span className="account-current-agent-badge"><Check size={13} />当前使用</span> : null}<button type="button" className="account-use-agent-button" disabled={!canCreateTask} title={canCreateTask ? `使用 ${agent.name} 新建任务` : "请先打开项目"} onClick={() => onUseAgent(agent.id)}><SquarePen size={13} />新建任务</button></> : null}<button type="button" className="secondary-button" disabled={nativeBusy} onClick={() => onTestNative(connection.id)}>测试</button><button type="button" className="danger-ghost-button" disabled={nativeBusy} onClick={() => onDeleteNative(connection.id)}>删除</button></span></article>;
+              return <article key={connection.id}><span><strong>{connection.label}</strong><small>{connection.baseUrl} · {connection.defaultModel}</small>{connection.modelCatalog ? <small>Provider 目录 · {connection.modelCatalog.models.length} 个模型 · {new Date(connection.modelCatalog.refreshedAt).toLocaleString("zh-CN")}</small> : <small>目录未刷新 · 可使用默认模型、已验证模型或手动 ID</small>}{connection.capabilities ? <small>逐 Run 换模：{connection.capabilities.perRunModelSelection === true ? "Provider 已声明支持" : connection.capabilities.perRunModelSelection === false ? "Provider 已声明不支持" : "Provider 未报告"}</small> : null}{connection.lastTestDetail ? <small className={connection.lastTestStatus === "error" ? "is-error" : "is-success"}>{connection.lastTestDetail}</small> : null}</span><span className="native-provider-actions">{agent?.available ? <>{isSelected ? <span className="account-current-agent-badge"><Check size={13} />当前使用</span> : null}<button type="button" className="account-use-agent-button" disabled={!canCreateTask} title={canCreateTask ? `使用 ${agent.name} 新建任务` : "请先打开项目"} onClick={() => onUseAgent(agent.id)}><SquarePen size={13} />新建任务</button></> : null}<button type="button" className="secondary-button" disabled={nativeBusy} onClick={() => { setEditingConnectionId(connection.id); setNativeDraft({ label: connection.label, baseUrl: connection.baseUrl, defaultModel: connection.defaultModel, apiKey: "" }); }}>编辑</button><button type="button" className="secondary-button" disabled={nativeBusy} onClick={() => onTestNative(connection.id)}>刷新目录与测试</button><button type="button" className="danger-ghost-button" disabled={nativeBusy} onClick={() => onDeleteNative(connection.id)}>删除</button></span></article>;
             })}</div> : null}
-            <form className="native-provider-form" onSubmit={(event) => { event.preventDefault(); if (!nativeDraft.label.trim() || !nativeDraft.defaultModel.trim() || !nativeDraft.apiKey) return; onSaveNative({ label: nativeDraft.label.trim(), providerType: "openai-responses", baseUrl: nativeDraft.baseUrl.trim(), defaultModel: nativeDraft.defaultModel.trim(), apiKey: nativeDraft.apiKey }).then(() => setNativeDraft((draft) => ({ ...draft, apiKey: "" }))).catch(() => undefined); }}>
+            <form className="native-provider-form" onSubmit={(event) => { event.preventDefault(); if (!nativeDraft.label.trim() || !nativeDraft.defaultModel.trim() || (!editingConnectionId && !nativeDraft.apiKey)) return; onSaveNative({ ...(editingConnectionId ? { id: editingConnectionId } : {}), label: nativeDraft.label.trim(), providerType: "openai-responses", baseUrl: nativeDraft.baseUrl.trim(), defaultModel: nativeDraft.defaultModel.trim(), ...(nativeDraft.apiKey ? { apiKey: nativeDraft.apiKey } : {}) }).then((saved) => { if (!saved) return; setEditingConnectionId(""); setNativeDraft({ label: "OpenAI", baseUrl: "https://api.openai.com/v1", defaultModel: "", apiKey: "" }); }).catch(() => undefined); }}>
               <label><span>名称</span><input value={nativeDraft.label} maxLength={80} onChange={(event) => setNativeDraft((draft) => ({ ...draft, label: event.target.value }))} /></label>
               <label><span>Base URL</span><input value={nativeDraft.baseUrl} onChange={(event) => setNativeDraft((draft) => ({ ...draft, baseUrl: event.target.value }))} /></label>
               <label><span>默认模型</span><input value={nativeDraft.defaultModel} placeholder="例如 gpt-5.6" onChange={(event) => setNativeDraft((draft) => ({ ...draft, defaultModel: event.target.value }))} /></label>
-              <label><span>API Key</span><input type="password" autoComplete="off" value={nativeDraft.apiKey} placeholder="仅提交到 Main 安全边界" onChange={(event) => setNativeDraft((draft) => ({ ...draft, apiKey: event.target.value }))} /></label>
-              <button type="submit" className="primary-button" disabled={nativeBusy || !nativeDraft.label.trim() || !nativeDraft.baseUrl.trim() || !nativeDraft.defaultModel.trim() || !nativeDraft.apiKey}>{nativeBusy ? <LoaderCircle size={14} className="status-running" /> : <Plus size={14} />}添加 Connection</button>
+              <label><span>API Key</span><input type="password" autoComplete="off" value={nativeDraft.apiKey} placeholder={editingConnectionId ? "留空保留当前 Key；填写则替换" : "仅提交到 Main 安全边界"} onChange={(event) => setNativeDraft((draft) => ({ ...draft, apiKey: event.target.value }))} /></label>
+              <button type="submit" className="primary-button" disabled={nativeBusy || !nativeDraft.label.trim() || !nativeDraft.baseUrl.trim() || !nativeDraft.defaultModel.trim() || (!editingConnectionId && !nativeDraft.apiKey)}>{nativeBusy ? <LoaderCircle size={14} className="status-running" /> : editingConnectionId ? <Check size={14} /> : <Plus size={14} />}{editingConnectionId ? (nativeDraft.apiKey ? "确认替换 Key" : "保存修改") : "添加 Connection"}</button>
+              {editingConnectionId ? <button type="button" className="secondary-button" disabled={nativeBusy} onClick={() => { setEditingConnectionId(""); setNativeDraft({ label: "OpenAI", baseUrl: "https://api.openai.com/v1", defaultModel: "", apiKey: "" }); }}>取消编辑</button> : null}
             </form>
             <p className="native-provider-security"><ShieldCheck size={13} />API Key 由 Main 使用操作系统加密能力保存；Renderer、普通 IPC、日志和导出都不会获得原始值。</p>
           </section>
@@ -3385,7 +3389,7 @@ function AccountsDialog({ open, state, adapters, agentChoices, selectedAgentId, 
   );
 }
 
-function SessionDiscoveryDialog({ open, workspace, engine, state, previewState, importedTasks, onEngine, onDiscover, onCancel, onPreview, onImport, onClose, onOpenWorkspace }) {
+function SessionDiscoveryDialog({ open, workspace, engine, state, previewState, importedTasks, onEngine, onDiscover, onCancel, onPreview, onImport, onMigrate, onClose, onOpenWorkspace }) {
   const dialogRef = useDialogFocus(open, onClose);
   if (!open) return null;
   const groups = [
@@ -3451,7 +3455,9 @@ function SessionDiscoveryDialog({ open, workspace, engine, state, previewState, 
                         {item.attribution.reason ? <p>{item.attribution.reason}</p> : null}
                       </span>
                       {importedBindingFor(item) ? <span className="session-metadata-only">{importedStatusLabel(importedBindingFor(item))}</span> : null}
-                      {key === "authorizationRequired" ? <button type="button" className="secondary-button" onClick={onOpenWorkspace}>打开项目…</button> : key === "current" ? (
+                      {key === "authorizationRequired" ? <button type="button" className="secondary-button" onClick={onOpenWorkspace}>打开项目…</button> : key === "migrationSuggestions" ? (
+                        <button type="button" className="secondary-button" onClick={() => onMigrate(item)} disabled={busy}>迁移到 {item.attribution.workspaceName}</button>
+                      ) : key === "current" ? (
                         <button type="button" className="secondary-button" onClick={() => onPreview(item)} disabled={["loading", "importing"].includes(previewState.status)}>
                           {previewState.status === "loading" && previewState.item?.identityKey === item.identityKey ? <LoaderCircle size={13} className="status-running" /> : <Eye size={13} />}预览
                         </button>
@@ -3800,9 +3806,13 @@ function AgentsDialog({ open, profiles, adapters, nativeConnections, codexModels
       ? selectedProfile.providerConnection.id
       : defaultProviderConnectionForAdapter(draft.backend).id;
   const verifiedModels = verifiedModelHistory(tasks, draft.backend, selectedConnectionId);
+  const nativeCatalogModels = draft.backend === "rux-native"
+    ? (nativeConnections.find((connection) => connection.id === selectedConnectionId)?.modelCatalog?.models || [])
+    : [];
   const autoCandidates = Array.from(new Map([
     ...verifiedModels.map((item) => [item.model, { model: item.model, source: "verified-history" }]),
     ...(draft.backend === "codex" ? codexModels.map((item) => [item.model, { model: item.model, source: "engine-catalog" }]) : []),
+    ...nativeCatalogModels.map((item) => [item.id, { model: item.id, source: "engine-catalog" }]),
   ]).values());
   const candidateFor = (model) => autoCandidates.find((candidate) => candidate.model === model);
   const autoPolicyValid = !draft.autoEnabled || Boolean(
@@ -3882,7 +3892,7 @@ function AgentsDialog({ open, profiles, adapters, nativeConnections, codexModels
               </select></label>
               {draft.backend === "rux-native" ? <label><span>原生 Provider</span><select required value={draft.providerConnectionId} onChange={(event) => update("providerConnectionId", event.target.value)}><option value="">选择 Connection</option>{nativeConnections.map((connection) => <option key={connection.id} value={connection.id}>{connection.label} · {connection.defaultModel}</option>)}</select></label> : null}
               <label className="is-wide"><span>描述</span><input value={draft.description} onChange={(event) => update("description", event.target.value)} maxLength={400} /></label>
-              <label><span>模型（可选）</span><input value={draft.model} onChange={(event) => update("model", event.target.value)} placeholder="使用底座默认模型" /></label>
+              <label><span>模型（可选）</span><input list="agent-model-catalog" value={draft.model} onChange={(event) => update("model", event.target.value)} placeholder="使用底座默认模型" /><datalist id="agent-model-catalog">{(draft.backend === "codex" ? codexModels.map((item) => item.model) : nativeCatalogModels.map((item) => item.id)).map((model) => <option key={model} value={model} />)}</datalist></label>
               <label><span>推理强度（可选）</span><input value={draft.reasoningEffort} onChange={(event) => update("reasoningEffort", event.target.value)} placeholder="使用模型默认值" /></label>
               <label><span>Permission</span><select value={draft.permissionMode} onChange={(event) => update("permissionMode", event.target.value)}>{permissionOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}</select></label>
               <fieldset className="agent-auto-policy is-wide">
@@ -4225,6 +4235,8 @@ export function App() {
       const nativeConnectionReady = profile.backend === "rux-native" && nativeConnections.some((connection) => connection.id === profile.providerConnection.id && connection.hasCredential);
       const authenticationReady = profile.backend === "rux-native" ? nativeConnectionReady : provider?.status === "connected";
       const verifiedModels = verifiedModelHistory(tasks, profile.backend, profile.providerConnection.id);
+      const nativeConnection = profile.backend === "rux-native" ? nativeConnections.find((connection) => connection.id === profile.providerConnection.id) : undefined;
+      const catalogModels = profile.backend === "codex" ? codexCatalog.models : nativeConnection?.modelCatalog?.models || [];
       return {
         id: profile.id,
         name: profile.name,
@@ -4249,7 +4261,9 @@ export function App() {
         model: profile.model || (profile.backend === "codex" ? codexSettings.model : profile.backend === "rux-native" ? nativeConnections.find((connection) => connection.id === profile.providerConnection.id)?.defaultModel || "Provider default" : "Claude default"),
         modelSource: profile.modelSource,
         modelVerificationStatus: profile.modelVerificationStatus,
+        ...modelSelectionState(profile.backend, profile.model || nativeConnection?.defaultModel, catalogModels, verifiedModels),
         autoModelPolicy: profile.autoModelPolicy,
+        catalogModels,
         verifiedModels,
         reasoningEffort: profile.reasoningEffort || (profile.backend === "codex" ? codexSettings.reasoningEffort : ""),
         permissionMode: profile.permissionMode,
@@ -4683,6 +4697,12 @@ export function App() {
     }
     if (event.type === "assistant.message") {
       setStreamingMessagesByTask((state) => clearStreamingAssistantMessages(state, taskId, event));
+    } else if (event.type === "run.workspace-changed") {
+      window.setTimeout(() => {
+        void refreshChanges();
+        if (event.source === "file-tool" && selectedTask.id === taskId) void refreshContext();
+      }, 80);
+      return;
     } else if (["run.completed", "run.cancelled", "run.failed"].includes(event.type)) {
       setStreamingMessagesByTask((state) => clearStreamingAssistantMessages(state, taskId, {
         runId: event.runId,
@@ -5722,6 +5742,32 @@ export function App() {
     }
   };
 
+  const migrateDiscoveredSession = async (item) => {
+    const runtime = runtimeRef.current;
+    const targetWorkspace = workspaceState.recent.find((workspace) => workspace.id === item.attribution.workspaceId);
+    if (!runtime || !targetWorkspace || !item.attribution.previousWorkspaceId) return;
+    const imported = workspaceTasks.find((task) => task.importedSession?.identityKey === item.identityKey);
+    const impact = imported
+      ? `会把本地 Task「${imported.title}」及其 Projection 移到项目「${targetWorkspace.name}」，不会复制 Task，也不会修改原生会话。`
+      : `会把该原生会话的唯一 Workspace 归属改为「${targetWorkspace.name}」，不会读取完整内容或修改原生会话。`;
+    if (!window.confirm(`${impact}\n\n确认迁移？`)) return;
+    setSessionPreviewState({ status: "importing", operationId: "", item, preview: null, error: "" });
+    try {
+      const result = await runtime.migrateSessionAttribution({
+        identityKey: item.identityKey,
+        expectedPreviousWorkspaceId: item.attribution.previousWorkspaceId,
+        targetWorkspaceId: targetWorkspace.id,
+        confirmed: true,
+      });
+      setSessionDiscoveryOpen(false);
+      setSessionDiscoveryState({ status: "idle", operationId: "", result: null, error: "" });
+      setSessionPreviewState({ status: "idle", operationId: "", item: null, preview: null, error: "" });
+      if (result.movedTaskId) await activateWorkspace(targetWorkspace.path, result.movedTaskId);
+    } catch (error) {
+      setSessionPreviewState({ status: "error", operationId: "", item, preview: null, error: sessionDiscoveryErrorMessage(error, sessionDiscoveryEngine) });
+    }
+  };
+
   const loadSessionRevisions = async (task = selectedTask) => {
     if (!task?.importedSession) return;
     setSessionSyncState((state) => ({ ...state, open: true, loading: true, error: "" }));
@@ -5906,10 +5952,19 @@ export function App() {
     setNativeProviderBusy(true);
     setAuthError("");
     try {
-      const saved = await runtime.saveProviderConnection(input);
+      let confirmedInput = input;
+      if (input.id) {
+        const action = input.apiKey ? "replace-credential" : "update";
+        const preview = await runtime.previewProviderConnectionImpact({ id: input.id, action, next: { label: input.label, providerType: input.providerType, baseUrl: input.baseUrl, defaultModel: input.defaultModel } });
+        const agentNames = preview.agents.map((item) => item.name).join("、") || "无";
+        const message = `${action === "replace-credential" ? "替换本地加密 API Key" : "更新 Connection 元数据"}？\n\n受影响 Agent：${preview.agents.length}（${agentNames}）\n固定到该 Connection 的 Task：${preview.tasks.length}\n\n已有 Task/Agent Revision 不会被改写；配置不可用时将明确显示不可运行。`;
+        if (!window.confirm(message)) return undefined;
+        confirmedInput = { ...input, impactFingerprint: preview.fingerprint, confirmed: true };
+      }
+      const saved = await runtime.saveProviderConnection(confirmedInput);
       setNativeConnections((items) => [...items.filter((item) => item.id !== saved.id), saved]);
       setAdapters((items) => items.map((adapter) => adapter.id === "rux-native" ? { ...adapter, available: true, detail: "原生 Provider 已配置，无需 Agent CLI" } : adapter));
-      if (!agentProfiles.some((profile) => profile.providerConnection?.id === saved.id)) {
+      if (!input.id && !agentProfiles.some((profile) => profile.providerConnection?.id === saved.id)) {
         const profile = await runtime.createAgentProfile({
           name: `Rux Native · ${saved.label}`,
           description: "Rux 内置 Responses API coding agent，无需安装外部 Agent CLI",
@@ -5921,12 +5976,12 @@ export function App() {
           instructions: "You are a coding agent working inside the active Rux workspace. Inspect relevant files before editing, keep changes scoped, explain important decisions, and use only the tools exposed by Rux.",
           permissionMode: "acceptEdits",
           skillIds: [],
-          toolIds: ["read_file", "list_files", "write_file"],
+          toolIds: ["read_file", "list_files", "write_file", "run_command"],
           enabled: true,
         });
         setAgentProfiles((items) => [...items, profile]);
       }
-      setAuthNotice(`已安全保存 ${saved.label}，并创建可直接使用的 Rux Native Agent。`);
+      setAuthNotice(input.id ? `已更新 ${saved.label}；相关 Agent 与 Task 的固定引用保持不变。` : `已安全保存 ${saved.label}，并创建可直接使用的 Rux Native Agent。`);
       return saved;
     } catch (error) {
       setAuthError(error instanceof Error ? error.message : String(error));
@@ -5957,11 +6012,14 @@ export function App() {
   const deleteNativeProvider = async (id) => {
     const runtime = runtimeRef.current;
     const connection = nativeConnections.find((item) => item.id === id);
-    if (!runtime || nativeProviderBusy || !connection || !window.confirm(`删除原生 Connection「${connection.label}」及其本地加密凭据？此操作不会撤销 Provider 侧 API Key。`)) return;
+    if (!runtime || nativeProviderBusy || !connection) return;
     setNativeProviderBusy(true);
     setAuthError("");
     try {
-      await runtime.deleteProviderConnection(id);
+      const preview = await runtime.previewProviderConnectionImpact({ id, action: "delete" });
+      const agentNames = preview.agents.map((item) => item.name).join("、") || "无";
+      if (!window.confirm(`删除原生 Connection「${connection.label}」及其本地加密凭据？\n\n受影响 Agent：${preview.agents.length}（${agentNames}）\n固定到该 Connection 的 Task：${preview.tasks.length}\n\n这些记录会保留但无法继续运行，直到显式迁移；此操作不会撤销 Provider 侧 API Key。`)) return;
+      await runtime.deleteProviderConnection({ id, impactFingerprint: preview.fingerprint, confirmed: true });
       const next = nativeConnections.filter((item) => item.id !== id);
       setNativeConnections(next);
       if (!next.length) setAdapters((items) => items.map((adapter) => adapter.id === "rux-native" ? { ...adapter, available: false, detail: "添加原生 Provider 后即可使用，无需安装 Agent CLI" } : adapter));
@@ -6323,6 +6381,7 @@ export function App() {
         onCancel={cancelSessionDiscovery}
         onPreview={(item) => void previewDiscoveredSession(item)}
         onImport={(mode) => void importDiscoveredSession(mode)}
+        onMigrate={(item) => void migrateDiscoveredSession(item)}
         onClose={() => {
           if (sessionDiscoveryState.status === "loading") cancelSessionDiscovery();
           setSessionDiscoveryOpen(false);

@@ -162,6 +162,10 @@ export function createMockRuntime() {
       throw new Error("会话导入仅在 Rux 桌面应用中可用");
     },
 
+    async migrateSessionAttribution() {
+      throw new Error("会话归属迁移仅在 Rux 桌面应用中可用");
+    },
+
     async refreshSession() { throw new Error("会话刷新仅在 Rux 桌面应用中可用"); },
     async rebuildSession() { throw new Error("会话重建仅在 Rux 桌面应用中可用"); },
     async listSessionRevisions() { throw new Error("会话版本仅在 Rux 桌面应用中可用"); },
@@ -199,6 +203,7 @@ export function createMockRuntime() {
     },
 
     async listProviderConnections() { return []; },
+    async previewProviderConnectionImpact() { throw new Error("原生 Provider 仅在 Rux 桌面应用中可用"); },
     async saveProviderConnection() { throw new Error("原生 Provider 仅在 Rux 桌面应用中可用"); },
     async deleteProviderConnection() { throw new Error("原生 Provider 仅在 Rux 桌面应用中可用"); },
     async testProviderConnection() { throw new Error("原生 Provider 仅在 Rux 桌面应用中可用"); },
@@ -420,6 +425,10 @@ function createDesktopRuntime(api) {
       return api.importSession(params);
     },
 
+    migrateSessionAttribution(params) {
+      return api.migrateSessionAttribution(params);
+    },
+
     refreshSession(params) { return api.refreshSession(params); },
     rebuildSession(params) { return api.rebuildSession(params); },
     listSessionRevisions(params) { return api.listSessionRevisions(params); },
@@ -465,8 +474,9 @@ function createDesktopRuntime(api) {
     },
 
     listProviderConnections() { return api.listProviderConnections(); },
+    previewProviderConnectionImpact(params) { return api.previewProviderConnectionImpact(params); },
     saveProviderConnection(input) { return api.saveProviderConnection(input); },
-    deleteProviderConnection(id) { return api.deleteProviderConnection({ id, confirmed: true }); },
+    deleteProviderConnection(params) { return api.deleteProviderConnection(params); },
     testProviderConnection(id) { return api.testProviderConnection({ id }); },
 
     listChanges() {

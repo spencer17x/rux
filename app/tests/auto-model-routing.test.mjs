@@ -55,6 +55,7 @@ test("Native Session model switching follows explicit Engine capability declarat
   assert.equal(engineSupportsPerRunModelSelection("rux-native"), false);
   assert.doesNotThrow(() => assertNativeSessionModelCompatibility("rux-native", "gpt-a", "gpt-a"));
   assert.throws(() => assertNativeSessionModelCompatibility("rux-native", "gpt-a", "gpt-b"), /新建 Task/);
+  assert.doesNotThrow(() => assertNativeSessionModelCompatibility("rux-native", "gpt-a", "gpt-b", true));
 });
 
 test("Agent saves append immutable Auto policy Revisions and disabling Auto creates another Revision", () => {

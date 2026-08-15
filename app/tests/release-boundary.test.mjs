@@ -251,9 +251,12 @@ test("external Session discovery is explicit, Workspace-filtered, and cannot exp
   assert.match(runtimeClientSource, /api\.request\("session\.discover", params\)/);
   assert.doesNotMatch(runtimeClientSource, /api\.request\("session\.list"/);
   assert.doesNotMatch(runtimeClientSource, /api\.request\("session\.read"/);
+  assert.match(runtimeClientSource, /api\.migrateSessionAttribution\(params\)/);
+  assert.match(rendererSource, /迁移到 \{item\.attribution\.workspaceName\}/);
   assert.match(mainSource, /RUX_AUTHORIZED_WORKSPACES: JSON\.stringify\(authorizedWorkspaces\)/);
-  assert.match(mainSource, /\["runtime\.shutdown", "session\.list", "session\.read", "session\.resume\.check"\]/);
-  assert.match(protocolSource, /"runtime\.shutdown" \| "session\.list" \| "session\.read" \| "session\.resume\.check"/);
+  assert.match(mainSource, /\["runtime\.shutdown", "session\.list", "session\.attribution\.migrate", "session\.read", "session\.resume\.check"\]/);
+  assert.match(protocolSource, /"runtime\.shutdown" \| "session\.list" \| "session\.attribution\.migrate" \| "session\.read" \| "session\.resume\.check"/);
+  assert.match(mainSource, /migrateImportedSessionWorkspace/);
 });
 
 test("external Session refresh is user-triggered, versioned, and mediated by Main", async () => {
@@ -341,6 +344,33 @@ test("renderer keeps Agent setup actionable and resumes the selected task sessio
   assert.match(rendererSource, /agentRevisionId: taskRevisionId,\s+\.\.\.\(task\.agentProfileId \? \{ profileId: task\.agentProfileId \} : \{\}\),/);
   assert.match(await readFile(path.join(root, "src/runtime.js"), "utf8"), /isSessionModelSwitchRestriction = \/Native Session \.\*按 Run 切换模型\//);
   assert.doesNotMatch(rendererSource, /selectedTask\.messages\[0\]\?\.text \|\| selectedTask\.title/);
+});
+
+test("Rux Native tool authority is pinned by the immutable Agent Revision", async () => {
+  const renderer = await readFile(path.join(root, "src/App.jsx"), "utf8");
+  const runtime = await readFile(path.join(root, "src/electron/runtime.ts"), "utf8");
+  const adapter = await readFile(path.join(root, "src/electron/native-provider-adapter.ts"), "utf8");
+
+  assert.match(renderer, /toolIds: \["read_file", "list_files", "write_file", "run_command"\]/);
+  assert.match(runtime, /nativeRunParamsForLaunch\(params\)/);
+  assert.match(runtime, /profiles\(\)\.getRevision\(params\.agentRevisionId\)/);
+  assert.match(runtime, /allowedToolIds: \[\.\.\.revision\.toolIds\]/);
+  assert.match(adapter, /params\.allowedToolIds && !params\.allowedToolIds\.includes\(name\)/);
+  assert.match(adapter, /permissionMode !== "plan" && process\.platform === "darwin"/);
+});
+
+test("Rux Native Connection mutations require a fresh non-secret impact preview", async () => {
+  const main = await readFile(path.join(root, "src/electron/main.ts"), "utf8");
+  const preload = await readFile(path.join(root, "src/electron/preload.ts"), "utf8");
+  const renderer = await readFile(path.join(root, "src/App.jsx"), "utf8");
+  assert.match(main, /providerConnectionImpactPreview/);
+  assert.match(main, /assertNativeProviderImpactFingerprint/);
+  assert.match(main, /Connection 影响已变化，请重新预览并确认/);
+  assert.match(main, /listProviderConnectionTaskImpacts/);
+  assert.doesNotMatch(main.slice(main.indexOf("function nativeProviderImpactPreview"), main.indexOf("async function syncNativeProviderConnections")), /apiKey|encryptedApiKey/);
+  assert.match(preload, /previewProviderConnectionImpact/);
+  assert.match(renderer, /留空保留当前 Key；填写则替换/);
+  assert.match(renderer, /固定到该 Connection 的 Task/);
 });
 
 test("renderer keeps Tasks pinned to immutable Agent Revisions and branches upgrades", async () => {

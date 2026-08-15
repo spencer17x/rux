@@ -45,18 +45,22 @@ export class NativeProviderStore {
     }
     const now = new Date().toISOString();
     const id = existing?.id ?? `native:rux-native:${randomUUID()}`;
+    const baseUrl = input.baseUrl.replace(/\/+$/, "");
+    const preservesNegotiation = Boolean(existing && !input.apiKey && existing.providerType === input.providerType && existing.baseUrl === baseUrl);
     const next: StoredConnection = {
       id,
       label: input.label,
       providerType: input.providerType,
-      baseUrl: input.baseUrl.replace(/\/+$/, ""),
+      baseUrl,
       defaultModel: input.defaultModel,
       encryptedApiKey: input.apiKey ? this.codec.encrypt(input.apiKey).toString("base64") : existing?.encryptedApiKey ?? "",
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
-      ...(existing?.lastTestedAt ? { lastTestedAt: existing.lastTestedAt } : {}),
-      ...(existing?.lastTestStatus ? { lastTestStatus: existing.lastTestStatus } : {}),
-      ...(existing?.lastTestDetail ? { lastTestDetail: existing.lastTestDetail } : {}),
+      ...(preservesNegotiation && existing?.lastTestedAt ? { lastTestedAt: existing.lastTestedAt } : {}),
+      ...(preservesNegotiation && existing?.lastTestStatus ? { lastTestStatus: existing.lastTestStatus } : {}),
+      ...(preservesNegotiation && existing?.lastTestDetail ? { lastTestDetail: existing.lastTestDetail } : {}),
+      ...(preservesNegotiation && existing?.modelCatalog ? { modelCatalog: existing.modelCatalog } : {}),
+      ...(preservesNegotiation && existing?.capabilities ? { capabilities: existing.capabilities } : {}),
     };
     this.state.connections = existing
       ? this.state.connections.map((item) => item.id === id ? next : item)
@@ -80,6 +84,10 @@ export class NativeProviderStore {
     connection.lastTestedAt = result.testedAt;
     connection.lastTestStatus = result.ok ? "connected" : "error";
     connection.lastTestDetail = result.detail;
+    if (result.modelCatalog) connection.modelCatalog = result.modelCatalog;
+    else delete connection.modelCatalog;
+    if (result.capabilities) connection.capabilities = result.capabilities;
+    else delete connection.capabilities;
     connection.updatedAt = result.testedAt;
     this.persist();
   }
@@ -96,6 +104,8 @@ export class NativeProviderStore {
       baseUrl: connection.baseUrl,
       defaultModel: connection.defaultModel,
       apiKey: this.codec.decrypt(Buffer.from(connection.encryptedApiKey, "base64")),
+      ...(connection.modelCatalog ? { modelCatalog: connection.modelCatalog } : {}),
+      ...(connection.capabilities ? { capabilities: connection.capabilities } : {}),
     }));
   }
 

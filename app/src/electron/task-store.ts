@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { z } from "zod";
 import {
   agentRevisionSchema,
   builtInAgentRevisionAdapter,
@@ -1085,6 +1086,18 @@ export class TaskStore {
     return normalized.state;
   }
 
+  listProviderConnectionTaskImpacts(connectionId: string): Array<{ workspaceId: string; taskId: string; title: string }> {
+    const rows = this.#database.prepare("SELECT workspace_id, state_json FROM workspace_task_state ORDER BY workspace_id").all() as Array<{ workspace_id: string; state_json: string }>;
+    const impacts: Array<{ workspaceId: string; taskId: string; title: string }> = [];
+    for (const row of rows) {
+      const state = workspaceTaskStateSchema.parse(JSON.parse(row.state_json));
+      for (const task of state.tasks) {
+        if (task.providerConnection.id === connectionId) impacts.push({ workspaceId: state.workspaceId, taskId: task.id, title: task.title });
+      }
+    }
+    return impacts;
+  }
+
   save(input: unknown): WorkspaceTaskState {
     const incoming = workspaceTaskStateSchema.parse(input);
     this.#database.exec("BEGIN IMMEDIATE");
@@ -1359,6 +1372,98 @@ export class TaskStore {
   getContextHandoff(snapshotId: string): ContextHandoffSnapshot | undefined {
     const row = this.#database.prepare("SELECT snapshot_json FROM context_handoff_snapshot WHERE id = ?").get(snapshotId) as { snapshot_json: string } | undefined;
     return row ? contextHandoffSnapshotSchema.parse(JSON.parse(row.snapshot_json) as unknown) : undefined;
+  }
+
+  migrateImportedSessionWorkspace(
+    identityKeyInput: string,
+    expectedPreviousWorkspaceIdInput: string,
+    targetWorkspaceIdInput: string,
+    targetBranch: string,
+  ): string | undefined {
+    const identityKey = z.string().regex(/^[a-f0-9]{64}$/).parse(identityKeyInput);
+    const previousWorkspaceId = persistedWorkspaceIdSchema.parse(expectedPreviousWorkspaceIdInput);
+    const targetWorkspaceId = persistedWorkspaceIdSchema.parse(targetWorkspaceIdInput);
+    if (previousWorkspaceId === targetWorkspaceId) throw new Error("Session migration requires a different target Workspace");
+    const now = this.#now();
+
+    this.#database.exec("BEGIN IMMEDIATE");
+    try {
+      const storedProjection = this.#database.prepare(`
+        SELECT id, workspace_id, task_id, latest_revision_id, state_json, created_at
+        FROM session_projection WHERE identity_key = ?
+      `).get(identityKey) as (StoredProjectionRow & { workspace_id: string }) | undefined;
+      if (!storedProjection) {
+        this.#database.exec("COMMIT");
+        return undefined;
+      }
+      if (storedProjection.workspace_id !== previousWorkspaceId) {
+        throw Object.assign(new Error("Imported Session Task Workspace changed; discover the Session again"), {
+          code: "SESSION_TASK_WORKSPACE_STALE",
+        });
+      }
+
+      const sourceRow = this.#database.prepare("SELECT state_json FROM workspace_task_state WHERE workspace_id = ?")
+        .get(previousWorkspaceId) as StoredWorkspaceRow | undefined;
+      const targetRow = this.#database.prepare("SELECT state_json FROM workspace_task_state WHERE workspace_id = ?")
+        .get(targetWorkspaceId) as StoredWorkspaceRow | undefined;
+      const sourceState = parseStoredState(sourceRow, previousWorkspaceId, now);
+      const targetState = parseStoredState(targetRow, targetWorkspaceId, now);
+      const sourceTask = sourceState.tasks.find((task) => task.id === storedProjection.task_id);
+      if (!sourceTask?.importedSession || sourceTask.importedSession.identityKey !== identityKey) {
+        throw Object.assign(new Error("Imported Session Task is missing from its assigned Workspace"), {
+          code: "SESSION_TASK_NOT_FOUND",
+        });
+      }
+      if (targetState.tasks.some((task) => task.id === sourceTask.id)) {
+        throw Object.assign(new Error("Target Workspace already contains the imported Session Task"), {
+          code: "SESSION_TASK_DUPLICATE",
+        });
+      }
+
+      const migratedBinding = importedSessionBindingSchema.parse({
+        ...sourceTask.importedSession,
+        sessionLink: { ...sourceTask.importedSession.sessionLink, workspaceId: targetWorkspaceId },
+      });
+      const migratedTask = workspaceTaskStateSchema.shape.tasks.element.parse({
+        ...sourceTask,
+        workspaceId: targetWorkspaceId,
+        branch: targetBranch,
+        importedSession: migratedBinding,
+        updatedAt: "现在",
+        updatedAtIso: now,
+      });
+      const projection = sessionProjectionSchema.parse({
+        ...JSON.parse(storedProjection.state_json) as object,
+        workspaceId: targetWorkspaceId,
+        updatedAt: now,
+      });
+      const nextSource = workspaceTaskStateSchema.parse({
+        ...sourceState,
+        tasks: sourceState.tasks.filter((task) => task.id !== sourceTask.id),
+        updatedAt: now,
+      });
+      const nextTarget = workspaceTaskStateSchema.parse({
+        ...targetState,
+        tasks: [migratedTask, ...targetState.tasks],
+        updatedAt: now,
+      });
+      assertAgentRevisionReferences(nextSource, this.#revisionResolver, legacyRevisionIds(sourceState));
+      assertAgentRevisionReferences(nextTarget, this.#revisionResolver, legacyRevisionIds(targetState));
+
+      this.#database.prepare("UPDATE session_projection SET workspace_id = ?, state_json = ?, updated_at = ? WHERE identity_key = ?")
+        .run(targetWorkspaceId, JSON.stringify(projection), now, identityKey);
+      this.#database.prepare("UPDATE workspace_task_state SET state_json = ?, updated_at = ? WHERE workspace_id = ?")
+        .run(JSON.stringify(nextSource), now, previousWorkspaceId);
+      this.#database.prepare(`
+        INSERT INTO workspace_task_state(workspace_id, state_json, updated_at) VALUES (?, ?, ?)
+        ON CONFLICT(workspace_id) DO UPDATE SET state_json=excluded.state_json, updated_at=excluded.updated_at
+      `).run(targetWorkspaceId, JSON.stringify(nextTarget), now);
+      this.#database.exec("COMMIT");
+      return migratedTask.id;
+    } catch (error) {
+      this.#database.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   importExternalSession(input: ImportExternalSessionInput): SessionImportResult {

@@ -1,17 +1,17 @@
 # Rux Desktop Architecture
 
-> Runtime protocol: v7
+> Runtime protocol: v10
 > Agent Profile Store: v2  
 > Task Store: SQLite schema v5 / Workspace snapshot v2
-> Updated: 2026-08-14
+> Updated: 2026-08-15
 
 ## Process boundaries
 
 ```mermaid
 flowchart LR
   UI["Sandboxed Renderer"] -->|"typed Preload IPC"| Main["Electron Main"]
-  Main -->|"validated protocol v7"| Runtime["Utility Process Runtime"]
-  TUI["Rust TUI"] -->|"JSONL protocol v7"| Host["stdio Runtime Host"]
+  Main -->|"validated protocol v10"| Runtime["Utility Process Runtime"]
+  TUI["Rust TUI"] -->|"JSONL protocol v10"| Host["stdio Runtime Host"]
   Runtime --> CLI["Official Codex / Claude Code CLI"]
   Host --> CLI
   Main --> Tasks["Main-owned Task SQLite v2"]
@@ -23,7 +23,7 @@ flowchart LR
 - Renderer has no Node integration and receives no filesystem, process, PTY, or credential capability. It can submit only protocol-validated, non-secret object references.
 - Main owns the native window, Workspace authorization, IPC routing, and Desktop Task Store access. A read-only Agent Revision resolver validates Task references without exposing the Profile Store to Renderer.
 - Utility Process Runtime owns official CLI adapters, authentication delegation, PTY, Git, Context, permissions, and Agent execution.
-- The standalone Runtime Host implements the same v7 protocol for the Rust TUI. Unused fields remain ordinary JSON fields so the TUI can evolve independently.
+- The standalone Runtime Host implements the same v10 protocol for the Rust TUI. Unused fields remain ordinary JSON fields so the TUI can evolve independently.
 
 ## External Session Connector boundary
 
@@ -55,7 +55,11 @@ P1-E5 keeps local data lifecycle outside the Utility Process and every Provider 
 
 Rux never reads CLI credential files, Keychain entries, OAuth tokens, API keys, Base URLs, or arbitrary executable paths. Codex and Claude Code retain ownership of OAuth, API-key, Base URL, cloud-provider configuration, token refresh, and logout. The Renderer runs `auth.status` only after the user clicks the detection action, then refreshes `agent.list` so installation state cannot remain stale. A direct login action delegates only to the selected official command (`codex login` or `claude auth login`); login success updates only that Provider. Renderer-visible status is limited to installation and connection state, normalized auth method, CLI version/path, non-sensitive detail, and the non-secret Connection reference.
 
-Protocol v6 adds the independent `rux-native` Engine. Main validates and stores non-secret Connection metadata plus OS-encrypted API-key ciphertext; the encryption key remains owned by Electron `safeStorage`/the operating system. Preload exposes create/list/test/delete operations but never a secret read. On Runtime readiness or Connection mutation, Main decrypts the key and sends it through Renderer-inaccessible `provider.connection.sync`; Runtime keeps it only in memory. Provider access occurs only for an explicit test or Run. The first Adapter uses the Responses API with function tools for bounded file read/list/write, rejects sensitive paths/content and symlink escapes, records Provider response ids as `rux-response` Session Links, and emits normalized usage. It intentionally has no shell tool until a real cross-platform sandbox is available.
+Protocol v6 adds the independent `rux-native` Engine. Main validates and stores non-secret Connection metadata plus OS-encrypted API-key ciphertext; the encryption key remains owned by Electron `safeStorage`/the operating system. Preload exposes create/list/test/delete operations but never a secret read. On Runtime readiness or Connection mutation, Main decrypts the key and sends it through Renderer-inaccessible `provider.connection.sync`; Runtime keeps it only in memory. Provider access occurs only for an explicit test or Run. The Adapter uses the Responses API with bounded file read/list/write tools, rejects sensitive paths/content and symlink escapes, records Provider response ids as `rux-response` Session Links, and emits normalized usage.
+
+Protocol v8 completes the Native macOS coding loop. Responses requests opt into SSE; `assistant.message.delta` stays transient in Renderer and only the completed Assistant item is persisted. The `run_command` tool accepts an executable name plus argv and never invokes a shell. Each process receives a reduced environment and isolated HOME/TMPDIR, runs from a realpath-validated Workspace directory, and is wrapped by `sandbox-exec`: network is denied; user-directory, external-volume, and temp-directory file data outside the Workspace/resolved toolchain are denied while system/toolchain startup reads remain available; writes are limited to the Workspace and that command's temporary directory. Timeout/Stop terminate the detached process tree; stdout/stderr are bounded and redacted before becoming tool output or `VerificationEvidence`. Platforms without an equivalent sandbox omit the command tool. `run.workspace-changed` is a transient invalidation signal: Renderer re-reads authoritative Git Changes during a Run and re-snapshots selected Context after file writes; the final Run-owned Git patch remains immutable evidence.
+
+Native tool exposure is Revision-owned. The automatically created Native Agent records `read_file`, `list_files`, `write_file`, and `run_command`; the Adapter intersects those IDs with permission mode and platform support. Runtime resolves the immutable Revision again at launch, including after a persisted Workspace approval is recovered, so stale Renderer input cannot expand the tool set.
 
 ## Agent Definition and immutable Revision
 
@@ -140,13 +144,13 @@ Before save/load, Task Store validation rejects:
 ## Current implementation truth
 
 - Claude Code and Codex Runs use real local adapters; Rux Demo remains development/Web-preview only.
-- Protocol v7, Agent Profile Store v2, Task Store v5, Desktop Runtime, stdio Runtime, Renderer fallback, and Rust TUI share the Revision/Connection, Session Connector, isolated Handoff-summary, Auto Policy, Model Decision and Token Usage contract.
+- Protocol v10, Agent Profile Store v2, Task Store v5, Desktop Runtime, stdio Runtime, Renderer fallback, and Rust TUI share the Revision/Connection, Session Connector, attribution migration, isolated Handoff-summary, Auto Policy, Model Decision, Token Usage and Workspace invalidation contract. v10 also carries Rux Native Provider-reported model catalogs and explicit session model-switch capability.
 - `账户与登录` is an explicit Agent/Provider surface for Rux Native, Codex, and Claude Code. Opening the app or panel performs no CLI inspection. Rux Native metadata loads locally without network access; only explicit test/Run actions contact its Provider. CLI credentials remain CLI-owned.
-- Codex model discovery uses official App Server `model/list` with explicit catalog source and fetch time. Engines without a catalog expose Engine default plus advanced model IDs; successful Runs create verified history scoped to the same Engine and non-secret Connection reference. Only explicit model-not-found/incompatibility failures mark a model unavailable.
+- Codex model discovery uses official App Server `model/list`. Rux Native refreshes `/models` only during an explicit Connection test and stores the Provider-returned catalog, source, refresh time and only explicitly reported capabilities. Engines without a catalog expose Engine default plus advanced model IDs; successful Runs create verified history scoped to the same Engine and non-secret Connection reference. Only explicit model-not-found/incompatibility failures mark a model unavailable.
 - Auto model routing is implemented. Revisions store policy and same-Connection candidates; Runtime and stdio Host use the deterministic simple/complex classifier, enforce session capability and persist immutable decisions/fallbacks. Codex, Claude Code and Rux Native usage are normalized; every Assistant turn shows the actual model and reported total or `未报告`, while Run exposes the sourced breakdown.
 - RUX 发起的 Codex Thread 与 Claude Session 已使用规范化 Native Session Link 持久化并可在兼容 Task 中恢复。恢复失败保留原 Session 证据并要求用户显式重试或创建新 Task；不会静默回退为新会话。
 - P0 Desktop Release Candidate 已在隔离打包环境完成干净启动、显式 Agent 检测、首次 Run、重启后同 Thread 恢复、Terminal 不恢复与 Workspace 切换。Workspace Starter Task 在第一次发送时采用规范化后的用户提示词标题，避免已运行历史继续显示为“开始新任务”。
-- External Session discovery, selected-content preview, deduplicated local Projection persistence, read-only import, compatible native continuation, explicit refresh/diff, versioned rebuild, local Revision restore, Context Handoff, scoped cleanup, and export are user-triggered Desktop flows with canonical Workspace attribution. Explicit attribution migration remains later P1 work; this architecture does not claim background conversation synchronization.
+- External Session discovery, selected-content preview, deduplicated local Projection persistence, read-only import, compatible native continuation, explicit attribution migration, refresh/diff, versioned rebuild, local Revision restore, Context Handoff, scoped cleanup, and export are user-triggered Desktop flows. Attribution migration moves the same imported Task/Projection identity between authorized Workspaces, records an audit entry and does not copy the Task or mutate the provider-native Session. This architecture does not claim background conversation synchronization.
 - P1 Desktop Release Candidate 已在同一隔离打包环境贯通显式 Agent 检测、Workspace 归属发现、预览导入、刷新版本、Context Handoff、重启恢复与本地数据影响预览。验收中修复了 `解除关联` 误用删除后果文案的问题；unlink 现在明确保留 Task、消息和 Projection Revision。证据位于 `design-audit/p1-release-candidate/`。
-- Parts of Changes and Context remain showcase-backed in the Renderer and must not be presented as fully repository-backed until that wiring is complete.
+- Normal Desktop Changes and Context are Runtime-backed. Git snapshots/diffs and immutable Run patches are authoritative, while Context snapshots validate Workspace boundaries, symlinks, sensitive paths and content. Demo data is isolated to the explicit `?showcase=codex` Web preview and is not persisted as product state.
 - macOS packages remain unsigned until Developer ID signing and notarization are configured.

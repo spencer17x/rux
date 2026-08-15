@@ -5,6 +5,8 @@ import { DatabaseSync } from "node:sqlite";
 import type {
   DiscoveredSession,
   SessionAttribution,
+  SessionAttributionMigrateParams,
+  SessionAttributionMigrateResult,
   SessionDiscoverParams,
   SessionDiscoverResult,
   SessionMetadata,
@@ -12,7 +14,7 @@ import type {
   SessionPreviewResult,
   WorkspaceSummary,
 } from "../shared/protocol.ts";
-import { sessionDiscoverResultSchema, sessionPreviewResultSchema } from "../shared/protocol.ts";
+import { sessionAttributionMigrateResultSchema, sessionDiscoverResultSchema, sessionPreviewResultSchema } from "../shared/protocol.ts";
 import type { SessionConnectorService } from "./session-connector.ts";
 
 export type AuthorizedWorkspace = Pick<WorkspaceSummary, "id" | "name" | "path">;
@@ -23,6 +25,12 @@ type StoredAssignment = {
   workspace_id: string;
   workspace_name: string;
   workspace_path: string;
+};
+type StoredAssignmentAudit = {
+  identity_key: string;
+  previous_workspace_id: string;
+  workspace_id: string;
+  migrated_at: string;
 };
 
 function canonicalDirectory(path: string): string | undefined {
@@ -105,6 +113,13 @@ export class SessionAttributionStore {
         workspace_path TEXT NOT NULL,
         updated_at TEXT NOT NULL
       ) STRICT;
+      CREATE TABLE IF NOT EXISTS session_assignment_audit (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        identity_key TEXT NOT NULL,
+        previous_workspace_id TEXT NOT NULL,
+        workspace_id TEXT NOT NULL,
+        migrated_at TEXT NOT NULL
+      ) STRICT;
     `);
   }
 
@@ -125,6 +140,34 @@ export class SessionAttributionStore {
         workspace_path = excluded.workspace_path,
         updated_at = excluded.updated_at
     `).run(identityKey, workspace.id, workspace.name, workspace.canonicalPath, new Date().toISOString());
+  }
+
+  migrate(identityKey: string, expectedPreviousWorkspaceId: string, workspace: CanonicalWorkspace, migratedAt: string): void {
+    this.#database.exec("BEGIN IMMEDIATE");
+    try {
+      const current = this.get(identityKey);
+      if (!current || current.workspace_id !== expectedPreviousWorkspaceId) {
+        throw Object.assign(new Error("Session Workspace attribution changed; discover the Session again"), {
+          code: "SESSION_ATTRIBUTION_STALE",
+        });
+      }
+      this.assign(identityKey, workspace);
+      this.#database.prepare(`
+        INSERT INTO session_assignment_audit(identity_key, previous_workspace_id, workspace_id, migrated_at)
+        VALUES (?, ?, ?, ?)
+      `).run(identityKey, expectedPreviousWorkspaceId, workspace.id, migratedAt);
+      this.#database.exec("COMMIT");
+    } catch (error) {
+      this.#database.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  audits(identityKey: string): StoredAssignmentAudit[] {
+    return this.#database.prepare(`
+      SELECT identity_key, previous_workspace_id, workspace_id, migrated_at
+      FROM session_assignment_audit WHERE identity_key = ? ORDER BY id ASC
+    `).all(identityKey) as unknown as StoredAssignmentAudit[];
   }
 
   close(): void {
@@ -154,6 +197,7 @@ export class SessionDiscoveryService {
   private readonly connectors: SessionConnectorService;
   private readonly authorizedWorkspaces: AuthorizedWorkspace[];
   private readonly assignments: SessionAttributionStore;
+  private readonly migrationTickets = new Map<string, { previousWorkspaceId: string; workspace: CanonicalWorkspace }>();
   constructor(
     connectors: SessionConnectorService,
     authorizedWorkspaces: AuthorizedWorkspace[],
@@ -177,6 +221,7 @@ export class SessionDiscoveryService {
     const authorizationRequired: DiscoveredSession[] = [];
     const migrationSuggestions: DiscoveredSession[] = [];
     const seen = new Set<string>();
+    this.migrationTickets.clear();
 
     for (const metadata of page.sessions) {
       const identityKey = sessionIdentityKey(metadata);
@@ -198,6 +243,10 @@ export class SessionDiscoveryService {
 
       const previous = this.assignments.get(identityKey);
       if (previous && previous.workspace_id !== match.workspace.id) {
+        this.migrationTickets.set(identityKey, {
+          previousWorkspaceId: previous.workspace_id,
+          workspace: match.workspace,
+        });
         migrationSuggestions.push({
           identityKey,
           metadata,
@@ -227,6 +276,27 @@ export class SessionDiscoveryService {
       authorizationRequired,
       migrationSuggestions,
       ...(page.nextCursor !== undefined ? { nextCursor: page.nextCursor } : {}),
+    });
+  }
+
+  migrateAttribution(params: SessionAttributionMigrateParams): SessionAttributionMigrateResult {
+    const ticket = this.migrationTickets.get(params.identityKey);
+    if (!ticket
+      || ticket.previousWorkspaceId !== params.expectedPreviousWorkspaceId
+      || ticket.workspace.id !== params.targetWorkspaceId) {
+      throw Object.assign(new Error("Session migration suggestion is stale; discover the Session again"), {
+        code: "SESSION_MIGRATION_STALE",
+      });
+    }
+    const migratedAt = new Date().toISOString();
+    this.assignments.migrate(params.identityKey, params.expectedPreviousWorkspaceId, ticket.workspace, migratedAt);
+    this.migrationTickets.delete(params.identityKey);
+    return sessionAttributionMigrateResultSchema.parse({
+      identityKey: params.identityKey,
+      previousWorkspaceId: params.expectedPreviousWorkspaceId,
+      workspaceId: ticket.workspace.id,
+      workspaceName: ticket.workspace.name,
+      migratedAt,
     });
   }
 

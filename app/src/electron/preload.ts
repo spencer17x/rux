@@ -6,6 +6,8 @@ import {
   type RendererRuntimeMethod,
   type SessionImportParams,
   type SessionImportResult,
+  type SessionAttributionMigrateParams,
+  type SessionAttributionMigrateResult,
   type SessionRefreshParams,
   type SessionRefreshResult,
   type SessionRebuildParams,
@@ -26,6 +28,8 @@ import {
   type LocalDataExportParams,
   type LocalDataExportResult,
   type NativeProviderConnection,
+  type NativeProviderConnectionImpactPreview,
+  type NativeProviderConnectionImpactPreviewParams,
   type NativeProviderConnectionInput,
   type NativeProviderConnectionDeleteParams,
   type NativeProviderConnectionTestParams,
@@ -79,6 +83,10 @@ const api: RuxDesktopApi = {
     return ipcRenderer.invoke(IPC_CHANNELS.sessionImport, params) as Promise<SessionImportResult>;
   },
 
+  migrateSessionAttribution(params: SessionAttributionMigrateParams): Promise<SessionAttributionMigrateResult> {
+    return ipcRenderer.invoke(IPC_CHANNELS.sessionAttributionMigrate, params) as Promise<SessionAttributionMigrateResult>;
+  },
+
   refreshSession(params: SessionRefreshParams): Promise<SessionRefreshResult> {
     return ipcRenderer.invoke(IPC_CHANNELS.sessionRefresh, params) as Promise<SessionRefreshResult>;
   },
@@ -125,6 +133,10 @@ const api: RuxDesktopApi = {
 
   listProviderConnections(): Promise<NativeProviderConnection[]> {
     return ipcRenderer.invoke(IPC_CHANNELS.providerConnectionList) as Promise<NativeProviderConnection[]>;
+  },
+
+  previewProviderConnectionImpact(params: NativeProviderConnectionImpactPreviewParams): Promise<NativeProviderConnectionImpactPreview> {
+    return ipcRenderer.invoke(IPC_CHANNELS.providerConnectionImpactPreview, params) as Promise<NativeProviderConnectionImpactPreview>;
   },
 
   saveProviderConnection(input: NativeProviderConnectionInput): Promise<NativeProviderConnection> {

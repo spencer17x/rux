@@ -958,6 +958,50 @@ test("allows an unavailable native Session only as a persistent read-only Projec
   }
 });
 
+test("moves one imported Session Task and Projection between Workspaces without duplication", async () => {
+  const temporaryRoot = await mkdtemp(join(tmpdir(), "rux-session-workspace-migration-"));
+  const databasePath = join(temporaryRoot, "state.sqlite3");
+  const preview = {
+    identityKey: "d".repeat(64),
+    metadata: { engine: "codex", providerConnectionId: "cli:codex:default", nativeSessionId: "thread-migrate", title: "Move me", resumeStatus: "available" },
+    messages: [{ id: "native-1", role: "user", content: [{ type: "text", text: "original" }] }],
+    truncated: false,
+    resume: { engine: "codex", providerConnectionId: "cli:codex:default", nativeSessionId: "thread-migrate", status: "available" },
+  };
+  try {
+    const store = createTaskStore(databasePath, () => savedAt);
+    const imported = store.importExternalSession({ workspaceId: "workspace-parent", workspaceBranch: "main", preview, mode: "continue" });
+    const source = store.load("workspace-parent");
+    source.tasks[0].messages.push({ id: "rux-note", role: "user", text: "preserve me", time: "现在", createdAt: savedAt });
+    store.save(source);
+
+    const movedTaskId = store.migrateImportedSessionWorkspace(preview.identityKey, "workspace-parent", "workspace-child", "feature/child");
+    assert.equal(movedTaskId, imported.task.id);
+    assert.equal(store.load("workspace-parent").tasks.length, 0);
+    const target = store.load("workspace-child");
+    assert.equal(target.tasks.length, 1);
+    assert.equal(target.tasks[0].id, imported.task.id);
+    assert.equal(target.tasks[0].workspaceId, "workspace-child");
+    assert.equal(target.tasks[0].branch, "feature/child");
+    assert.equal(target.tasks[0].importedSession.sessionLink.workspaceId, "workspace-child");
+    assert.equal(target.tasks[0].messages.some((message) => message.id === "rux-note"), true);
+
+    const database = new DatabaseSync(databasePath);
+    const projectionRow = database.prepare("SELECT workspace_id, task_id FROM session_projection WHERE identity_key = ?").get(preview.identityKey);
+    assert.equal(projectionRow.workspace_id, "workspace-child");
+    assert.equal(projectionRow.task_id, imported.task.id);
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM session_projection WHERE identity_key = ?").get(preview.identityKey).count, 1);
+    database.close();
+    assert.throws(
+      () => store.migrateImportedSessionWorkspace(preview.identityKey, "workspace-parent", "workspace-child", "feature/child"),
+      (error) => error.code === "SESSION_TASK_WORKSPACE_STALE",
+    );
+    store.close();
+  } finally {
+    await rm(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
 test("classifies safe append separately from modifications, deletion, reorder, and uncertain fingerprints", () => {
   const message = (id, text) => ({ id, role: "user", content: [{ type: "text", text }] });
   const base = [message("m1", "one"), message("m2", "two")];

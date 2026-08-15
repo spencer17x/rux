@@ -99,7 +99,7 @@ export function engineSupportsPerRunModelSelection(adapter: RunAdapter): boolean
   return adapter === "codex" || adapter === "claude-code";
 }
 
-export function assertNativeSessionModelCompatibility(adapter: RunAdapter, previousModel: string | undefined, selectedModel: string): void {
-  if (!previousModel || previousModel === selectedModel || engineSupportsPerRunModelSelection(adapter)) return;
+export function assertNativeSessionModelCompatibility(adapter: RunAdapter, previousModel: string | undefined, selectedModel: string, declaredPerRunSelection = false): void {
+  if (!previousModel || previousModel === selectedModel || engineSupportsPerRunModelSelection(adapter) || declaredPerRunSelection) return;
   throw new Error(`当前 ${adapter} Native Session 未声明支持按 Run 切换模型。请保持 ${previousModel}，或新建 Task 使用 ${selectedModel}。`);
 }

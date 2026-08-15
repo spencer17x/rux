@@ -6,7 +6,7 @@ import { AgentProfileStore } from "./agent-profile-store";
 import { AuthManager } from "./auth-manager";
 import { ClaudeCodeAdapter } from "./claude-adapter";
 import { CodexRuntimeAdapter } from "./codex-runtime-adapter";
-import { NativeProviderAdapter } from "./native-provider-adapter.ts";
+import { NativeProviderAdapter, type NativeRunStartParams } from "./native-provider-adapter.ts";
 import { GitChangesService, type GitRunBaseline } from "./git-service";
 import { TaskStore } from "./task-store";
 import { ClaudeSessionConnector, CodexSessionConnector, SessionConnectorService } from "./session-connector";
@@ -45,6 +45,7 @@ import {
   runStartParamsSchema,
   runModelDecisionSchema,
   sessionCancelParamsSchema,
+  sessionAttributionMigrateParamsSchema,
   sessionDiscoverParamsSchema,
   sessionPreviewParamsSchema,
   sessionListParamsSchema,
@@ -373,7 +374,7 @@ async function contextSnapshot(params: unknown) {
 }
 
 type PreparedRun = {
-  params: RunStartParams;
+  params: NativeRunStartParams;
   context: ContextSnapshot;
   profile?: AgentRevision;
   modelDecision: RunModelDecision;
@@ -393,6 +394,7 @@ function verifiedModelsForConnection(adapter: RunStartParams["adapter"], provide
 async function availableAutoModels(profile: Pick<AgentRevision, "backend" | "providerConnection" | "autoModelPolicy">): Promise<Set<string>> {
   const verified = verifiedModelsForConnection(profile.backend, profile.providerConnection.id);
   let catalog = new Set<string>();
+  if (profile.backend === "rux-native") catalog = new Set(nativeProvider.catalogModels(profile.providerConnection.id));
   if (profile.backend === "codex" && profile.autoModelPolicy?.allowlist.some((candidate) => candidate.source === "engine-catalog")) {
     let cursor: string | null | undefined;
     for (let page = 0; page < 10; page += 1) {
@@ -432,7 +434,12 @@ function assertSessionModelSelection(params: RunStartParams, actualModel: string
   if (!params.sessionId) return;
   const previousModel = previousSessionModel(params.sessionId, params.adapter, params.providerConnectionId ?? "");
   if (!previousModel || previousModel === actualModel) return;
-  assertNativeSessionModelCompatibility(params.adapter, previousModel, actualModel);
+  assertNativeSessionModelCompatibility(
+    params.adapter,
+    previousModel,
+    actualModel,
+    params.adapter === "rux-native" && nativeProvider.supportsPerRunModelSelection(params.providerConnectionId ?? ""),
+  );
 }
 
 function fixedModelDecision(params: RunStartParams, profile?: AgentRevision): RunModelDecision {
@@ -519,6 +526,7 @@ async function prepareRun(params: ReturnType<typeof runStartParamsSchema.parse>)
       model: effectiveParams.model ?? profile.model,
       reasoningEffort: params.reasoningEffort ?? profile.reasoningEffort,
       providerConnectionId: profile.providerConnection.id,
+      ...(profile.backend === "rux-native" ? { allowedToolIds: [...profile.toolIds] } : {}),
     };
   }
   promptSections.push(contextSnapshotPrompt(runContextSnapshot));
@@ -552,7 +560,7 @@ async function launchPreparedRun(params: RunStartParams): Promise<{
       : params.adapter === "codex"
         ? codex.start(params)
         : params.adapter === "rux-native"
-          ? nativeProvider.start(params)
+          ? nativeProvider.start(nativeRunParamsForLaunch(params))
         : startMockRun({ ...params, modelMode: params.modelMode ?? "fixed", contextFiles: params.contextFiles ?? [] }));
   } catch (error) {
     runGitBaselines.delete(params.runId);
@@ -564,6 +572,15 @@ async function launchPreparedRun(params: RunStartParams): Promise<{
     emit({ type: "run.log", runId: params.runId, level: "warning", message: `未创建 Run Git baseline：${runGitBaselineError}` });
   }
   return result;
+}
+
+function nativeRunParamsForLaunch(params: RunStartParams): NativeRunStartParams {
+  if (!params.profileId) return params;
+  const revision = profiles().getRevision(params.agentRevisionId);
+  if (!revision || revision.profileId !== params.profileId || revision.backend !== "rux-native") {
+    throw new Error("Rux Native Agent Revision is unavailable at launch");
+  }
+  return { ...params, allowedToolIds: [...revision.toolIds] };
 }
 
 function recoverPendingRun(runId: string, requestId: string): PendingPermissionRun | undefined {
@@ -704,6 +721,9 @@ async function handleRequest(input: unknown): Promise<void> {
         break;
       case "session.discover":
         result = await sessionDiscovery.discover(sessionDiscoverParamsSchema.parse(request.params));
+        break;
+      case "session.attribution.migrate":
+        result = sessionDiscovery.migrateAttribution(sessionAttributionMigrateParamsSchema.parse(request.params));
         break;
       case "session.preview":
         result = await sessionDiscovery.preview(sessionPreviewParamsSchema.parse(request.params));

@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const RUX_PROTOCOL_VERSION = 7 as const;
+export const RUX_PROTOCOL_VERSION = 10 as const;
 
 export const IPC_CHANNELS = {
   request: "rux:runtime:request",
@@ -13,6 +13,7 @@ export const IPC_CHANNELS = {
   taskStateLoad: "rux:task-state:load",
   taskStateSave: "rux:task-state:save",
   sessionImport: "rux:session:import",
+  sessionAttributionMigrate: "rux:session:attribution-migrate",
   sessionRefresh: "rux:session:refresh",
   sessionRebuild: "rux:session:rebuild",
   sessionRevisionList: "rux:session:revision-list",
@@ -25,6 +26,7 @@ export const IPC_CHANNELS = {
   localDataExecute: "rux:local-data:execute",
   localDataExport: "rux:local-data:export",
   providerConnectionList: "rux:provider-connection:list",
+  providerConnectionImpactPreview: "rux:provider-connection:impact-preview",
   providerConnectionSave: "rux:provider-connection:save",
   providerConnectionDelete: "rux:provider-connection:delete",
   providerConnectionTest: "rux:provider-connection:test",
@@ -44,6 +46,7 @@ export const runtimeMethods = [
   "agent.model.list",
   "session.list",
   "session.discover",
+  "session.attribution.migrate",
   "session.preview",
   "session.read",
   "session.resume.check",
@@ -80,7 +83,7 @@ export const runtimeMethods = [
 export type RuntimeMethod = (typeof runtimeMethods)[number];
 export type RendererRuntimeMethod = Exclude<
   RuntimeMethod,
-  "runtime.shutdown" | "session.list" | "session.read" | "session.resume.check" | "handoff.summary.generate" | "provider.connection.sync" | "provider.connection.test"
+  "runtime.shutdown" | "session.list" | "session.attribution.migrate" | "session.read" | "session.resume.check" | "handoff.summary.generate" | "provider.connection.sync" | "provider.connection.test"
 >;
 
 export interface RuntimeStatus {
@@ -247,6 +250,17 @@ export interface NativeProviderConnection {
   lastTestedAt?: string;
   lastTestStatus?: "connected" | "error";
   lastTestDetail?: string;
+  modelCatalog?: {
+    source: "provider-models";
+    refreshedAt: string;
+    models: Array<{ id: string; name?: string }>;
+  };
+  capabilities?: {
+    source: "provider-report";
+    refreshedAt: string;
+    perRunModelSelection?: boolean;
+    reported: string[];
+  };
 }
 
 export interface NativeProviderConnectionInput {
@@ -256,15 +270,37 @@ export interface NativeProviderConnectionInput {
   baseUrl: string;
   defaultModel: string;
   apiKey?: string;
+  impactFingerprint?: string;
+  confirmed?: true;
 }
 
-export interface NativeProviderConnectionDeleteParams { id: string; confirmed: true; }
+export const nativeProviderConnectionImpactActions = ["update", "replace-credential", "delete"] as const;
+export type NativeProviderConnectionImpactAction = (typeof nativeProviderConnectionImpactActions)[number];
+export interface NativeProviderConnectionImpactPreviewParams {
+  id: string;
+  action: NativeProviderConnectionImpactAction;
+  next?: Pick<NativeProviderConnectionInput, "label" | "providerType" | "baseUrl" | "defaultModel">;
+}
+export interface NativeProviderConnectionAgentImpact { id: string; name: string; revisionNumber: number; }
+export interface NativeProviderConnectionTaskImpact { workspaceId: string; taskId: string; title: string; }
+export interface NativeProviderConnectionImpactPreview {
+  connectionId: string;
+  connectionLabel: string;
+  action: NativeProviderConnectionImpactAction;
+  agents: NativeProviderConnectionAgentImpact[];
+  tasks: NativeProviderConnectionTaskImpact[];
+  deletesCredential: boolean;
+  fingerprint: string;
+}
+export interface NativeProviderConnectionDeleteParams { id: string; impactFingerprint: string; confirmed: true; }
 export interface NativeProviderConnectionTestParams { id: string; }
 export interface NativeProviderConnectionTestResult {
   id: string;
   ok: boolean;
   testedAt: string;
   detail: string;
+  modelCatalog?: NativeProviderConnection["modelCatalog"];
+  capabilities?: NativeProviderConnection["capabilities"];
 }
 
 /** Main-to-Runtime only. This object may contain a secret and must never be exposed to Renderer IPC. */
@@ -275,6 +311,8 @@ export interface NativeProviderRuntimeCredential {
   baseUrl: string;
   defaultModel: string;
   apiKey: string;
+  modelCatalog?: NativeProviderConnection["modelCatalog"];
+  capabilities?: NativeProviderConnection["capabilities"];
 }
 
 export const modelSources = [
@@ -629,6 +667,22 @@ export interface SessionDiscoverResult {
   authorizationRequired: DiscoveredSession[];
   migrationSuggestions: DiscoveredSession[];
   nextCursor?: string | null;
+}
+
+export interface SessionAttributionMigrateParams {
+  identityKey: string;
+  expectedPreviousWorkspaceId: string;
+  targetWorkspaceId: string;
+  confirmed: true;
+}
+
+export interface SessionAttributionMigrateResult {
+  identityKey: string;
+  previousWorkspaceId: string;
+  workspaceId: string;
+  workspaceName: string;
+  migratedAt: string;
+  movedTaskId?: string;
 }
 
 export const sessionImportModes = ["view", "continue"] as const;
@@ -1548,6 +1602,10 @@ export interface RuntimeRequestMap {
     params: SessionDiscoverParams;
     result: SessionDiscoverResult;
   };
+  "session.attribution.migrate": {
+    params: SessionAttributionMigrateParams;
+    result: SessionAttributionMigrateResult;
+  };
   "session.preview": {
     params: SessionPreviewParams;
     result: SessionPreviewResult;
@@ -1771,6 +1829,13 @@ export type RuntimeEvent =
       patch: GitRunPatch;
     }
   | {
+      /** Transient invalidation signal; clients re-read authoritative Git/Context state. */
+      type: "run.workspace-changed";
+      runId: string;
+      source: "file-tool" | "command-tool";
+      paths: string[];
+    }
+  | {
       type: "permission.requested";
       runId: string;
       adapter?: RunAdapter;
@@ -1890,6 +1955,7 @@ export interface RuxDesktopApi {
   loadTaskState(workspaceId?: string): Promise<WorkspaceTaskState>;
   saveTaskState(state: WorkspaceTaskState): Promise<TaskStateSaveResult>;
   importSession(params: SessionImportParams): Promise<SessionImportResult>;
+  migrateSessionAttribution(params: SessionAttributionMigrateParams): Promise<SessionAttributionMigrateResult>;
   refreshSession(params: SessionRefreshParams): Promise<SessionRefreshResult>;
   rebuildSession(params: SessionRebuildParams): Promise<SessionRefreshResult>;
   listSessionRevisions(params: SessionRevisionListParams): Promise<SessionRevisionListResult>;
@@ -1902,6 +1968,7 @@ export interface RuxDesktopApi {
   executeLocalData(params: LocalDataExecuteParams): Promise<LocalDataExecuteResult>;
   exportLocalData(params: LocalDataExportParams): Promise<LocalDataExportResult>;
   listProviderConnections(): Promise<NativeProviderConnection[]>;
+  previewProviderConnectionImpact(params: NativeProviderConnectionImpactPreviewParams): Promise<NativeProviderConnectionImpactPreview>;
   saveProviderConnection(input: NativeProviderConnectionInput): Promise<NativeProviderConnection>;
   deleteProviderConnection(params: NativeProviderConnectionDeleteParams): Promise<{ ok: true }>;
   testProviderConnection(params: NativeProviderConnectionTestParams): Promise<NativeProviderConnectionTestResult>;
@@ -2083,10 +2150,36 @@ export const nativeProviderConnectionInputSchema = z.object({
   baseUrl: nativeProviderBaseUrlSchema,
   defaultModel: z.string().trim().min(1).max(160),
   apiKey: z.string().min(1).max(16_384).optional(),
+  impactFingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  confirmed: z.literal(true).optional(),
+}).strict();
+
+const nativeProviderConnectionImpactNextSchema = z.object({
+  label: z.string().trim().min(1).max(80),
+  providerType: z.enum(nativeProviderTypes),
+  baseUrl: nativeProviderBaseUrlSchema,
+  defaultModel: z.string().trim().min(1).max(160),
+}).strict();
+
+export const nativeProviderConnectionImpactPreviewParamsSchema = z.object({
+  id: nativeProviderConnectionIdSchema,
+  action: z.enum(nativeProviderConnectionImpactActions),
+  next: nativeProviderConnectionImpactNextSchema.optional(),
+}).strict().superRefine((value, context) => {
+  if (value.action !== "delete" && !value.next) context.addIssue({ code: "custom", path: ["next"], message: "Updated metadata is required" });
+  if (value.action === "delete" && value.next) context.addIssue({ code: "custom", path: ["next"], message: "Delete preview must not include replacement metadata" });
+});
+
+const nativeProviderCapabilitiesSchema = z.object({
+  source: z.literal("provider-report"),
+  refreshedAt: z.iso.datetime(),
+  perRunModelSelection: z.boolean().optional(),
+  reported: z.array(z.string().trim().min(1).max(120)).max(100),
 }).strict();
 
 export const nativeProviderConnectionDeleteParamsSchema = z.object({
   id: nativeProviderConnectionIdSchema,
+  impactFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
   confirmed: z.literal(true),
 }).strict();
 
@@ -2100,6 +2193,12 @@ export const nativeProviderRuntimeSyncSchema = z.object({
     baseUrl: nativeProviderBaseUrlSchema,
     defaultModel: z.string().min(1).max(160),
     apiKey: z.string().min(1).max(16_384),
+    modelCatalog: z.object({
+      source: z.literal("provider-models"),
+      refreshedAt: z.iso.datetime(),
+      models: z.array(z.object({ id: z.string().trim().min(1).max(160), name: z.string().trim().min(1).max(160).optional() }).strict()).max(500),
+    }).strict().optional(),
+    capabilities: nativeProviderCapabilitiesSchema.optional(),
   }).strict()).max(100),
 }).strict();
 
@@ -2222,6 +2321,22 @@ export const sessionDiscoverResultSchema = z.object({
   authorizationRequired: z.array(discoveredSessionSchema).max(100),
   migrationSuggestions: z.array(discoveredSessionSchema).max(100),
   nextCursor: sessionCursorSchema,
+}).strict();
+
+export const sessionAttributionMigrateParamsSchema = z.object({
+  identityKey: z.string().regex(/^[a-f0-9]{64}$/),
+  expectedPreviousWorkspaceId: z.string().trim().min(1).max(240),
+  targetWorkspaceId: z.string().trim().min(1).max(240),
+  confirmed: z.literal(true),
+}).strict();
+
+export const sessionAttributionMigrateResultSchema = z.object({
+  identityKey: z.string().regex(/^[a-f0-9]{64}$/),
+  previousWorkspaceId: z.string().trim().min(1).max(240),
+  workspaceId: z.string().trim().min(1).max(240),
+  workspaceName: z.string().trim().min(1).max(240),
+  migratedAt: z.iso.datetime(),
+  movedTaskId: z.string().trim().min(1).max(240).optional(),
 }).strict();
 
 export const sessionReadResultSchema = z.object({

@@ -32,6 +32,8 @@ import {
   IPC_CHANNELS,
   runtimeRequestSchema,
   sessionImportParamsSchema,
+  sessionAttributionMigrateParamsSchema,
+  sessionAttributionMigrateResultSchema,
   sessionPreviewParamsSchema,
   sessionPreviewResultSchema,
   sessionRebuildParamsSchema,
@@ -46,6 +48,7 @@ import {
   localDataExportParamsSchema,
   localDataPreviewParamsSchema,
   nativeProviderConnectionDeleteParamsSchema,
+  nativeProviderConnectionImpactPreviewParamsSchema,
   nativeProviderConnectionInputSchema,
   nativeProviderConnectionTestParamsSchema,
   builtInAgentRevisionId,
@@ -56,6 +59,8 @@ import {
   workspaceOpenParamsSchema,
   workspaceTaskStateSchema,
   type DesktopInfo,
+  type NativeProviderConnectionImpactPreview,
+  type NativeProviderConnectionImpactPreviewParams,
   type RuntimeEvent,
   type RuntimeRequest,
   type RuntimeResponse,
@@ -374,6 +379,32 @@ function requireNativeProviderStore(): NativeProviderStore {
   return nativeProviderStore;
 }
 
+function nativeProviderImpactPreview(params: NativeProviderConnectionImpactPreviewParams): NativeProviderConnectionImpactPreview {
+  const connection = requireNativeProviderStore().list().find((item) => item.id === params.id);
+  if (!connection) throw new Error("Native Provider Connection not found");
+  const agents = (agentProfileStore?.list() ?? [])
+    .filter((profile) => profile.providerConnection.id === params.id)
+    .map((profile) => ({ id: profile.id, name: profile.name, revisionNumber: profile.revisionNumber }))
+    .sort((left, right) => left.id.localeCompare(right.id));
+  const tasks = requireTaskStore().listProviderConnectionTaskImpacts(params.id)
+    .sort((left, right) => `${left.workspaceId}:${left.taskId}`.localeCompare(`${right.workspaceId}:${right.taskId}`));
+  const normalizedNext = params.next ? { ...params.next, baseUrl: params.next.baseUrl.replace(/\/+$/, "") } : undefined;
+  const fingerprint = createHash("sha256").update(JSON.stringify({
+    connection: { id: connection.id, label: connection.label, providerType: connection.providerType, baseUrl: connection.baseUrl, defaultModel: connection.defaultModel, hasCredential: connection.hasCredential, updatedAt: connection.updatedAt },
+    action: params.action,
+    next: normalizedNext,
+    agents,
+    tasks,
+  })).digest("hex");
+  return { connectionId: connection.id, connectionLabel: connection.label, action: params.action, agents, tasks, deletesCredential: params.action === "delete", fingerprint };
+}
+
+function assertNativeProviderImpactFingerprint(params: NativeProviderConnectionImpactPreviewParams, fingerprint: string | undefined): void {
+  if (!fingerprint || nativeProviderImpactPreview(params).fingerprint !== fingerprint) {
+    throw new Error("Connection 影响已变化，请重新预览并确认");
+  }
+}
+
 async function syncNativeProviderConnections(): Promise<void> {
   const store = requireNativeProviderStore();
   await requestRuntime({
@@ -592,7 +623,7 @@ function registerIpcHandlers(): void {
     assertTrustedRenderer(event);
     const parsed = runtimeRequestSchema.parse(input) as RuntimeRequest;
     if (
-      ["runtime.shutdown", "session.list", "session.read", "session.resume.check"].includes(parsed.method)
+      ["runtime.shutdown", "session.list", "session.attribution.migrate", "session.read", "session.resume.check"].includes(parsed.method)
       || ["provider.connection.sync", "provider.connection.test"].includes(parsed.method)
     ) {
       throw new Error("This Runtime method is not exposed to the Renderer");
@@ -691,6 +722,31 @@ function registerIpcHandlers(): void {
       workspaceBranch: active.branch,
       preview,
       mode,
+    });
+  });
+
+  ipcMain.handle(IPC_CHANNELS.sessionAttributionMigrate, async (event, input: unknown) => {
+    assertTrustedRenderer(event);
+    const parsed = sessionAttributionMigrateParamsSchema.parse(input);
+    const workspaceState = requireWorkspaceState();
+    const target = workspaceState.recent.find((workspace) => workspace.id === parsed.targetWorkspaceId && !workspace.placeholder);
+    const previous = workspaceState.recent.find((workspace) => workspace.id === parsed.expectedPreviousWorkspaceId && !workspace.placeholder);
+    if (!target || !previous) throw new Error("Session migration requires both Workspaces to remain authorized");
+    const migrated = sessionAttributionMigrateResultSchema.parse(await requestRuntime({
+      kind: "request",
+      id: `session-attribution-migrate-${randomUUID()}`,
+      method: "session.attribution.migrate",
+      params: parsed,
+    }));
+    const movedTaskId = requireTaskStore().migrateImportedSessionWorkspace(
+      parsed.identityKey,
+      parsed.expectedPreviousWorkspaceId,
+      parsed.targetWorkspaceId,
+      target.branch,
+    );
+    return sessionAttributionMigrateResultSchema.parse({
+      ...migrated,
+      ...(movedTaskId ? { movedTaskId } : {}),
     });
   });
 
@@ -902,10 +958,24 @@ function registerIpcHandlers(): void {
     return requireNativeProviderStore().list();
   });
 
+  ipcMain.handle(IPC_CHANNELS.providerConnectionImpactPreview, (event, input: unknown) => {
+    assertTrustedRenderer(event);
+    return nativeProviderImpactPreview(nativeProviderConnectionImpactPreviewParamsSchema.parse(input));
+  });
+
   ipcMain.handle(IPC_CHANNELS.providerConnectionSave, async (event, input: unknown) => {
     assertTrustedRenderer(event);
     const parsed = nativeProviderConnectionInputSchema.parse(input);
-    const saved = requireNativeProviderStore().save(parsed);
+    if (parsed.id) {
+      if (!parsed.confirmed) throw new Error("编辑 Connection 前必须确认影响预览");
+      assertNativeProviderImpactFingerprint({
+        id: parsed.id,
+        action: parsed.apiKey ? "replace-credential" : "update",
+        next: { label: parsed.label, providerType: parsed.providerType, baseUrl: parsed.baseUrl, defaultModel: parsed.defaultModel },
+      }, parsed.impactFingerprint);
+    }
+    const { impactFingerprint: _impactFingerprint, confirmed: _confirmed, ...storeInput } = parsed;
+    const saved = requireNativeProviderStore().save(storeInput);
     await syncNativeProviderConnections();
     return saved;
   });
@@ -913,8 +983,7 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.providerConnectionDelete, async (event, input: unknown) => {
     assertTrustedRenderer(event);
     const parsed = nativeProviderConnectionDeleteParamsSchema.parse(input);
-    const usedBy = agentProfileStore?.list().filter((profile) => profile.providerConnection.id === parsed.id) ?? [];
-    if (usedBy.length) throw new Error(`先删除或迁移使用该 Connection 的 Agent：${usedBy.map((profile) => profile.name).join("、")}`);
+    assertNativeProviderImpactFingerprint({ id: parsed.id, action: "delete" }, parsed.impactFingerprint);
     requireNativeProviderStore().delete(parsed.id);
     await syncNativeProviderConnections();
     return { ok: true as const };

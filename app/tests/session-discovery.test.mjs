@@ -121,6 +121,25 @@ test("a newly authorized child Workspace produces a migration suggestion without
   assert.equal(suggested.migrationSuggestions[0].attribution.previousWorkspaceId, "parent");
   assert.equal(suggested.migrationSuggestions[0].attribution.workspaceId, "child");
   assert.equal(store.get(nestedKey).workspace_id, "parent", "discovery must not silently migrate ownership");
+
+  const migrated = withChild.migrateAttribution({
+    identityKey: nestedKey,
+    expectedPreviousWorkspaceId: "parent",
+    targetWorkspaceId: "child",
+    confirmed: true,
+  });
+  assert.equal(migrated.workspaceId, "child");
+  assert.equal(store.get(nestedKey).workspace_id, "child");
+  assert.deepEqual(store.audits(nestedKey).map((audit) => ({
+    previousWorkspaceId: audit.previous_workspace_id,
+    workspaceId: audit.workspace_id,
+  })), [{ previousWorkspaceId: "parent", workspaceId: "child" }]);
+  assert.throws(() => withChild.migrateAttribution({
+    identityKey: nestedKey,
+    expectedPreviousWorkspaceId: "parent",
+    targetWorkspaceId: "child",
+    confirmed: true,
+  }), (error) => error.code === "SESSION_MIGRATION_STALE");
 });
 
 test("discovery rejects a Workspace id absent from the privileged authorization snapshot", async (t) => {

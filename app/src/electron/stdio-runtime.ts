@@ -49,6 +49,7 @@ import {
   runStartParamsSchema,
   runModelDecisionSchema,
   sessionCancelParamsSchema,
+  sessionAttributionMigrateParamsSchema,
   sessionDiscoverParamsSchema,
   sessionPreviewParamsSchema,
   sessionListParamsSchema,
@@ -484,6 +485,9 @@ async function handleRequest(input: unknown): Promise<void> {
         break;
       case "session.discover":
         result = await sessionDiscovery.discover(sessionDiscoverParamsSchema.parse(request.params));
+        break;
+      case "session.attribution.migrate":
+        result = sessionDiscovery.migrateAttribution(sessionAttributionMigrateParamsSchema.parse(request.params));
         break;
       case "session.preview":
         result = await sessionDiscovery.preview(sessionPreviewParamsSchema.parse(request.params));

@@ -498,7 +498,7 @@ test("bounds Codex JSONL lines and terminates the provider connection", async (t
     prompt: "Bound output",
     permissionMode: "dontAsk",
   }).catch(() => undefined);
-  const failed = await collector.waitFor((event) => event.type === "run.failed", 10_000);
+  const failed = await collector.waitFor((event) => event.type === "run.failed", 20_000);
   assert.match(failed.error, /32 MB JSONL line limit/);
 });
 

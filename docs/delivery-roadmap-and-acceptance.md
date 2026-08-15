@@ -1,8 +1,8 @@
 # RUX P0/P1 交付路线与 P2 规划验收矩阵
 
-> 版本：v1.1
+> 版本：v1.2
 > 状态：基于 [产品需求文档 v1.1](product-requirements.md) 的执行基线
-> 更新日期：2026-08-14
+> 更新日期：2026-08-15
 > 范围：Desktop 优先；P0/P1 为当前交付基线，P2 记录已确认的 Auto 路由与原生 Provider 规划，同时保持 Runtime Host、TUI 协议与 Web/Sites fallback 兼容
 
 ## 1. 文档目的
@@ -64,7 +64,7 @@ P1 明确不包含：
 | 模型 | Codex 有结构化目录；Claude/自定义配置没有统一目录 | 增加 Engine 默认、已验证和未验证模型状态 |
 | Task Store | Main 管理的 Workspace 级 SQLite v5，持久化 Task/Message/Run/Event、Session Projection Revision、刷新审计与不可变 Handoff，并提供 Main-owned 占用、清理和导出边界 | 后续只扩展存储诊断与迁移工具 |
 | RUX 会话延续 | Renderer 保存 `sessionId`，Codex/Claude Adapter 可恢复 | 收紧兼容条件、错误恢复和桌面证据 |
-| 外部会话导入 | P1-E0 至 P1-E5 已完成：发现、导入、继续、刷新、版本、Handoff、本地清理与导出 | 后续补齐显式归属迁移提交与完整发布验收 |
+| 外部会话导入 | 已完成发现、导入、继续、显式归属迁移、刷新、版本、Handoff、本地清理与导出 | 保持非后台、非双向同步并继续做发布验收 |
 | Context Handoff | 确定性事实包、来源 Agent 隔离摘要、预览确认、不可变快照和来源关系已实现 | 主链路完成 |
 | Web/TUI | 共享 Runtime 能力已有基础 | 协议变更保持兼容；Desktop 为功能验收主客户端 |
 
@@ -86,7 +86,7 @@ P1 明确不包含：
 | P1-E5 | 已实现 | Task/Workspace 占用、影响预览、解除关联、分层删除、Markdown/JSON 导出与安全负向测试已完成 |
 | P1-E6 | 已完成 | 同一隔离打包环境已贯通显式检测、归属发现、预览导入、刷新版本、Handoff、重启恢复与本地数据影响预览；验收中发现的解除关联误导文案已修复并复测 |
 | P2-E0 | 已完成 | Auto Model Policy、确定性简单/复杂路由、同 Connection 白名单、Run Model Decision、显式回退与 Token Usage 已通过自动化和打包桌面验收 |
-| P2-E1 | 首版已实现 | Responses-compatible Connection、OS 加密凭据、Renderer 隔离、显式测试与无需 CLI 的文件工具 Run；命令沙箱、更多协议和能力协商待续 |
+| P2-E1 | 编码闭环已实现 | Responses-compatible Connection、OS 加密凭据、Renderer 隔离、显式测试、SSE 流式回复、无需 CLI 的文件工具与 macOS 受限命令 Run；跨平台等价沙箱、更多协议和能力协商待续 |
 
 ## 4. 依赖顺序
 
@@ -383,9 +383,13 @@ flowchart LR
 
 保持 PRD 5.17 的系统凭据库、Main/Runtime 特权读取和不透明 `credentialRef` 方向。P2-E1 可复用 P2-E0 路由合同，但 Auto 首版不依赖该 Epic。
 
-2026-08-14 已交付第一可运行切片：用户可在 `Agent 与 Provider` 中配置 Responses-compatible Base URL、模型和 API Key；Main 使用 `safeStorage` 保存加密密文，通过 Renderer 不可调用的 Runtime 方法同步内存凭据；系统自动创建固定该 Connection 的不可变 Rux Native Agent Revision。Run 支持 Provider response id 延续、Token Usage，以及受敏感文件和 realpath/symlink 边界保护的文件读取、列表和整体写入。测试覆盖无 CLI 工具循环、凭据无明文降级、损坏 Store 保留和越界符号链接拒绝。
+2026-08-15 已交付无需 CLI 的编码闭环：用户可在 `Agent 与 Provider` 中配置 Responses-compatible Base URL、模型和 API Key；Main 使用 `safeStorage` 保存加密密文，通过 Renderer 不可调用的 Runtime 方法同步内存凭据；系统自动创建固定该 Connection 的不可变 Rux Native Agent Revision。Run 支持 Provider response id 延续、Token Usage、Responses SSE 增量文本、受敏感文件和 realpath/symlink 边界保护的文件读取/列表/整体写入，以及 macOS 结构化无 Shell 命令。命令具有独立临时目录、清洗环境、超时、输出上限/脱敏、进程树取消和验证证据；`sandbox-exec` 拒绝网络及 Workspace/本次临时目录外写入，并阻止 Workspace/已解析工具链外的用户目录、外接卷和临时目录数据读取。文件或命令工具完成后发送由 v8 引入、当前 v10 延续的瞬态 Workspace invalidation，Desktop 增量重读真实 Changes，文件写入同时刷新所选 Context。
 
-尚未完成：跨平台命令沙箱、增量 patch 工具、流式输出、连接编辑与完整影响预览、模型目录/能力协商、Anthropic 原生协议、Custom Headers、原生 OAuth 和完整打包桌面证据。
+打包桌面验收（2026-08-15）：在隔离的 `Rux.app` user-data 和 Git Workspace 中，通过本机 Responses-compatible Fake Provider 完成了 macOS `safeStorage` 授权、Connection 显式测试、Rux Native Agent 创建、Workspace 写入审批、SSE Run、文件写入、受限命令验证、真实 Changes/Context、模型与 Provider Token 证据、不可变 Agent Snapshot、Run-owned patch 和 Native Session 持久化。退出并重新启动打包应用后，同一 Task、Run、Session、权限与验证证据均恢复，Terminal 未自动恢复；重启后的第二个 Run 明确使用首个 Run 的 `resumeSessionId`，验证通过并正确产生零增量 Run-owned diff。P2-NATIVE-001 至 P2-NATIVE-011 的当前 macOS 路线满足退出标准。
+
+2026-08-15 最终收口新增：Native Connection 支持元数据编辑、空 Key 保留、显式 Key 替换和凭据删除；每项变更都由 Main 生成包含 Agent/Task 引用的非敏感指纹快照，确认时重新计算并拒绝过期预览。显式测试保存 Provider `/models` 结构化目录、来源、刷新时间和仅由 Provider 明确报告的能力；目录进入 Agent、Composer 与同 Connection Auto 白名单，逐 Run 换模在未报告时继续保守阻断。协议升级至 v10。
+
+尚未完成且不属于当前本地路线：macOS 之外的等价命令沙箱、Anthropic 原生协议、Custom Headers、原生 ChatGPT/Claude 订阅 OAuth、云同步和 Developer ID 签名/公证。命令工具在无等价沙箱的平台必须省略，不能静默降级。
 
 ## 7. 验收证据等级
 
@@ -597,8 +601,12 @@ flowchart LR
 | P2-NATIVE-004 | Provider 只在显式测试或 Run 时被访问 | U/I/R：request trigger assertions | D-P2-11 显式测试 |
 | P2-NATIVE-005 | Responses function-call 循环写入工具结果并保存 response id/usage | C/I：Adapter tool-loop test | D-P2-12 完成 Run |
 | P2-NATIVE-006 | 文件工具拒绝 Workspace 越界、外部 symlink、敏感路径与 Secret 内容 | U/C/S：Adapter + Context safety tests | D-P2-13 受阻证据 |
-| P2-NATIVE-007 | 当前没有跨平台命令沙箱时不暴露 Shell 工具 | U/R/S：Tool contract assertion | Run 能力说明 |
-| P2-NATIVE-008 | 删除 Connection 不撤销 Provider Key，且被 Agent 引用时拒绝静默删除 | I/R：Profile reference guard | D-P2-14 删除影响 |
+| P2-NATIVE-007 | macOS 命令工具无 Shell、结构化 argv、清洗环境、超时/输出上限/进程树取消；Workspace 外写入、网络与受保护用户/卷/临时目录读取被 OS 沙箱拒绝 | U/C/S：Native command sandbox tests | D-P2-15 命令与验证证据 |
+| P2-NATIVE-008 | 编辑、替换 Key、删除均展示 Agent/Task 影响并以新鲜指纹确认；删除不撤销 Provider Key且保留历史记录 | I/R/S：impact fingerprint + Store lifecycle + release boundary | D-P2-14 Connection 影响 |
+| P2-NATIVE-009 | Responses SSE 增量文本只作为瞬态 delta 展示，完成后只持久化一条最终 Assistant 消息和 Provider usage | C/I/R：Native stream test + transcript reducer | D-P2-16 流式到完成态 |
+| P2-NATIVE-010 | 文件/命令工具完成后重读真实 Git Changes；文件写入刷新选中 Context，最终 Run 保存 immutable Git patch | C/I/R：Workspace invalidation + Git tests | D-P2-17 Run 中 Changes/Context |
+| P2-NATIVE-011 | Native 工具集合固定在不可变 Agent Revision；权限恢复时由 Runtime 重解析，Plan/平台限制只能缩小不能扩大 | U/C/S：Native tool policy tests + Runtime launch contract | Run Agent Snapshot |
+| P2-NATIVE-012 | 显式测试保存 Provider 返回的模型目录与明示能力；Agent/Composer/Auto 同 Connection 消费，未知换模能力不推断 | U/C/I/R：Adapter catalog + Auto capability + Renderer boundary | 目录来源与能力状态 |
 
 ## 10. 发布门禁
 
@@ -655,7 +663,7 @@ flowchart LR
 
 | Gate | 必须满足 |
 | --- | --- |
-| 功能 | P2-NATIVE-001 至 P2-NATIVE-008 全部通过；首版限制保持可见 |
+| 功能 | P2-NATIVE-001 至 P2-NATIVE-011 全部通过；平台限制保持可见 |
 | 自动化 | `npm test`、`npm run build:desktop` 与 Native Adapter/Store 安全负向测试通过 |
 | 安全 | Renderer/普通 IPC/Task Store/导出无 API Key；路径、symlink、敏感文件与无明文降级测试通过 |
 | Desktop | 实际打包应用完成添加 Connection→测试→自动 Agent→文件 Run→重启续聊 |
