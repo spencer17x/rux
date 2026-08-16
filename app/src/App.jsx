@@ -87,6 +87,7 @@ import {
   catalogModelMissing,
   modelSelectionState,
   modelStateAfterRun,
+  reconcileEngineDefaultModelDecision,
   verifiedModelHistory,
 } from "./model-state.js";
 import {
@@ -625,6 +626,7 @@ function recordRuntimeEvent(task, event) {
         : [...permissionDecisions, event.decision],
     };
   } else if (event.type === "run.metadata") {
+    const modelDecision = reconcileEngineDefaultModelDecision(nextRun.modelDecision, event.model);
     const sessionLink = createNativeSessionLink({
       adapter: nextRun.adapter,
       providerConnection: nextRun.providerConnection,
@@ -634,6 +636,7 @@ function recordRuntimeEvent(task, event) {
     });
     nextRun = {
       ...nextRun,
+      ...(modelDecision ? { modelDecision } : {}),
       ...(event.sessionId ? { sessionId: event.sessionId } : {}),
       ...(sessionLink ? { sessionLink, resumeFailure: undefined } : {}),
       ...(event.model ? { model: event.model } : {}),
@@ -1447,18 +1450,18 @@ function PermissionCard({ request, busy, error, onDecision }) {
   );
 }
 
-function ChangedFilesCard({ state, onOpenChanges, onRestoreChanges }) {
+function WorkspaceChangesCard({ state, onOpenChanges, onRestoreChanges }) {
   const snapshot = state?.snapshot;
   const files = snapshot?.files || [];
   const totals = snapshot?.totals || { files: 0, additions: 0, deletions: 0 };
   if (!files.length) return null;
 
   return (
-    <section className="transcript-change-card" aria-label={`${files.length} 个文件已编辑`}>
+    <section className="transcript-change-card" aria-label={`工作区当前有 ${files.length} 个未提交文件`}>
       <header>
         <span className="transcript-change-icon"><FilePlus2 size={18} /></span>
         <span className="transcript-change-summary">
-          <strong>已编辑 {files.length} 个文件</strong>
+          <strong>工作区未提交 {files.length} 个文件</strong>
           <small><b>+{totals.additions}</b> <em>−{totals.deletions}</em></small>
         </span>
         <span className="transcript-change-actions">
@@ -1466,6 +1469,7 @@ function ChangedFilesCard({ state, onOpenChanges, onRestoreChanges }) {
           <button type="button" className="review-button" onClick={() => onOpenChanges(files[0].path)}>审查</button>
         </span>
       </header>
+      <p>Workspace 全局状态，可能包含本次 Run 开始前已有的改动；本次 Run 的文件归属以 Run Evidence 为准。</p>
       <div className="transcript-change-files">
         {files.slice(0, 3).map((file) => {
           const segments = file.path.split("/");
@@ -1732,7 +1736,7 @@ function TaskTimeline({ task, streamingMessages = [], changes, onOpenChanges, on
               </button>
             ) : null}
 
-            {totals?.files ? <ChangedFilesCard state={changes} onOpenChanges={onOpenChanges} onRestoreChanges={onRestoreChanges} /> : null}
+            {totals?.files ? <WorkspaceChangesCard state={changes} onOpenChanges={onOpenChanges} onRestoreChanges={onRestoreChanges} /> : null}
             {hasOutcome && (hasAssistantMessage || totals?.files) ? (
               <div className="transcript-feedback" aria-label="回复操作">
                 <button type="button" onClick={() => void navigator.clipboard?.writeText(task.messages.filter((message) => message.role === "assistant").at(-1)?.text || "")} aria-label="复制回复"><Copy size={15} /></button>

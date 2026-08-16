@@ -872,6 +872,54 @@ test("merges stale cross-client snapshots without dropping messages, run events,
   }
 });
 
+test("resolves an Engine-default Model Decision exactly once from persisted Provider metadata", async () => {
+  const temporaryRoot = await mkdtemp(join(tmpdir(), "rux-task-store-model-resolution-"));
+  const store = createTaskStore(join(temporaryRoot, "state.sqlite3"));
+
+  try {
+    const initial = taskState("workspace-model-resolution");
+    const run = initial.tasks[0].runs[0];
+    run.model = "engine-default";
+    run.modelSource = "engine-default";
+    run.modelVerificationStatus = "not-required";
+    run.modelDecision = {
+      id: "model-decision:run-1", runId: "run-1", mode: "fixed", classification: "fixed",
+      actualModel: "engine-default", modelSource: "engine-default", reasonCodes: ["user-selected"],
+      rationale: "The Engine will report its default model.", allowlist: [], engine: "claude-code",
+      providerConnectionId: providerConnection.id, agentRevisionId: agentRevision.id, decidedAt: savedAt,
+    };
+    store.save(initial);
+
+    const resolved = structuredClone(initial);
+    resolved.updatedAt = "2026-08-10T10:01:00.000Z";
+    resolved.tasks[0].updatedAtIso = resolved.updatedAt;
+    const resolvedRun = resolved.tasks[0].runs[0];
+    resolvedRun.updatedAt = resolved.updatedAt;
+    resolvedRun.model = "sonnet";
+    resolvedRun.modelDecision.actualModel = "sonnet";
+    resolvedRun.events.push({
+      id: "run-1:2",
+      sequence: 2,
+      type: "run.metadata",
+      occurredAt: resolved.updatedAt,
+      payload: { type: "run.metadata", runId: "run-1", model: "sonnet" },
+    });
+    store.save(resolved);
+    assert.equal(store.load(initial.workspaceId).tasks[0].runs[0].modelDecision.actualModel, "sonnet");
+
+    const rewritten = structuredClone(store.load(initial.workspaceId));
+    rewritten.updatedAt = "2026-08-10T10:02:00.000Z";
+    rewritten.tasks[0].updatedAtIso = rewritten.updatedAt;
+    rewritten.tasks[0].runs[0].updatedAt = rewritten.updatedAt;
+    rewritten.tasks[0].runs[0].model = "opus";
+    rewritten.tasks[0].runs[0].modelDecision.actualModel = "opus";
+    assert.throws(() => store.save(rewritten), /Model Decision is immutable/);
+  } finally {
+    store.close();
+    await rm(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
 test("imports an external Session atomically, normalizes content, and deduplicates repeated imports", async () => {
   const temporaryRoot = await mkdtemp(join(tmpdir(), "rux-session-import-"));
   const databasePath = join(temporaryRoot, "state.sqlite3");

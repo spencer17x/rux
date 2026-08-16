@@ -510,13 +510,51 @@ function mergeRunEvents(
     .map((event, index) => ({ ...event, id: `${runId}:${index + 1}`, sequence: index + 1 }));
 }
 
+function metadataReportedModel(runId: string, events: PersistedRunEvent[]): string | undefined {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (event.type !== "run.metadata" || !event.payload || typeof event.payload !== "object") continue;
+    const payload = event.payload as Record<string, unknown>;
+    if (payload.runId !== runId || typeof payload.model !== "string") continue;
+    const model = payload.model.trim();
+    if (model) return model;
+  }
+  return undefined;
+}
+
+function isEngineDefaultResolution(
+  run: PersistedRun,
+  from: NonNullable<PersistedRun["modelDecision"]>,
+  to: NonNullable<PersistedRun["modelDecision"]>,
+  events: PersistedRunEvent[],
+): boolean {
+  if (
+    from.mode !== "fixed"
+    || from.modelSource !== "engine-default"
+    || from.actualModel !== "engine-default"
+    || to.actualModel === "engine-default"
+    || run.model !== to.actualModel
+    || metadataReportedModel(run.id, events) !== to.actualModel
+  ) return false;
+  const { actualModel: _fromModel, ...fromIdentity } = from;
+  const { actualModel: _toModel, ...toIdentity } = to;
+  return JSON.stringify(fromIdentity) === JSON.stringify(toIdentity);
+}
+
 function mergeRun(current: PersistedRun, incoming: PersistedRun): PersistedRun {
   const base = newest(current, incoming, (run) => run.updatedAt);
+  const events = mergeRunEvents(base.id, current.events, incoming.events);
+  let modelDecision = current.modelDecision ?? incoming.modelDecision;
   if (current.modelDecision && incoming.modelDecision
     && JSON.stringify(current.modelDecision) !== JSON.stringify(incoming.modelDecision)) {
-    throw new Error(`Run ${current.id} Model Decision is immutable`);
+    if (isEngineDefaultResolution(incoming, current.modelDecision, incoming.modelDecision, events)) {
+      modelDecision = incoming.modelDecision;
+    } else if (isEngineDefaultResolution(current, incoming.modelDecision, current.modelDecision, events)) {
+      modelDecision = current.modelDecision;
+    } else {
+      throw new Error(`Run ${current.id} Model Decision is immutable`);
+    }
   }
-  const modelDecision = current.modelDecision ?? incoming.modelDecision;
   const tokenUsage = current.tokenUsage && incoming.tokenUsage
     ? newest(current.tokenUsage, incoming.tokenUsage, (usage) => usage.reportedAt)
     : current.tokenUsage ?? incoming.tokenUsage;
@@ -572,7 +610,7 @@ function mergeRun(current: PersistedRun, incoming: PersistedRun): PersistedRun {
     permissionDecisions: decisions,
     verifications: [...verifications.values()].sort((left, right) =>
       left.finishedAt.localeCompare(right.finishedAt) || left.id.localeCompare(right.id)),
-    events: mergeRunEvents(base.id, current.events, incoming.events),
+    events,
   };
 }
 

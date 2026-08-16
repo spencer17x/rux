@@ -5,6 +5,7 @@ import {
   classifyModelFailure,
   modelSelectionState,
   modelStateAfterRun,
+  reconcileEngineDefaultModelDecision,
   verifiedModelHistory,
 } from "../src/model-state.js";
 
@@ -45,4 +46,19 @@ test("catalog removal warns only after a refresh and never substitutes the task 
   assert.equal(catalogModelMissing(task, { models: [], refreshedAt: "" }), false);
   assert.equal(catalogModelMissing(task, { models: [], refreshedAt: "2026-08-12T01:00:00.000Z" }), true);
   assert.equal(catalogModelMissing({ ...task, modelSource: "manual" }, { models: [], refreshedAt: "2026-08-12T01:00:00.000Z" }), false);
+});
+
+test("provider metadata resolves an Engine-default decision without changing explicit decisions", () => {
+  const engineDefault = {
+    mode: "fixed",
+    modelSource: "engine-default",
+    actualModel: "engine-default",
+  };
+  assert.deepEqual(reconcileEngineDefaultModelDecision(engineDefault, "gpt-5.6-sol"), {
+    ...engineDefault,
+    actualModel: "gpt-5.6-sol",
+  });
+  const explicit = { ...engineDefault, modelSource: "manual", actualModel: "gpt-5.6-sol" };
+  assert.equal(reconcileEngineDefaultModelDecision(explicit, "gpt-5.6"), explicit);
+  assert.equal(reconcileEngineDefaultModelDecision(engineDefault, ""), engineDefault);
 });

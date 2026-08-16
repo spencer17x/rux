@@ -217,6 +217,10 @@ test("clean startup waits for explicit project and account actions", async () =>
   assert.match(rendererSource, /showcaseMode \? \{\} : readUiPreferences\(\)/);
   assert.match(rendererSource, /if \(showcaseMode\) return;/);
   assert.match(rendererSource, /setTaskActionError\("Web 预览不会读取本机目录；请在 Rux 桌面应用中打开项目。"\)/);
+  assert.match(rendererSource, /工作区未提交 \{files\.length\} 个文件/);
+  assert.match(rendererSource, /本次 Run 的文件归属以 Run Evidence 为准/);
+  assert.doesNotMatch(rendererSource, /<strong>已编辑 \{files\.length\} 个文件<\/strong>/);
+  assert.match(rendererSource, /reconcileEngineDefaultModelDecision\(nextRun\.modelDecision, event\.model\)/);
 
   assert.match(webRuntimeSource, /showcasePreview \? changedFiles : \[\]/);
 });

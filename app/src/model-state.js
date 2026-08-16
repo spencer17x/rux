@@ -45,6 +45,20 @@ export function modelStateAfterRun(run, event) {
   return current;
 }
 
+export function reconcileEngineDefaultModelDecision(decision, reportedModel) {
+  const model = normalizedModel(reportedModel);
+  if (
+    !decision
+    || !model
+    || decision.mode !== "fixed"
+    || decision.modelSource !== "engine-default"
+    || decision.actualModel !== "engine-default"
+  ) {
+    return decision;
+  }
+  return { ...decision, actualModel: model };
+}
+
 export function verifiedModelHistory(tasks, adapter, connectionId) {
   const latest = new Map();
   for (const task of tasks || []) {
