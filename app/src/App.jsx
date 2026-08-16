@@ -42,6 +42,7 @@ import {
   Link2,
   ListFilter,
   LoaderCircle,
+  LockKeyhole,
   LogIn,
   Menu,
   MessageSquare,
@@ -1758,7 +1759,7 @@ function TaskTimeline({ task, streamingMessages = [], changes, onOpenChanges, on
   );
 }
 
-function Composer({ task, draft, onDraft, onSend, onAgentChange, onModelChange, onReasoningEffortChange, onPermissionChange, onOpenAccounts, focusRef, agentChoices, codexModels, codexCatalog, canRun = true }) {
+function Composer({ task, draft, onDraft, onSend, onAgentChange, onModelChange, onReasoningEffortChange, onPermissionChange, onOpenAccounts, onStartConversation, interactionLockReason = "", focusRef, agentChoices, codexModels, codexCatalog, canRun = true }) {
   const [optionsOpen, setOptionsOpen] = useState(false);
   const [dictating, setDictating] = useState(false);
   const [manualModel, setManualModel] = useState(task.model || "");
@@ -1817,6 +1818,10 @@ function Composer({ task, draft, onDraft, onSend, onAgentChange, onModelChange, 
     if (optionsOpen) setManualModel(task.model || "");
   }, [optionsOpen, task.id, task.model]);
 
+  useEffect(() => {
+    if (!canRun || isActive) setOptionsOpen(false);
+  }, [canRun, isActive]);
+
   const missingFromCatalog = runtimeAdapterForTask(task) === "codex" && catalogModelMissing(task, codexCatalog);
 
   return (
@@ -1835,20 +1840,21 @@ function Composer({ task, draft, onDraft, onSend, onAgentChange, onModelChange, 
               submit();
             }
           }}
-          placeholder="随心输入"
+          placeholder={interactionLockReason ? "当前会话不可编辑" : "随心输入"}
           aria-label="给 Agent 发送消息"
+          aria-describedby={interactionLockReason ? "composer-interaction-lock" : undefined}
           rows={2}
           disabled={!canRun}
         />
         <div className="composer-toolbar">
           <div className="composer-tools">
-            <button type="button" className={`composer-icon-button ${optionsOpen ? "is-active" : ""}`} aria-label="添加内容与运行设置" aria-expanded={optionsOpen} onClick={() => setOptionsOpen((open) => !open)}><Plus size={19} /></button>
+            <button type="button" className={`composer-icon-button ${optionsOpen ? "is-active" : ""}`} aria-label="添加内容与运行设置" aria-expanded={optionsOpen} disabled={!canRun || isActive} onClick={() => setOptionsOpen((open) => !open)}><Plus size={19} /></button>
             <select className="composer-agent-select" aria-label="选择 Agent" value={selectedAgentId} onChange={(event) => onAgentChange(event.target.value)} disabled={!canRun || isActive}>
               {!selectedAgentChoice ? <option value={selectedAgentId} disabled>{ruxAgentLabel(task.agent)}（Definition 已删除）</option> : null}
               {agentChoices.map((agent) => <option value={agent.id} key={agent.id} disabled={!agent.available}>{ruxAgentLabel(agent.name)}{agent.available ? "" : "（不可用）"}</option>)}
             </select>
             {!selectedAgentAvailable ? <button type="button" className="composer-connect-button" onClick={onOpenAccounts}><CircleAlert size={13} />配置连接</button> : null}
-            <button type="button" className={`permission-chip ${permissionVisualLabel === "完全访问" ? "is-full-access" : ""}`} onClick={() => setOptionsOpen((open) => !open)} aria-label={`权限：${permissionVisualLabel}`}><ShieldCheck size={16} /><span>{permissionVisualLabel}</span></button>
+            <button type="button" className={`permission-chip ${permissionVisualLabel === "完全访问" ? "is-full-access" : ""}`} disabled={!canRun || isActive} onClick={() => setOptionsOpen((open) => !open)} aria-label={`权限：${permissionVisualLabel}`}><ShieldCheck size={16} /><span>{permissionVisualLabel}</span></button>
           </div>
           <div className="composer-submit-area">
             <CircleDashed size={18} className={isActive ? "status-running" : "composer-context-status"} aria-label={isActive ? "运行中" : "上下文就绪"} />
@@ -1861,7 +1867,7 @@ function Composer({ task, draft, onDraft, onSend, onAgentChange, onModelChange, 
             >
               {modelOptions.map((model) => <option value={model} key={model}>{modelVisualLabel(model)}</option>)}
             </select>
-            <button type="button" className={`composer-mic-button ${dictating ? "is-active" : ""}`} aria-label="语音输入" aria-pressed={dictating} onClick={() => { setDictating((active) => !active); textareaRef.current?.focus(); }}><Mic size={19} /></button>
+            <button type="button" className={`composer-mic-button ${dictating ? "is-active" : ""}`} aria-label="语音输入" aria-pressed={dictating} disabled={!canRun || isActive} onClick={() => { setDictating((active) => !active); textareaRef.current?.focus(); }}><Mic size={19} /></button>
             <button
               type="button"
               className="send-button"
@@ -1893,6 +1899,12 @@ function Composer({ task, draft, onDraft, onSend, onAgentChange, onModelChange, 
           </div>
         ) : null}
       </div>
+      {interactionLockReason ? (
+        <div className="composer-interaction-lock" id="composer-interaction-lock" role="status">
+          <span><LockKeyhole size={13} />{interactionLockReason}</span>
+          <button type="button" onClick={onStartConversation}><MessageSquare size={13} />开始新对话</button>
+        </div>
+      ) : null}
       {missingFromCatalog ? (
         <div className="composer-context-row" role="status">
           <span className="composer-agent-warning"><CircleAlert size={11} /> {ruxModelLabel(task.model)} 已不在最新官方目录中，不会自动替换</span>
@@ -5085,6 +5097,58 @@ export function App() {
     window.setTimeout(() => composerInputRef.current?.focus(), 0);
   };
 
+  const startEditableConversation = () => {
+    if (workspaceState.active.placeholder) {
+      void chooseWorkspace();
+      return;
+    }
+    const preferredAgentId = selectedTask.agentProfileId || runtimeAdapterForTask(selectedTask);
+    const choice = agentChoices.find((item) => item.id === preferredAgentId && item.available)
+      || agentChoices.find((item) => item.adapter === runtimeAdapterForTask(selectedTask) && item.available)
+      || agentChoices.find((item) => item.available);
+    if (!choice) {
+      setTaskActionError("当前没有可用 Agent。请先检测并连接 Agent，然后开始新对话。");
+      openAccounts();
+      return;
+    }
+    const id = `task-${Date.now()}`;
+    const createdAt = isoNow();
+    const task = {
+      id,
+      workspaceId: selectedTask.workspaceId,
+      title: "新对话",
+      preview: `使用 ${choice.name} 开始可编辑对话`,
+      status: "waiting",
+      updatedAt: "现在",
+      updatedAtIso: createdAt,
+      createdAt,
+      agent: choice.name,
+      adapter: choice.adapter,
+      ...(choice.profileId ? { agentProfileId: choice.profileId } : {}),
+      agentRevisionId: choice.agentRevisionId,
+      providerConnection: choice.providerConnection,
+      permissionMode: choice.permissionMode || "acceptEdits",
+      model: choice.model,
+      modelSource: choice.modelSource,
+      modelVerificationStatus: choice.modelVerificationStatus,
+      ...(choice.reasoningEffort ? { reasoningEffort: choice.reasoningEffort } : {}),
+      contextFiles: [],
+      branch: selectedTask.branch || workspaceState.active.branch,
+      elapsed: "—",
+      tokens: "—",
+      messages: [],
+      plan: [],
+      activity: [],
+      runs: [],
+    };
+    setTaskActionError("");
+    setTasks((items) => [task, ...items.filter((item) => item.id !== `workspace-${selectedTask.workspaceId}`)]);
+    setSelectedTaskId(id);
+    setInspectorOpen(false);
+    setSidebarOpen(false);
+    window.setTimeout(() => composerInputRef.current?.focus(), 0);
+  };
+
   const selectTask = (id) => {
     setSelectedTaskId(id);
     setTaskActionError("");
@@ -6157,6 +6221,15 @@ export function App() {
   };
 
   const accountLabel = "账户与登录";
+  const composerInteractionLockReason = !appReady
+    ? "工作台仍在初始化，完成后即可编辑。"
+    : selectedTask.importedSession?.status === "unlinked"
+      ? "该导入会话已解除关联，当前只保留本地只读内容。"
+      : selectedTask.importedSession?.status === "native-unavailable"
+        ? "原生会话当前不可用，当前只保留本地只读内容。"
+        : selectedTask.importedSession?.mode === "view"
+          ? "这是仅查看的导入会话，原会话的模型、权限和消息不会在这里修改。"
+          : "";
 
   return (
     <div className={`app-shell codex-shell ${sidebarCollapsed ? "sidebar-is-collapsed" : ""}`}>
@@ -6291,11 +6364,13 @@ export function App() {
             onReasoningEffortChange={changeSelectedReasoningEffort}
             onPermissionChange={changeSelectedPermission}
             onOpenAccounts={openAccounts}
+            onStartConversation={startEditableConversation}
+            interactionLockReason={composerInteractionLockReason}
             focusRef={composerInputRef}
             agentChoices={taskAgentChoices}
             codexModels={codexCatalog.models}
             codexCatalog={codexCatalog}
-            canRun={appReady && selectedTask.importedSession?.mode !== "view" && selectedTask.importedSession?.status !== "unlinked"}
+            canRun={!composerInteractionLockReason}
           />
         </section>
 

@@ -208,6 +208,14 @@ test("clean startup waits for explicit project and account actions", async () =>
   assert.doesNotMatch(accountsSource, /一键同步|onSync|登录 Codex|Codex 设置/);
   assert.match(rendererSource, /if \(value === "codex"\) return "Rux"/);
   assert.match(rendererSource, /aria-label="Rux 推理强度"/);
+  assert.match(rendererSource, /这是仅查看的导入会话，原会话的模型、权限和消息不会在这里修改/);
+  assert.match(rendererSource, /开始新对话/);
+  assert.match(rendererSource, /const startEditableConversation = \(\) =>/);
+  assert.match(rendererSource, /title: "新对话"/);
+  assert.match(rendererSource, /messages: \[\],\s+plan: \[\],\s+activity: \[\],\s+runs: \[\]/);
+  assert.match(rendererSource, /placeholder=\{interactionLockReason \? "当前会话不可编辑" : "随心输入"\}/);
+  assert.match(rendererSource, /aria-label="添加内容与运行设置"[^>]+disabled=\{!canRun \|\| isActive\}/);
+  assert.match(rendererSource, /className=\{`permission-chip[^>]+disabled=\{!canRun \|\| isActive\}/);
   assert.match(rendererSource, />Rux 设置</);
   assert.match(rendererSource, /ruxAdapterLabel\(message\.adapter\)/);
   assert.match(rendererSource, /ruxAdapterLabel\(run\.adapter\)/);
