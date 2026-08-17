@@ -254,6 +254,46 @@ select:focus-visible {
   font-size: 12px;
 }
 
+.project-header-row {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.project-header-row .project-heading {
+  min-width: 0;
+  flex: 1;
+}
+
+.project-new-task-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 26px;
+  border-radius: 6px;
+  color: #747672;
+  opacity: 0.68;
+  transition: background 100ms ease, color 100ms ease, opacity 100ms ease;
+}
+
+.project-header-row:hover .project-new-task-button,
+.project-header-row:focus-within .project-new-task-button {
+  opacity: 1;
+}
+
+.project-new-task-button:hover,
+.project-new-task-button:focus-visible {
+  color: #303230;
+  background: var(--hover);
+}
+
+.project-new-task-button:disabled {
+  cursor: default;
+  opacity: 0.35;
+}
+
 .project-heading:hover {
   background: var(--hover);
 }

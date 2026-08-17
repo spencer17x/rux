@@ -241,6 +241,10 @@ test("clean startup waits for explicit project and account actions", async () =>
   assert.match(rendererSource, /这是仅查看的导入会话，原会话的模型、权限和消息不会在这里修改/);
   assert.match(rendererSource, /const createBlankTask = \(choice, workspace = workspaceState\.active, sourceTask = selectedTask, initialDraft = ""\) =>/);
   assert.match(rendererSource, /else startEditableConversation\(\);/);
+  assert.match(rendererSource, /className="project-new-task-button"/);
+  assert.match(rendererSource, /aria-label=\{`在项目 \$\{workspace\.name\} 中新建对话`\}/);
+  assert.match(rendererSource, /onClick=\{\(\) => onCreateTaskInWorkspace\(workspace\.path\)\}/);
+  assert.doesNotMatch(rendererSource, /!searchQuery && !hasUnpinnedTasks/);
   assert.doesNotMatch(rendererSource, /composer-interaction-lock/);
   assert.match(rendererSource, /title: "新对话"/);
   assert.match(rendererSource, /messages: \[\],\s+plan: \[\],\s+activity: \[\],\s+runs: \[\]/);

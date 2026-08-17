@@ -1168,26 +1168,37 @@ function Sidebar({
             {workspaceState.recent.filter((workspace) => !workspace.placeholder).map((workspace) => {
               const projectTasks = visibleTasks.filter((task) => task.workspaceId === workspace.id && !task.pinned);
               const projectOpen = Boolean(searchQuery) || expandedProjectIds.includes(workspace.id);
-              const hasUnpinnedTasks = tasks.some((task) => task.workspaceId === workspace.id && !task.pinned && !task.archived);
               const isCurrent = workspace.id === activeWorkspace.id;
               if (searchQuery && !projectTasks.length) return null;
 
               return (
                 <div className={`workspace-project ${isCurrent ? "is-current" : ""}`} key={workspace.id}>
-                  <button
-                    className="project-heading"
-                    type="button"
-                    onClick={() => onToggleProject(workspace.id)}
-                    title={workspace.path}
-                    aria-expanded={projectOpen}
-                    aria-label={`${projectOpen ? "收起" : "展开"}项目 ${workspace.name}`}
-                  >
-                    <Folder size={16} />
-                    <span className="project-name">{workspace.name}</span>
-                    {isCurrent ? <span className="project-current-dot" aria-label="当前项目" title="当前项目" /> : null}
-                    <span className="project-branch">{workspace.branch}</span>
-                    {projectOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                  </button>
+                  <div className="project-header-row">
+                    <button
+                      className="project-heading"
+                      type="button"
+                      onClick={() => onToggleProject(workspace.id)}
+                      title={workspace.path}
+                      aria-expanded={projectOpen}
+                      aria-label={`${projectOpen ? "收起" : "展开"}项目 ${workspace.name}`}
+                    >
+                      <Folder size={16} />
+                      <span className="project-name">{workspace.name}</span>
+                      {isCurrent ? <span className="project-current-dot" aria-label="当前项目" title="当前项目" /> : null}
+                      <span className="project-branch">{workspace.branch}</span>
+                      {projectOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                    </button>
+                    <button
+                      type="button"
+                      className="project-new-task-button"
+                      onClick={() => onCreateTaskInWorkspace(workspace.path)}
+                      disabled={workspaceBusy}
+                      aria-label={`在项目 ${workspace.name} 中新建对话`}
+                      title={`在 ${workspace.name} 中新建对话`}
+                    >
+                      <Plus size={14} />
+                    </button>
+                  </div>
 
                   {projectOpen ? (
                     <div className="task-list project-task-list">
@@ -1204,17 +1215,6 @@ function Sidebar({
                           disabled={workspaceBusy && !isCurrent}
                         />
                       ))}
-                      {!searchQuery && !hasUnpinnedTasks ? (
-                        <button
-                          type="button"
-                          className="project-empty-action"
-                          onClick={() => onCreateTaskInWorkspace(workspace.path)}
-                          disabled={workspaceBusy}
-                        >
-                          <Plus size={14} />
-                          <span>在此项目中新建任务</span>
-                        </button>
-                      ) : null}
                     </div>
                   ) : null}
                 </div>
