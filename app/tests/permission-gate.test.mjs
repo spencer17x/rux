@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { RunPermissionGate } from "../src/electron/permission-gate.ts";
 
-function runParams(runId, permissionMode = "acceptEdits", adapter = "claude-code") {
+function runParams(runId, permissionMode = "acceptEdits", adapter = "rux-native") {
   return {
     runId,
     adapter,
@@ -159,6 +159,24 @@ test("Codex workspace-write Runs rely on provider-native approvals without a coa
   assert.equal(result.state, "running");
   assert.equal(launched.length, 1);
   assert.equal(launched[0].reasoningEffort, "high");
+  assert.equal(events.length, 0);
+});
+
+test("Claude Code workspace-write Runs rely on provider-native approvals without a coarse gate", async () => {
+  const events = [];
+  const launched = [];
+  const gate = new RunPermissionGate(
+    "/workspace",
+    (event) => events.push(event),
+    async (params) => {
+      launched.push(params);
+      return { runId: params.runId, adapter: params.adapter };
+    },
+  );
+
+  const result = await gate.start(runParams("run-claude-native", "acceptEdits", "claude-code"));
+  assert.equal(result.state, "running");
+  assert.equal(launched.length, 1);
   assert.equal(events.length, 0);
 });
 

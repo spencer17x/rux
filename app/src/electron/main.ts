@@ -11,6 +11,7 @@ import {
   utilityProcess,
   type UtilityProcess,
 } from "electron";
+import updaterPackage from "electron-updater";
 import { createHash, randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import {
@@ -22,12 +23,14 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { basename, dirname, resolve } from "node:path";
+import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import runtimePath from "./runtime?modulePath";
 import { AgentProfileStore } from "./agent-profile-store";
 import { TaskStore } from "./task-store";
 import { NativeProviderStore } from "./native-provider-store.ts";
+import { LocalProductEventStore, type LocalProductEventKind } from "./local-product-event-store.ts";
+import { UpdateManager } from "./update-manager.ts";
 import {
   IPC_CHANNELS,
   runtimeRequestSchema,
@@ -51,6 +54,7 @@ import {
   nativeProviderConnectionImpactPreviewParamsSchema,
   nativeProviderConnectionInputSchema,
   nativeProviderConnectionTestParamsSchema,
+  nativeProviderCredentialMigrationParamsSchema,
   builtInAgentRevisionId,
   defaultModelState,
   defaultProviderConnectionForAdapter,
@@ -100,6 +104,9 @@ let workspaceAuthorizationSource: WorkspaceAuthorizationSource = "placeholder";
 let taskStore: TaskStore | null = null;
 let agentProfileStore: AgentProfileStore | null = null;
 let nativeProviderStore: NativeProviderStore | null = null;
+let localProductEventStore: LocalProductEventStore | null = null;
+let updateManager: UpdateManager | null = null;
+const activeRunSubjects = new Map<string, string>();
 const handoffSummaryGenerations = new Map<string, {
   sourceTaskId: string;
   fingerprint: string;
@@ -176,6 +183,17 @@ function inspectWorkspace(inputPath: string, lastOpenedAt = new Date().toISOStri
 
 function workspaceStatePath(): string {
   return resolve(app.getPath("userData"), "workspace-state.json");
+}
+
+function packagedUpdateConfig(): { feedUrl?: string; channel?: string } {
+  try {
+    const path = app.isPackaged ? resolve(process.resourcesPath, "update-config.json") : resolve(import.meta.dirname, "../../update-config.json");
+    const value = JSON.parse(readFileSync(path, "utf8")) as { version?: number; enabled?: boolean; feedUrl?: unknown; channel?: unknown };
+    if (value.version !== 1 || value.enabled !== true || typeof value.feedUrl !== "string") return {};
+    return { feedUrl: value.feedUrl, ...(typeof value.channel === "string" ? { channel: value.channel } : {}) };
+  } catch {
+    return {};
+  }
 }
 
 function persistWorkspaceState(): void {
@@ -266,6 +284,18 @@ function requireTaskStore(): TaskStore {
   return taskStore;
 }
 
+function localSubjectHash(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function recordLocalProductEvent(kind: LocalProductEventKind, dimensions: Parameters<LocalProductEventStore["record"]>[1] = {}): void {
+  try {
+    localProductEventStore?.record(kind, dimensions);
+  } catch (error) {
+    console.error(`[local-metrics] ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
 function requireAuthorizedWorkspaceId(workspaceId?: string): string {
   const state = requireWorkspaceState();
   const requestedId = workspaceId ?? state.active.id;
@@ -354,6 +384,25 @@ async function waitForRuntimeExit(child: UtilityProcess, timeoutMs: number): Pro
 
 function handleRuntimeMessage(message: RuntimeWireMessage): void {
   if (message.kind === "event") {
+    if (message.event.type === "run.started") {
+      const subjectHash = message.event.resumeSessionId ? localSubjectHash(message.event.resumeSessionId) : undefined;
+      if (subjectHash) {
+        activeRunSubjects.set(message.event.runId, subjectHash);
+        recordLocalProductEvent("session-continued", { subjectHash, engine: message.event.adapter });
+        if (localProductEventStore?.has("run-failed", subjectHash)) recordLocalProductEvent("error-recovery-attempted", { subjectHash, engine: message.event.adapter });
+      }
+    } else if (message.event.type === "run.failed") {
+      const subjectHash = message.event.resumeSessionId ? localSubjectHash(message.event.resumeSessionId) : activeRunSubjects.get(message.event.runId);
+      recordLocalProductEvent("run-failed", { ...(subjectHash ? { subjectHash } : {}) });
+      activeRunSubjects.delete(message.event.runId);
+    } else if (message.event.type === "run.completed") {
+      const subjectHash = activeRunSubjects.get(message.event.runId);
+      recordLocalProductEvent("run-succeeded", { ...(subjectHash ? { subjectHash } : {}) });
+      if (subjectHash && localProductEventStore?.has("run-failed", subjectHash)) recordLocalProductEvent("error-recovered", { subjectHash });
+      activeRunSubjects.delete(message.event.runId);
+    } else if (message.event.type === "run.cancelled") {
+      activeRunSubjects.delete(message.event.runId);
+    }
     emitToRenderers(message.event);
     if (message.event.type === "runtime.ready") void syncNativeProviderConnections().catch((error) => {
       console.error(`[runtime] Native Provider sync failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -379,6 +428,11 @@ function requireNativeProviderStore(): NativeProviderStore {
   return nativeProviderStore;
 }
 
+function nativeCredentialStorageBackend(): string {
+  if (process.platform === "linux") return `safeStorage:${safeStorage.getSelectedStorageBackend()}`;
+  return `safeStorage:${process.platform}`;
+}
+
 function nativeProviderImpactPreview(params: NativeProviderConnectionImpactPreviewParams): NativeProviderConnectionImpactPreview {
   const connection = requireNativeProviderStore().list().find((item) => item.id === params.id);
   if (!connection) throw new Error("Native Provider Connection not found");
@@ -388,9 +442,9 @@ function nativeProviderImpactPreview(params: NativeProviderConnectionImpactPrevi
     .sort((left, right) => left.id.localeCompare(right.id));
   const tasks = requireTaskStore().listProviderConnectionTaskImpacts(params.id)
     .sort((left, right) => `${left.workspaceId}:${left.taskId}`.localeCompare(`${right.workspaceId}:${right.taskId}`));
-  const normalizedNext = params.next ? { ...params.next, baseUrl: params.next.baseUrl.replace(/\/+$/, "") } : undefined;
+  const normalizedNext = params.next ? { ...params.next, baseUrl: params.next.baseUrl.replace(/\/+$/, ""), customHeaderNames: params.next.customHeaderNames?.map((name) => name.trim()).sort((left, right) => left.localeCompare(right)) } : undefined;
   const fingerprint = createHash("sha256").update(JSON.stringify({
-    connection: { id: connection.id, label: connection.label, providerType: connection.providerType, baseUrl: connection.baseUrl, defaultModel: connection.defaultModel, hasCredential: connection.hasCredential, updatedAt: connection.updatedAt },
+    connection: { id: connection.id, label: connection.label, providerType: connection.providerType, baseUrl: connection.baseUrl, defaultModel: connection.defaultModel, hasCredential: connection.hasCredential, customHeaderNames: connection.customHeaderNames, updatedAt: connection.updatedAt },
     action: params.action,
     next: normalizedNext,
     agents,
@@ -623,12 +677,14 @@ function registerIpcHandlers(): void {
     assertTrustedRenderer(event);
     const parsed = runtimeRequestSchema.parse(input) as RuntimeRequest;
     if (
-      ["runtime.shutdown", "session.list", "session.attribution.migrate", "session.read", "session.resume.check"].includes(parsed.method)
+      ["runtime.shutdown", "session.list", "session.import", "session.refresh", "session.rebuild", "session.revision.list", "session.revision.restore", "session.attribution.migrate", "session.read", "session.resume.check", "handoff.preview", "handoff.commit", "local.data.summary", "local.data.preview", "local.data.execute", "local.data.export"].includes(parsed.method)
       || ["provider.connection.sync", "provider.connection.test"].includes(parsed.method)
     ) {
       throw new Error("This Runtime method is not exposed to the Renderer");
     }
-    return requestRuntime(parsed);
+    const result = await requestRuntime(parsed);
+    if (parsed.method === "auth.status") recordLocalProductEvent("cli-detection");
+    return result;
   });
 
   ipcMain.handle(IPC_CHANNELS.workspaceState, (event): WorkspaceState => {
@@ -650,6 +706,33 @@ function registerIpcHandlers(): void {
       : await dialog.showOpenDialog(options);
     if (result.canceled || !result.filePaths[0]) return null;
     return activateWorkspace(result.filePaths[0], true);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.workspaceChooseFiles, async (event): Promise<string[]> => {
+    assertTrustedRenderer(event);
+    const workspace = requireWorkspaceState().active;
+    if (workspace.placeholder) throw new Error("请先选择一个项目");
+    requireAuthorizedWorkspaceId(workspace.id);
+    const workspaceRoot = realpathSync(workspace.path);
+    const options: Electron.OpenDialogOptions = {
+      title: "添加项目文件到 Agent Context",
+      defaultPath: workspaceRoot,
+      properties: ["openFile", "multiSelections"],
+      buttonLabel: "添加到 Context",
+    };
+    const result = mainWindow
+      ? await dialog.showOpenDialog(mainWindow, options)
+      : await dialog.showOpenDialog(options);
+    if (result.canceled) return [];
+    return result.filePaths.map((selectedPath) => {
+      const canonicalPath = realpathSync(selectedPath);
+      if (!statSync(canonicalPath).isFile()) throw new Error("Context 只能添加普通文件");
+      const workspaceRelativePath = relative(workspaceRoot, canonicalPath);
+      if (!workspaceRelativePath || isAbsolute(workspaceRelativePath) || workspaceRelativePath === ".." || workspaceRelativePath.startsWith(`..${sep}`)) {
+        throw new Error("所选文件必须位于当前授权 Workspace 内");
+      }
+      return workspaceRelativePath.split(sep).join("/");
+    });
   });
 
   ipcMain.handle(IPC_CHANNELS.workspaceActivate, async (event, input: unknown): Promise<WorkspaceState> => {
@@ -693,9 +776,13 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.taskStateSave, (event, input: unknown) => {
     assertTrustedRenderer(event);
     const parsed = workspaceTaskStateSchema.parse(input);
+    const welcomeWorkspaceId = inspectWorkspace(resolve(app.getPath("userData"), "welcome-workspace")).id;
+    if (parsed.workspaceId === welcomeWorkspaceId) {
+      return { workspaceId: parsed.workspaceId, savedAt: new Date().toISOString(), persisted: false };
+    }
     requireAuthorizedWorkspaceId(parsed.workspaceId);
     const saved = requireTaskStore().save(parsed);
-    return { workspaceId: saved.workspaceId, savedAt: saved.updatedAt };
+    return { workspaceId: saved.workspaceId, savedAt: saved.updatedAt, persisted: true };
   });
 
   ipcMain.handle(IPC_CHANNELS.sessionImport, async (event, input: unknown) => {
@@ -717,12 +804,15 @@ function registerIpcHandlers(): void {
       method: "session.preview",
       params: previewParams,
     }));
-    return requireTaskStore().importExternalSession({
+    const imported = requireTaskStore().importExternalSession({
       workspaceId: active.id,
       workspaceBranch: active.branch,
       preview,
       mode,
     });
+    recordLocalProductEvent(imported.created ? "session-imported" : "session-import-deduplicated", { subjectHash: localSubjectHash(preview.identityKey), engine: preview.metadata.engine, mode });
+    if (mode === "continue") recordLocalProductEvent("session-continued", { subjectHash: localSubjectHash(preview.identityKey), engine: preview.metadata.engine, mode });
+    return imported;
   });
 
   ipcMain.handle(IPC_CHANNELS.sessionAttributionMigrate, async (event, input: unknown) => {
@@ -902,6 +992,7 @@ function registerIpcHandlers(): void {
       agentSummaryProvenance = generation.provenance;
     }
     const result = requireTaskStore().commitContextHandoff({ workspaceId: active.id, sourceTaskId: parsed.sourceTaskId, target: resolveHandoffTarget(parsed.targetAgentId), messageIds: parsed.messageIds, filePaths: parsed.filePaths, sourceAgentAvailable: true, fingerprint: parsed.fingerprint, ...(parsed.agentSummary ? { agentSummary: parsed.agentSummary } : {}), ...(agentSummaryProvenance ? { agentSummaryProvenance } : {}), ...(parsed.constraints ? { constraints: parsed.constraints } : {}) });
+    recordLocalProductEvent("task-branched", { subjectHash: localSubjectHash(parsed.sourceTaskId), mode: "handoff" });
     if (parsed.agentSummaryGenerationId) handoffSummaryGenerations.delete(parsed.agentSummaryGenerationId);
     return result;
   });
@@ -970,8 +1061,8 @@ function registerIpcHandlers(): void {
       if (!parsed.confirmed) throw new Error("编辑 Connection 前必须确认影响预览");
       assertNativeProviderImpactFingerprint({
         id: parsed.id,
-        action: parsed.apiKey ? "replace-credential" : "update",
-        next: { label: parsed.label, providerType: parsed.providerType, baseUrl: parsed.baseUrl, defaultModel: parsed.defaultModel },
+        action: parsed.apiKey || parsed.customHeaders ? "replace-credential" : "update",
+        next: { label: parsed.label, providerType: parsed.providerType, baseUrl: parsed.baseUrl, defaultModel: parsed.defaultModel, ...(parsed.customHeaders ? { customHeaderNames: parsed.customHeaders.map((header) => header.name) } : {}) },
       }, parsed.impactFingerprint);
     }
     const { impactFingerprint: _impactFingerprint, confirmed: _confirmed, ...storeInput } = parsed;
@@ -1001,6 +1092,65 @@ function registerIpcHandlers(): void {
     }) as import("../shared/protocol").NativeProviderConnectionTestResult;
     requireNativeProviderStore().recordTest(result);
     return result;
+  });
+
+  ipcMain.handle(IPC_CHANNELS.providerCredentialDiagnostics, (event) => {
+    assertTrustedRenderer(event);
+    return requireNativeProviderStore().diagnose(nativeCredentialStorageBackend());
+  });
+
+  ipcMain.handle(IPC_CHANNELS.providerCredentialMigrate, async (event, input: unknown) => {
+    assertTrustedRenderer(event);
+    nativeProviderCredentialMigrationParamsSchema.parse(input);
+    const result = requireNativeProviderStore().migrateCredentials(nativeCredentialStorageBackend());
+    await syncNativeProviderConnections();
+    return result;
+  });
+
+  ipcMain.handle(IPC_CHANNELS.localProductEventSummary, (event) => {
+    assertTrustedRenderer(event);
+    if (!localProductEventStore) throw new Error("Local product event store is unavailable");
+    return localProductEventStore.summary();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.updateState, (event) => {
+    assertTrustedRenderer(event);
+    if (!updateManager) throw new Error("Update manager is unavailable");
+    return updateManager.getState();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.updateCheck, async (event) => {
+    assertTrustedRenderer(event);
+    if (!updateManager) throw new Error("Update manager is unavailable");
+    return updateManager.check();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.updateDownload, async (event) => {
+    assertTrustedRenderer(event);
+    if (!updateManager) throw new Error("Update manager is unavailable");
+    return updateManager.download();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.updateInstall, async (event) => {
+    assertTrustedRenderer(event);
+    if (!updateManager) throw new Error("Update manager is unavailable");
+    const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
+    const result = parent
+      ? await dialog.showMessageBox(parent, { type: "warning", title: "安装 Rux 更新", message: "立即重启并安装已校验的更新？", detail: "当前 Run 与 Terminal 将停止。更新仅在签名和包哈希校验通过后可安装。", buttons: ["取消", "重启并安装"], defaultId: 0, cancelId: 0, noLink: true })
+      : await dialog.showMessageBox({ type: "warning", title: "安装 Rux 更新", message: "立即重启并安装已校验的更新？", buttons: ["取消", "重启并安装"], defaultId: 0, cancelId: 0, noLink: true });
+    if (result.response !== 1) return { accepted: false };
+    await stopRuntimeProcess("installing signed update");
+    taskStore?.close();
+    taskStore = null;
+    allowQuit = true;
+    updateManager.install();
+    return { accepted: true };
+  });
+
+  ipcMain.handle(IPC_CHANNELS.updateConfirmHealthy, (event) => {
+    assertTrustedRenderer(event);
+    if (!updateManager) throw new Error("Update manager is unavailable");
+    return updateManager.confirmHealthy();
   });
 }
 
@@ -1081,7 +1231,16 @@ if (!hasExplicitUserDataDirectory) {
 }
 app.setName("Rux");
 
-app.whenReady().then(() => {
+const ownsSingleInstanceLock = app.requestSingleInstanceLock();
+if (!ownsSingleInstanceLock) app.quit();
+app.on("second-instance", () => {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+});
+
+if (ownsSingleInstanceLock) app.whenReady().then(() => {
   initializeWorkspaceState();
   agentProfileStore = new AgentProfileStore(resolve(app.getPath("userData"), "agent-profiles.json"));
   nativeProviderStore = new NativeProviderStore(
@@ -1093,14 +1252,36 @@ app.whenReady().then(() => {
       decrypt: (value) => safeStorage.decryptString(value),
     },
   );
+  localProductEventStore = new LocalProductEventStore(resolve(app.getPath("userData"), "local-product-events.json"));
+  const updateConfig = packagedUpdateConfig();
+  updateManager = new UpdateManager({
+    updater: updaterPackage.autoUpdater,
+    currentVersion: app.getVersion(),
+    packaged: app.isPackaged,
+    statePath: resolve(app.getPath("userData"), "update-health.json"),
+    feedUrl: updateConfig.feedUrl,
+    channel: updateConfig.channel,
+  });
   taskStore = new TaskStore(
     resolve(app.getPath("userData"), "rux-task-state.sqlite3"),
     undefined,
     (revisionId) => agentProfileStore?.getRevision(revisionId),
   );
+  const restoredInterrupted = requireWorkspaceState().recent
+    .filter((workspace) => !workspace.placeholder)
+    .flatMap((workspace) => taskStore!.load(workspace.id).tasks)
+    .filter((task) => task.status === "interrupted").length;
+  if (restoredInterrupted) recordLocalProductEvent("restart-recovery", { count: restoredInterrupted });
   registerIpcHandlers();
   startRuntimeProcess();
   mainWindow = createMainWindow();
+  setTimeout(() => {
+    if (!updateManager) return;
+    if (updateManager.getState().rollbackPending) void updateManager.recoverIfNeeded();
+    else void requestRuntime({ kind: "request", id: `update-health-${randomUUID()}`, method: "runtime.ping", params: {} })
+      .then(() => updateManager?.confirmHealthy())
+      .catch(() => undefined);
+  }, 60_000);
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {

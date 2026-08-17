@@ -273,6 +273,92 @@ test("standalone JSONL Runtime runs Codex and custom Agent profiles over stdio",
 
   child.stdin.write(`${JSON.stringify({
     kind: "request",
+    id: "session-import",
+    method: "session.import",
+    params: {
+      operationId: "stdio-session-import",
+      engine: "codex",
+      providerConnection: codexConnection.providerConnection,
+      activeWorkspaceId: createHash("sha256").update(realpathSync(workspace)).digest("hex").slice(0, 12),
+      nativeSessionId: "thread-discovered-1",
+      limit: 50,
+      mode: "continue",
+    },
+  })}\n`);
+  const imported = await waitFor(messages, (message) =>
+    message.kind === "response" && message.id === "session-import");
+  assert.equal(imported.ok, true);
+  assert.equal(imported.result.created, true);
+  assert.equal(imported.result.task.importedSession.mode, "continue");
+  assert.equal(imported.result.task.importedSession.sessionLink.nativeSessionId, "thread-discovered-1");
+
+  child.stdin.write(`${JSON.stringify({ kind: "request", id: "task-load-imported", method: "task.state.load", params: {} })}\n`);
+  const loadedImported = await waitFor(messages, (message) =>
+    message.kind === "response" && message.id === "task-load-imported");
+  assert.equal(loadedImported.ok, true);
+  assert.equal(loadedImported.result.tasks.length, 1);
+
+  child.stdin.write(`${JSON.stringify({ kind: "request", id: "session-refresh", method: "session.refresh", params: { taskId: imported.result.task.id, operationId: "refresh-imported-session" } })}\n`);
+  const refreshed = await waitFor(messages, (message) => message.kind === "response" && message.id === "session-refresh");
+  assert.equal(refreshed.ok, true);
+  assert.equal(refreshed.result.task.id, imported.result.task.id);
+
+  child.stdin.write(`${JSON.stringify({ kind: "request", id: "session-revisions", method: "session.revision.list", params: { taskId: imported.result.task.id } })}\n`);
+  const revisions = await waitFor(messages, (message) => message.kind === "response" && message.id === "session-revisions");
+  assert.equal(revisions.ok, true);
+  assert.ok(revisions.result.revisions.length >= 1);
+
+  const importedMessageIds = imported.result.task.messages.map((message) => message.id);
+  child.stdin.write(`${JSON.stringify({ kind: "request", id: "handoff-preview", method: "handoff.preview", params: { sourceTaskId: imported.result.task.id, targetAgentId: "claude-code", messageIds: importedMessageIds, filePaths: [] } })}\n`);
+  const handoffPreview = await waitFor(messages, (message) => message.kind === "response" && message.id === "handoff-preview");
+  assert.equal(handoffPreview.ok, true);
+  assert.equal(handoffPreview.result.target.adapter, "claude-code");
+  assert.equal(handoffPreview.result.facts.messages.length, importedMessageIds.length);
+
+  child.stdin.write(`${JSON.stringify({ kind: "request", id: "handoff-summary", method: "handoff.summary.generate", params: { sourceTaskId: imported.result.task.id, targetAgentId: "claude-code", messageIds: importedMessageIds, filePaths: [], fingerprint: handoffPreview.result.fingerprint } })}\n`);
+  const handoffSummary = await waitFor(messages, (message) => message.kind === "response" && message.id === "handoff-summary", 10_000);
+  assert.equal(handoffSummary.ok, true);
+  assert.equal(handoffSummary.result.provenance.isolated, true);
+  assert.equal(handoffSummary.result.provenance.nativeSessionPersisted, false);
+
+  child.stdin.write(`${JSON.stringify({ kind: "request", id: "handoff-commit", method: "handoff.commit", params: { sourceTaskId: imported.result.task.id, targetAgentId: "claude-code", messageIds: importedMessageIds, filePaths: [], fingerprint: handoffPreview.result.fingerprint, agentSummary: handoffSummary.result.summary, agentSummaryGenerationId: handoffSummary.result.generationId, confirmed: true } })}\n`);
+  const handoffCommit = await waitFor(messages, (message) => message.kind === "response" && message.id === "handoff-commit");
+  assert.equal(handoffCommit.ok, true);
+  assert.equal(handoffCommit.result.targetTask.adapter, "claude-code");
+  assert.equal(handoffCommit.result.targetTask.runs.length, 0);
+  assert.equal(handoffCommit.result.snapshot.agentSummaryProvenance.isolated, true);
+
+  child.stdin.write(`${JSON.stringify({ kind: "request", id: "local-data-summary", method: "local.data.summary", params: {} })}\n`);
+  const localDataSummary = await waitFor(messages, (message) => message.kind === "response" && message.id === "local-data-summary");
+  assert.equal(localDataSummary.ok, true);
+  assert.equal(localDataSummary.result.importedTaskCount, 1);
+
+  child.stdin.write(`${JSON.stringify({ kind: "request", id: "local-data-preview", method: "local.data.preview", params: { scope: "task", taskId: imported.result.task.id, action: "unlink" } })}\n`);
+  const localDataPreview = await waitFor(messages, (message) => message.kind === "response" && message.id === "local-data-preview");
+  assert.equal(localDataPreview.ok, true);
+  assert.equal(localDataPreview.result.nativeSessions[0].nativeSessionId, "thread-discovered-1");
+
+  child.stdin.write(`${JSON.stringify({ kind: "request", id: "local-data-execute", method: "local.data.execute", params: { scope: "task", taskId: imported.result.task.id, action: "unlink", fingerprint: localDataPreview.result.fingerprint, confirmed: true } })}\n`);
+  const localDataExecute = await waitFor(messages, (message) => message.kind === "response" && message.id === "local-data-execute");
+  assert.equal(localDataExecute.ok, true);
+  assert.equal(localDataExecute.result.action, "unlink");
+
+  child.stdin.write(`${JSON.stringify({ kind: "request", id: "local-data-export", method: "local.data.export", params: { scope: "workspace", format: "json", revisions: "all", destination: "rux-export.json", confirmedSensitiveContent: true } })}\n`);
+  const localDataExport = await waitFor(messages, (message) => message.kind === "response" && message.id === "local-data-export");
+  assert.equal(localDataExport.ok, true);
+  assert.equal(localDataExport.result.filePath, join(realpathSync(workspace), "rux-export.json"));
+  assert.ok(localDataExport.result.bytes > 0);
+  const exportText = readFileSync(join(workspace, "rux-export.json"), "utf8");
+  assert.match(exportText, /thread-discovered-1/);
+  assert.doesNotMatch(exportText, /sk-proj-rux-fixture-secret/);
+
+  child.stdin.write(`${JSON.stringify({ kind: "request", id: "local-data-export-overwrite", method: "local.data.export", params: { scope: "workspace", format: "json", revisions: "all", destination: "rux-export.json", confirmedSensitiveContent: true } })}\n`);
+  const overwriteExport = await waitFor(messages, (message) => message.kind === "response" && message.id === "local-data-export-overwrite");
+  assert.equal(overwriteExport.ok, false);
+  assert.match(overwriteExport.error.message, /refusing to overwrite/);
+
+  child.stdin.write(`${JSON.stringify({
+    kind: "request",
     id: "context-outside",
     method: "context.snapshot",
     params: { selectedFiles: ["../secret.txt"] },

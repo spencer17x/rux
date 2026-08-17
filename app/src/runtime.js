@@ -55,6 +55,7 @@ function normalizeRunArguments(options, emit) {
       agentRevisionId: options?.agentRevisionId || builtInAgentRevisionId(adapter),
       providerConnectionId: options?.providerConnectionId,
       contextFiles: options?.contextFiles,
+      conversationHistory: options?.conversationHistory,
     },
     emit,
   };
@@ -137,7 +138,7 @@ export function createMockRuntime() {
         adapters: [
           { id: "mock", name: "Rux Demo", available: true, version: "web-preview" },
           { id: "claude-code", name: "Claude Code", available: false, detail: "仅桌面应用可用" },
-          { id: "codex", name: "Rux", available: false, detail: "仅桌面应用可用" },
+          { id: "codex", name: "Codex", available: false, detail: "仅桌面应用可用" },
         ],
       };
     },
@@ -186,6 +187,10 @@ export function createMockRuntime() {
       throw new Error("Rux 登录仅在 Rux 桌面应用中可用");
     },
 
+    async logout() {
+      throw new Error("退出 Agent 登录仅在 Rux 桌面应用中可用");
+    },
+
     async listAgentProfiles() {
       return { profiles: [] };
     },
@@ -207,6 +212,14 @@ export function createMockRuntime() {
     async saveProviderConnection() { throw new Error("原生 Provider 仅在 Rux 桌面应用中可用"); },
     async deleteProviderConnection() { throw new Error("原生 Provider 仅在 Rux 桌面应用中可用"); },
     async testProviderConnection() { throw new Error("原生 Provider 仅在 Rux 桌面应用中可用"); },
+    async getProviderCredentialDiagnostics() { return { status: "empty", storageBackend: "web-unavailable", encryptionAvailable: false, connectionCount: 0, decryptableCount: 0, failedConnectionLabels: [], checkedAt: new Date().toISOString(), migrationAvailable: false, detail: "浏览器预览不提供操作系统安全存储" }; },
+    async migrateProviderCredentials() { throw new Error("凭据迁移仅在 Rux 桌面应用中可用"); },
+    async getLocalProductEventSummary() { return { storage: "main-local-only", totalEvents: 0, counts: { "cli-detection": 0, "run-succeeded": 0, "run-failed": 0, "restart-recovery": 0, "session-imported": 0, "session-import-deduplicated": 0, "session-continued": 0, "task-branched": 0, "error-recovery-attempted": 0, "error-recovered": 0 } }; },
+    async getUpdateState() { return { phase: "disabled", currentVersion: "web", channel: "stable", configured: false, detail: "应用更新仅在已签名桌面包中可用" }; },
+    async checkForUpdates() { return this.getUpdateState(); },
+    async downloadUpdate() { throw new Error("应用更新仅在已签名桌面包中可用"); },
+    async installUpdate() { throw new Error("应用更新仅在已签名桌面包中可用"); },
+    async confirmUpdateHealthy() { return this.getUpdateState(); },
 
     async listChanges() {
       const previewFiles = showcasePreview ? changedFiles : [];
@@ -453,6 +466,10 @@ function createDesktopRuntime(api) {
       return api.request("auth.login", { provider });
     },
 
+    logout(provider) {
+      return api.request("auth.logout", { provider });
+    },
+
     cancelLogin(provider) {
       return api.request("auth.cancel", { provider });
     },
@@ -478,6 +495,14 @@ function createDesktopRuntime(api) {
     saveProviderConnection(input) { return api.saveProviderConnection(input); },
     deleteProviderConnection(params) { return api.deleteProviderConnection(params); },
     testProviderConnection(id) { return api.testProviderConnection({ id }); },
+    getProviderCredentialDiagnostics() { return api.getProviderCredentialDiagnostics(); },
+    migrateProviderCredentials() { return api.migrateProviderCredentials({ confirmed: true }); },
+    getLocalProductEventSummary() { return api.getLocalProductEventSummary(); },
+    getUpdateState() { return api.getUpdateState(); },
+    checkForUpdates() { return api.checkForUpdates(); },
+    downloadUpdate() { return api.downloadUpdate(); },
+    installUpdate() { return api.installUpdate(); },
+    confirmUpdateHealthy() { return api.confirmUpdateHealthy(); },
 
     listChanges() {
       return api.request("changes.list", {});
@@ -577,6 +602,7 @@ function createDesktopRuntime(api) {
         agentRevisionId: normalized.options.agentRevisionId,
         providerConnectionId: normalized.options.providerConnectionId,
         ...(normalized.options.contextFiles?.length ? { contextFiles: normalized.options.contextFiles } : {}),
+        ...(normalized.options.conversationHistory?.length ? { conversationHistory: normalized.options.conversationHistory } : {}),
       }).catch((error) => {
         const emit = activeRuns.get(runId);
         if (!emit) return;

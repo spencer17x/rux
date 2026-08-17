@@ -186,6 +186,7 @@ for (const scenario of [
     assert.equal(invocation.permissionTool, "mcp__rux-permission__request_permission");
     assert.ok(invocation.args.includes("--permission-prompt-tool"));
     assert.ok(invocation.args.includes("--mcp-config"));
+    assert.deepEqual(invocation.args.slice(-2), ["--", "exercise provider permission callback"]);
     assert.ok(existsSync(invocation.configPath));
     if (process.platform !== "win32") {
       assert.equal(statSync(invocation.configPath).mode & 0o777, 0o600);

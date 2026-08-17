@@ -6,8 +6,9 @@ import {
   mkdirSync,
   realpathSync,
   statSync,
+  writeFileSync,
 } from "node:fs";
-import { resolve } from "node:path";
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { AgentProfileStore } from "./agent-profile-store";
 import { AuthManager } from "./auth-manager";
 import { ClaudeCodeAdapter } from "./claude-adapter";
@@ -44,6 +45,12 @@ import {
   gitRunReviewAcceptanceSchema,
   gitRunRestoreRequestSchema,
   gitRunRestoreSelectionSchema,
+  handoffCommitParamsSchema,
+  handoffPreviewParamsSchema,
+  handoffSummaryGenerateParamsSchema,
+  localDataExecuteParamsSchema,
+  localDataPreviewParamsSchema,
+  localDataRuntimeExportParamsSchema,
   permissionDecideParamsSchema,
   runCancelParamsSchema,
   runStartParamsSchema,
@@ -51,6 +58,11 @@ import {
   sessionCancelParamsSchema,
   sessionAttributionMigrateParamsSchema,
   sessionDiscoverParamsSchema,
+  sessionImportParamsSchema,
+  sessionRefreshParamsSchema,
+  sessionRebuildParamsSchema,
+  sessionRevisionListParamsSchema,
+  sessionRevisionRestoreParamsSchema,
   sessionPreviewParamsSchema,
   sessionListParamsSchema,
   sessionReadParamsSchema,
@@ -69,6 +81,8 @@ import {
   type ContextSnapshot,
   type RunStartParams,
   type RunModelDecision,
+  type HandoffTarget,
+  type HandoffSummaryProvenance,
   defaultProviderConnectionForAdapter,
 } from "../shared/protocol";
 import { createContextSnapshot, contextSnapshotPrompt } from "./context-snapshot.ts";
@@ -112,6 +126,14 @@ const runGitBaselines = new Map<string, GitRunBaseline>();
 const activeRequests = new Set<Promise<void>>();
 const pendingRunFinalizers = new Set<Promise<void>>();
 const activeRunIds = new Set<string>();
+const activeNativeSessionRuns = new Map<string, string>();
+const nativeSessionByRun = new Map<string, string>();
+const handoffSummaryGenerations = new Map<string, {
+  sourceTaskId: string;
+  fingerprint: string;
+  provenance: HandoffSummaryProvenance;
+  expiresAt: number;
+}>();
 let gitMutationQueue: Promise<void> = Promise.resolve();
 let gitMutationInProgress = false;
 let gitMutationPending = 0;
@@ -128,6 +150,11 @@ function emit(event: RuntimeEvent): void {
     "runId" in event
     && ["run.completed", "run.cancelled", "run.failed"].includes(event.type)
   ) {
+    const nativeSessionId = nativeSessionByRun.get(event.runId);
+    if (nativeSessionId) {
+      activeNativeSessionRuns.delete(nativeSessionId);
+      nativeSessionByRun.delete(event.runId);
+    }
     const baseline = runGitBaselines.get(event.runId);
     runGitBaselines.delete(event.runId);
     if (baseline) {
@@ -219,6 +246,27 @@ const taskStore = new TaskStore(
   undefined,
   (revisionId) => profiles.getRevision(revisionId),
 );
+
+function resolveHandoffTarget(targetAgentId: string): HandoffTarget {
+  if (targetAgentId === "codex" || targetAgentId === "claude-code") {
+    const model = targetAgentId === "codex" ? "Rux default" : "Claude default";
+    return {
+      agentId: targetAgentId,
+      agentName: targetAgentId === "codex" ? "Rux" : "Claude Code",
+      adapter: targetAgentId,
+      agentRevisionId: `builtin:${targetAgentId}@1`,
+      providerConnection: defaultProviderConnectionForAdapter(targetAgentId),
+      model,
+      modelSource: "engine-default",
+      modelVerificationStatus: "not-required",
+      permissionMode: "acceptEdits",
+    };
+  }
+  const profile = profiles.get(targetAgentId);
+  if (!profile) throw new Error("Handoff target Agent was not found");
+  const model = profile.model || (profile.backend === "codex" ? "Rux default" : "Claude default");
+  return { agentId: profile.id, agentName: profile.name, adapter: profile.backend, agentProfileId: profile.id, agentRevisionId: profile.latestRevisionId, providerConnection: profile.providerConnection, model, modelSource: profile.modelSource, modelVerificationStatus: profile.modelVerificationStatus, ...(profile.reasoningEffort ? { reasoningEffort: profile.reasoningEffort } : {}), permissionMode: profile.permissionMode };
+}
 
 async function contextSnapshot(params: unknown) {
   const adapters = [claudeCode.info(), codex.info()].filter((adapter) => adapter.available);
@@ -468,6 +516,9 @@ async function handleRequest(input: unknown): Promise<void> {
       case "auth.login":
         result = await authManager.login(authLoginParamsSchema.parse(request.params).provider);
         break;
+      case "auth.logout":
+        result = await authManager.logout(authLoginParamsSchema.parse(request.params).provider);
+        break;
       case "auth.cancel":
         await authManager.cancel(authLoginParamsSchema.parse(request.params).provider);
         result = { ok: true };
@@ -492,6 +543,39 @@ async function handleRequest(input: unknown): Promise<void> {
       case "session.preview":
         result = await sessionDiscovery.preview(sessionPreviewParamsSchema.parse(request.params));
         break;
+      case "session.import": {
+        const params = sessionImportParamsSchema.parse(request.params);
+        if (params.activeWorkspaceId !== workspaceId) throw new Error("Session import requires the active stdio Workspace");
+        const { mode, ...previewInput } = params;
+        const preview = await sessionDiscovery.preview(sessionPreviewParamsSchema.parse(previewInput));
+        const branches = await gitChanges.listBranches();
+        result = taskStore.importExternalSession({ workspaceId, workspaceBranch: branches.currentBranch ?? "—", preview, mode });
+        break;
+      }
+      case "session.refresh": {
+        const params = sessionRefreshParamsSchema.parse(request.params);
+        const task = taskStore.load(workspaceId).tasks.find((candidate) => candidate.id === params.taskId);
+        const link = task?.importedSession?.sessionLink;
+        if (!task || !link || task.importedSession?.status === "unlinked") throw new Error("A linked imported Session Task is required");
+        const preview = await sessionDiscovery.preview(sessionPreviewParamsSchema.parse({ operationId: params.operationId, engine: link.engine, providerConnection: task.providerConnection, activeWorkspaceId: workspaceId, nativeSessionId: link.nativeSessionId, limit: 100 }));
+        result = taskStore.refreshExternalSession({ workspaceId, taskId: task.id, preview });
+        break;
+      }
+      case "session.rebuild": {
+        const params = sessionRebuildParamsSchema.parse(request.params);
+        result = taskStore.activateSessionRevision(workspaceId, params.taskId, params.candidateRevisionId, "rebuild");
+        break;
+      }
+      case "session.revision.list": {
+        const params = sessionRevisionListParamsSchema.parse(request.params);
+        result = taskStore.listSessionRevisions(workspaceId, params.taskId);
+        break;
+      }
+      case "session.revision.restore": {
+        const params = sessionRevisionRestoreParamsSchema.parse(request.params);
+        result = taskStore.activateSessionRevision(workspaceId, params.taskId, params.revisionId, "restore");
+        break;
+      }
       case "session.read":
         result = await sessions.read(sessionReadParamsSchema.parse(request.params));
         break;
@@ -537,9 +621,86 @@ async function handleRequest(input: unknown): Promise<void> {
         result = { ok: true };
         break;
       }
-      case "handoff.summary.generate":
-        result = await generateIsolatedHandoffSummary(workspaceRoot, request.params, (revisionId) => profiles.getRevision(revisionId));
+      case "handoff.summary.generate": {
+        const params = handoffSummaryGenerateParamsSchema.parse(request.params);
+        const source = taskStore.load(workspaceId).tasks.find((task) => task.id === params.sourceTaskId);
+        if (!source) throw new Error("Handoff source Task was not found");
+        if (source.adapter !== "codex" && source.adapter !== "claude-code") throw new Error("The source Agent cannot generate a handoff summary");
+        const preview = taskStore.previewContextHandoff({ workspaceId, sourceTaskId: source.id, target: resolveHandoffTarget(params.targetAgentId), messageIds: params.messageIds, filePaths: params.filePaths, sourceAgentAvailable: source.status !== "interrupted" });
+        if (preview.fingerprint !== params.fingerprint) throw new Error("Handoff source facts changed; review the preview again");
+        const prompt = [
+          "Generate an optional narrative Context Handoff summary from the deterministic facts below.",
+          "Use only these facts. Do not inspect the workspace, invoke tools, or add assumptions.",
+          "Cover the goal, confirmed decisions, current progress, blockers, and recommended next steps when present.",
+          "Return concise plain text only. The user will review and may edit or remove it before confirmation.",
+          `Deterministic facts:\n${JSON.stringify(preview.facts, null, 2)}`,
+        ].join("\n\n");
+        if (prompt.length > 100_000) throw new Error("Selected handoff facts are too large for summary generation; deselect some messages");
+        const operationId = `handoff-summary-generation-${randomUUID()}`;
+        const generated = await generateIsolatedHandoffSummary(workspaceRoot, {
+          operationId,
+          adapter: source.adapter,
+          prompt,
+          ...(!source.model.toLowerCase().includes("default") ? { model: source.model } : {}),
+          ...(source.reasoningEffort ? { reasoningEffort: source.reasoningEffort } : {}),
+          ...(source.agentProfileId ? { profileId: source.agentProfileId } : {}),
+          agentRevisionId: source.agentRevisionId,
+          providerConnection: source.providerConnection,
+        }, (revisionId) => profiles.getRevision(revisionId));
+        handoffSummaryGenerations.set(generated.generationId, {
+          sourceTaskId: source.id,
+          fingerprint: params.fingerprint,
+          provenance: generated.provenance,
+          expiresAt: Date.now() + 15 * 60_000,
+        });
+        result = generated;
         break;
+      }
+      case "handoff.preview": {
+        const params = handoffPreviewParamsSchema.parse(request.params);
+        const source = taskStore.load(workspaceId).tasks.find((task) => task.id === params.sourceTaskId);
+        if (!source) throw new Error("Handoff source Task was not found");
+        result = taskStore.previewContextHandoff({ workspaceId, sourceTaskId: source.id, target: resolveHandoffTarget(params.targetAgentId), messageIds: params.messageIds, filePaths: params.filePaths, sourceAgentAvailable: source.status !== "interrupted" });
+        break;
+      }
+      case "handoff.commit": {
+        const params = handoffCommitParamsSchema.parse(request.params);
+        let agentSummaryProvenance: HandoffSummaryProvenance | undefined;
+        if (params.agentSummaryGenerationId) {
+          const generation = handoffSummaryGenerations.get(params.agentSummaryGenerationId);
+          if (!generation || generation.expiresAt < Date.now() || generation.sourceTaskId !== params.sourceTaskId || generation.fingerprint !== params.fingerprint) {
+            throw new Error("Handoff Agent summary is stale; generate it again or remove it before confirming");
+          }
+          agentSummaryProvenance = generation.provenance;
+        }
+        result = taskStore.commitContextHandoff({ workspaceId, sourceTaskId: params.sourceTaskId, target: resolveHandoffTarget(params.targetAgentId), messageIds: params.messageIds, filePaths: params.filePaths, sourceAgentAvailable: true, fingerprint: params.fingerprint, ...(params.agentSummary ? { agentSummary: params.agentSummary } : {}), ...(agentSummaryProvenance ? { agentSummaryProvenance } : {}), ...(params.constraints ? { constraints: params.constraints } : {}) });
+        if (params.agentSummaryGenerationId) handoffSummaryGenerations.delete(params.agentSummaryGenerationId);
+        break;
+      }
+      case "local.data.summary":
+        result = taskStore.getLocalDataSummary(workspaceId);
+        break;
+      case "local.data.preview":
+        result = taskStore.previewLocalDataAction(workspaceId, localDataPreviewParamsSchema.parse(request.params));
+        break;
+      case "local.data.execute":
+        result = taskStore.executeLocalDataAction(workspaceId, localDataExecuteParamsSchema.parse(request.params));
+        break;
+      case "local.data.export": {
+        const params = localDataRuntimeExportParamsSchema.parse(request.params);
+        if (isAbsolute(params.destination) || params.destination.split(/[\\/]/).includes("..")) throw new Error("Export destination must be a Workspace-relative new file");
+        const target = resolve(workspaceRoot, params.destination);
+        const targetRelative = relative(workspaceRoot, target);
+        if (!targetRelative || targetRelative === ".." || targetRelative.startsWith(`..${sep}`) || isAbsolute(targetRelative)) throw new Error("Export destination escapes the Workspace");
+        if (existsSync(target)) throw new Error("Export destination already exists; refusing to overwrite it");
+        const parent = realpathSync(dirname(target));
+        const parentRelative = relative(workspaceRoot, parent);
+        if (parentRelative === ".." || parentRelative.startsWith(`..${sep}`) || isAbsolute(parentRelative)) throw new Error("Export parent escapes the Workspace");
+        const artifact = taskStore.buildLocalDataExport(workspaceId, params.scope, params.taskId, params.format, params.revisions);
+        writeFileSync(target, artifact.content, { encoding: "utf8", mode: 0o600, flag: "wx" });
+        result = { saved: true, filePath: target, bytes: Buffer.byteLength(artifact.content, "utf8") };
+        break;
+      }
       case "run.start": {
         const params = runStartParamsSchema.parse(request.params);
         if (gitMutationInProgress || gitMutationPending > 0) {
@@ -548,7 +709,14 @@ async function handleRequest(input: unknown): Promise<void> {
         if (activeRunIds.has(params.runId)) {
           throw new Error("Run ID is already active or awaiting permission");
         }
+        if (params.sessionId && activeNativeSessionRuns.has(params.sessionId)) {
+          throw Object.assign(new Error("Native Session already has an active writer; wait, stop it, refresh, or branch"), { code: "NATIVE_SESSION_WRITE_CONFLICT" });
+        }
         activeRunIds.add(params.runId);
+        if (params.sessionId) {
+          activeNativeSessionRuns.set(params.sessionId, params.runId);
+          nativeSessionByRun.set(params.runId, params.sessionId);
+        }
         try {
           const prepared = await prepareRun(params);
           emit({ type: "run.model-decision", runId: params.runId, decision: prepared.modelDecision });
@@ -567,6 +735,10 @@ async function handleRequest(input: unknown): Promise<void> {
           }
         } catch (error) {
           activeRunIds.delete(params.runId);
+          if (params.sessionId) {
+            activeNativeSessionRuns.delete(params.sessionId);
+            nativeSessionByRun.delete(params.runId);
+          }
           throw error;
         }
         break;

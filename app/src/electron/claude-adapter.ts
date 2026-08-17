@@ -242,7 +242,10 @@ export class ClaudeCodeAdapter {
       );
     }
     if (params.model) args.push("--model", params.model);
-    args.push(params.prompt);
+    // `--mcp-config` accepts a variable number of values. Keep the user prompt
+    // behind an explicit option terminator so Claude never interprets it as a
+    // second config path when no later option (for example `--model`) exists.
+    args.push("--", params.prompt);
 
     const environment: NodeJS.ProcessEnv = { ...process.env, NO_COLOR: "1", FORCE_COLOR: "0" };
     delete environment.CLAUDECODE;

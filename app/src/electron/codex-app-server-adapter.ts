@@ -165,6 +165,17 @@ type PendingApproval = {
 };
 
 const defaultRequestTimeoutMs = 30_000;
+// A cold thread start/resume loads Workspace instructions, Skills, Plugins and MCP
+// metadata inside the official App Server. Real installations can legitimately
+// exceed the ordinary RPC bound while those local integrations initialize.
+const threadInitializationTimeoutMs = 120_000;
+
+export function codexAppServerRequestTimeoutMs(method: string, override?: number): number {
+  if (override !== undefined) return override;
+  return method === "thread/start" || method === "thread/resume"
+    ? threadInitializationTimeoutMs
+    : defaultRequestTimeoutMs;
+}
 
 function isRecord(value: unknown): value is JsonRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -227,11 +238,11 @@ function inspectCodex(override?: string): AgentAdapterInfo {
       if (result.status === 0) {
         return {
           id: "codex",
-          name: "Rux",
+          name: "Codex",
           available: true,
           version: result.stdout.trim().replace(/^codex-cli\s+/i, ""),
           executable: candidate,
-          detail: "Rux 本机 Agent 服务",
+          detail: "Codex 本机 Agent 服务",
         };
       }
     } catch {
@@ -240,9 +251,9 @@ function inspectCodex(override?: string): AgentAdapterInfo {
   }
   return {
     id: "codex",
-    name: "Rux",
+    name: "Codex",
     available: false,
-    detail: "未找到可用的 Rux 本机 Agent 组件。",
+    detail: "未找到可用的 Codex 本机 Agent 组件。",
   };
 }
 
@@ -676,7 +687,7 @@ export class CodexAppServerAdapter {
         rejectPromise(new Error(`Rux service ${method} was cancelled`));
         return;
       }
-      const timeoutMs = this.options.requestTimeoutMs ?? defaultRequestTimeoutMs;
+      const timeoutMs = codexAppServerRequestTimeoutMs(method, this.options.requestTimeoutMs);
       const timer = setTimeout(() => {
         const pending = this.pendingRpc.get(requestKey(id));
         pending?.detachAbort?.();

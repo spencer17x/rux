@@ -37,7 +37,7 @@ export type CodexStartParams = {
 
 export type CodexAdapterInfo = {
   id: "codex";
-  name: "Rux";
+  name: "Codex";
   available: boolean;
   version?: string;
   executable?: string;
@@ -88,11 +88,11 @@ function inspectCodex(override?: string): CodexAdapterInfo {
       if (result.status === 0) {
         return {
           id: "codex",
-          name: "Rux",
+          name: "Codex",
           available: true,
           version: result.stdout.trim().replace(/^codex-cli\s+/i, ""),
           executable: candidate,
-          detail: "Rux local exec adapter",
+          detail: "Codex local exec adapter",
         };
       }
     } catch {
@@ -101,9 +101,9 @@ function inspectCodex(override?: string): CodexAdapterInfo {
   }
   return {
     id: "codex",
-    name: "Rux",
+    name: "Codex",
     available: false,
-    detail: "未找到可用的 Rux 本机组件。",
+    detail: "未找到可用的 Codex 本机组件。",
   };
 }
 

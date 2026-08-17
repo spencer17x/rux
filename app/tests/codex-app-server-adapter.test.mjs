@@ -15,6 +15,7 @@ import test from "node:test";
 import {
   CodexAppServerAdapter,
   CodexAppServerRpcError,
+  codexAppServerRequestTimeoutMs,
 } from "../src/electron/codex-app-server-adapter.ts";
 import { CodexRuntimeAdapter } from "../src/electron/codex-runtime-adapter.ts";
 import { AuthManager } from "../src/electron/auth-manager.ts";
@@ -92,6 +93,13 @@ function transcriptMessages(path) {
     .filter(Boolean)
     .map((line) => JSON.parse(line));
 }
+
+test("cold Codex thread initialization uses a bounded long timeout", () => {
+  assert.equal(codexAppServerRequestTimeoutMs("thread/start"), 120_000);
+  assert.equal(codexAppServerRequestTimeoutMs("thread/resume"), 120_000);
+  assert.equal(codexAppServerRequestTimeoutMs("turn/start"), 30_000);
+  assert.equal(codexAppServerRequestTimeoutMs("thread/start", 1_234), 1_234);
+});
 
 async function waitUntil(predicate, timeoutMs = 3_000) {
   const startedAt = Date.now();

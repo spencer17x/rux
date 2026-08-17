@@ -153,7 +153,7 @@ flowchart LR
 
 ### 5.9 外部历史采用“会话接入”而非实时双向同步
 
-实现状态（2026-08-15）：当前 Runtime protocol 为 v10。v4–v8 依次提供 Session Connector、隔离摘要、Rux Native、Auto/Token 与 Workspace invalidation；v9 增加显式 Workspace 归属迁移，v10 增加 Rux Native 模型目录与 Provider 明示能力合同。Codex 使用 App Server Thread List/Read，Claude Code 使用官方 Agent SDK 的 `list_sessions`、`get_session_info`、`get_session_messages`；两端支持分页、取消、超时、大小限制和敏感错误清洗。
+实现状态（2026-08-17）：当前 Runtime protocol 为 v16。v4–v8 依次提供 Session Connector、隔离摘要、Rux Native、Auto/Token 与 Workspace invalidation；v9 增加显式 Workspace 归属迁移，v10 增加 Rux Native 模型目录与 Provider 明示能力合同，v11 增加 Main/Runtime-only 的加密 Custom Headers，v12 增加确认门控的官方 CLI logout 委托，v13 增加 Anthropic Messages 与无原生 Session API 的有界同 Task 对话历史，v14 增加 Main-owned Provider 凭据诊断与确认门控的原子重新封装，v15 增加 OpenAI Chat Completions Streaming、工具循环、Token 与同 Task 历史，v16 增加 TUI 可用的会话导入/刷新/版本、Handoff、本地数据、Git 分支与 Run-owned Changes 审查合同。Codex 使用 App Server Thread List/Read，Claude Code 使用官方 Agent SDK 的 `list_sessions`、`get_session_info`、`get_session_messages`；两端支持分页、取消、超时、大小限制和敏感错误清洗。
 
 实现状态（2026-08-13）：P1-E1 已开放显式的“导入 Agent 会话”元数据发现入口。打开入口不会访问 Provider；点击查找后，Runtime 才按规范化真实路径和最具体已授权 Workspace 归属结果返回当前项目、待归属、需要授权和迁移建议。属于其他项目的会话被隐藏，迁移建议不会静默改变旧归属。
 
@@ -196,6 +196,8 @@ flowchart LR
 - 当前 Agent 或 Native Session 不可用时，用户仍可只使用确定性事实包完成分支。
 - 发送前必须提供预览，允许用户编辑摘要、移除消息或文件、补充约束，并查看目标 Agent 与 Provider。
 - 未经用户明确确认，Context Handoff 不得发送给目标 Agent，也不得创建目标 Native Session。
+
+实现状态（2026-08-17）：大任务 Handoff 选择器最多加载最近 500 条持久化消息，默认选择最近 20 条，并支持文本搜索、角色筛选、当前结果全选与清空。Run-owned 文件显示状态和增删统计；确定性预览显示来源/目标 Revision、目标 Engine/Connection、模型/权限、事实指纹、最新 Run 和未完成项。筛选变化会使旧预览与可选摘要失效，必须重新生成指纹绑定的预览。
 - 确认后，RUX 创建新 Task、固定目标 Agent Revision、保存最终 Handoff 快照，并建立来源与目标 Task 的可回溯关系。
 - 后续修改来源 Task 不会静默改写已经确认的 Handoff 或目标 Task。
 
@@ -257,7 +259,9 @@ P1 发布状态（2026-08-14）：P1-E6 已在同一隔离打包应用中完成�
 
 ### 5.17 RUX 原生 API Provider（P2-E1 编码闭环已实现）
 
-实现状态（2026-08-15）：已实现 Responses-compatible 原生 Connection、Main `safeStorage` 加密、Renderer 隔离、显式测试/目录刷新、Connection 元数据编辑、Key 替换和凭据删除的指纹化 Agent/Task 影响预览，以及无需外部 Agent CLI 的完整编码循环。Provider 返回的模型目录与明示能力按 Connection 保存并进入 Agent、Composer 和 Auto 白名单；未知能力不推断。macOS 命令工具保持结构化无 Shell 与 `sandbox-exec` 边界。其他平台在提供等价沙箱前不暴露命令工具。Custom Headers、Anthropic 原生协议与原生 OAuth 仍是后续范围。
+实现状态（2026-08-17）：已实现 OpenAI Responses、OpenAI Chat Completions 与 Anthropic Messages 原生 Connection、Main `safeStorage` 加密、Renderer 隔离、显式测试/目录刷新、Connection 元数据编辑、Key/Custom Headers 替换和凭据删除的指纹化 Agent/Task 影响预览，以及无需外部 Agent CLI 的完整编码循环。Custom Header 值与 API Key 一同由 OS 加密，Renderer-visible 状态只含 Header 名称；保留的 Authorization、x-api-key、anthropic-version、Accept、Content-Type、Content-Length、Host 和 Connection 不能被覆盖。Chat Completions 支持 SSE/JSON、增量 Tool Calls、Tool Result、Token 和有界同 Task 历史；Anthropic 支持官方 Messages streaming/tool_use/tool_result、模型目录和 Token 字段。两种无原生可恢复 Session 的协议都只重建有界的同 Task 用户/Assistant 历史并明确保留本地 Projection 语义。Provider 返回的模型目录与明示能力按 Connection 保存并进入 Agent、Composer 和 Auto 白名单；未知能力不推断。macOS 命令工具保持结构化无 Shell 与 `sandbox-exec` 边界。其他平台在提供等价沙箱前不暴露命令工具。原生 OAuth 的 PKCE、Token 保管、端点、撤销和迁移合同已在 `rux-native-oauth-contract.md` 定义；在取得 Provider 官方桌面 OAuth 合同与 RUX Client 注册前不暴露伪登录入口。
+
+凭据诊断与迁移状态（2026-08-17）：账户面板提供用户触发的 Main-owned safeStorage 诊断，只显示后端、可用性、Connection/可解密计数、失败 Connection 标签和清洗后的详情。确认后的重新封装先预检全部密文，再保留仅含密文的本地备份并原子写入；Renderer 不接触 API Key 或 Header 值。macOS 空 Store 路径已在隔离打包应用完成点击验收；Windows Credential Manager 与 Linux Secret Service 仍需目标平台验收。
 
 - 官方 CLI Connection 继续复用对应 Engine 管理的 OAuth、API Key、Base URL 和云 Provider 配置；RUX 不读取或迁移这些凭据。
 - RUX Native 作为独立 `rux-native` Engine 和 Provider Adapter 实现，不要求用户安装 Codex 或 Claude Code。
@@ -638,10 +642,10 @@ P0 实现状态（2026-08-12）：Desktop 本地 Release Candidate 已通过隔�
 | Task/Message/Run | 已按授权 Workspace 持久化到 Main 管理的 SQLite | 继续作为 RUX Projection |
 | Native Session 延续 | 已保存规范化 Session Link，按 Engine/Connection/Revision/Workspace 恢复，并提供可见失败恢复分支 | P1 扩展到外部会话发现、导入与 Projection 版本 |
 | 账户界面 | 管理 Rux Native、Codex 与 Claude Code；Native Connection 支持编辑、Key 替换、删除与指纹化影响确认 | 后续扩展更多原生协议 |
-| 登录状态同步 | 已提供用户显式触发的统一检测；启动和打开面板均不自动读取状态 | 保持用户主动与 CLI 凭据边界 |
+| 登录状态同步 | 已提供用户显式触发的统一检测；仅缓存规范化非敏感结果，启动和打开面板均不自动读取 CLI 状态，发送前重新校验 | 保持用户主动与 CLI 凭据边界 |
 | 模型目录 | Codex 使用 App Server；Rux Native 在显式测试时保存 Provider `/models` 目录和明示能力；其余 Engine 使用默认/验证历史/手动 ID | 后续扩展更多 Provider 原生目录协议 |
 | Auto 模型路由 | 已实现 Revision-owned Policy、确定性简单/复杂分类、同 Connection 白名单、显式回退、Run Model Decision 与逐 Turn Token 证据 | 后续若引入模型型路由器，必须独立记录其用量与来源 |
-| RUX 原生 API Provider | 无需外部 Agent CLI，支持编码闭环、Connection 生命周期影响预览、模型目录/明示能力、流式回复、文件工具与 macOS 受限命令 | 后续增加跨平台等价沙箱、更多协议和 Custom Headers |
+| RUX 原生 API Provider | 无需外部 Agent CLI，支持编码闭环、Connection 生命周期影响预览、加密 Custom Headers、模型目录/明示能力、流式回复、文件工具与 macOS 受限命令 | 后续增加跨平台等价沙箱和更多协议 |
 | 自定义 Agent | 已有不可变 Revision、Task/Run 固定、版本提示与“使用新版创建新任务”分支 | P1 增加可预览确认的跨 Agent Context Handoff |
 | Context Handoff | 已实现确定性事实包、来源 Agent 隔离摘要、可编辑预览、确认事务和双向来源追踪 | P1-E4 已完成；后续仅做体验优化 |
 | 外部会话导入 | 已实现显式发现、选择后预览、去重导入、只读查看、兼容继续、归属迁移、Context Handoff 与本地数据生命周期 | 保持用户触发、非双向同步语义 |
@@ -649,11 +653,13 @@ P0 实现状态（2026-08-12）：Desktop 本地 Release Candidate 已通过隔�
 | 外部会话刷新 | 已实现显式刷新、安全追加、差异候选、版本化重建和本地恢复 | 保持非后台、非双向同步语义 |
 | 本地会话数据管理 | 已实现 Task/Workspace 占用、影响预览、解除关联、分层删除及 Markdown/JSON 导出 | 后续只扩展诊断与迁移工具 |
 | RUX Agent | `rux-native` 已是真实 Responses-compatible Adapter；开发 Mock 仍单独存在 | 不把尚未实现的跨平台命令沙箱、模型目录或原生 OAuth 描述为已完成 |
-| Changes/Context | 普通 Desktop 路径使用 Runtime Git/Context 与 Run-owned patch；Native 工具执行后会增量重读 | Showcase 仅保留在显式 `?showcase=codex` Web 预览，不进入普通状态 |
+| Changes/Context | 普通 Desktop 路径使用 Runtime Git/Context 与 Run-owned patch；Composer 可通过 Main 原生选择器添加 Workspace 内文件并移除，Native 工具执行后会增量重读 | Showcase 仅保留在显式 `?showcase=codex` Web 预览，不进入普通状态 |
 
 ## 14. 成功指标
 
 指标默认本地计算；若未来上传，必须单独征得用户同意。
+
+实现状态（2026-08-17）：Rux 设置已提供首版本机指标卡，只从当前加载且已持久化的 Task/Run 事实计算 Run 数、终态完成率、至少完成一次的 Task、完成 Run 中位耗时、失败/停止和权限批准计数，并按 Engine 汇总。Main-owned 本地事件 Store 还跨启动记录下面列出的漏斗事件，并只向 Renderer 提供聚合计数；实现中不存在上传、Beacon、WebSocket 或遥测端点。当前 UI 对尚无样本的比率保持“未报告”，不会从缺失证据反推成功率。
 
 - 从打开 Workspace 到首次成功 Run 的中位时间。
 - 检测到已安装 CLI 后成功建立可运行 Agent 的比例。
@@ -663,11 +669,17 @@ P0 实现状态（2026-08-12）：Desktop 本地 Release Candidate 已通过隔�
 - 因认证、CLI 缺失或模型不可用造成的 Run 启动失败率。
 - 用户从错误状态恢复并成功运行的比例。
 
+跨设备/云同步仍不在当前实现范围。其可选、默认关闭的隐私、端侧加密、设备密钥、不可变版本、分支冲突、删除与备份时限、独立同意和交付门槛已固定在 `optional-cloud-sync-contract.md`；该设计文档本身不启用网络传输，也不改变本地优先模式。
+
 ## 15. 需求基线状态
 
 当前 v1.0 范围内没有阻塞性的产品开放问题。P0/P1 可以据此拆分交付计划和验收矩阵。
 
-P2 开始实现前仍需另行定义首批 Provider Adapter 支持矩阵、各平台凭据库技术选型、网络安全策略和迁移方案。这些技术设计不得改变本 PRD 已确认的凭据隔离与用户显式授权边界，也不得反向扩大 P0/P1。
+首批 Provider Adapter 支持矩阵、网络安全策略和跨版本迁移合同已在 `provider-adapter-support-and-security.md` 落地，覆盖 Codex、Claude Code、OpenAI Responses、OpenAI Chat Completions 与 Anthropic Messages。该合同不得改变本 PRD 已确认的凭据隔离与用户显式授权边界，也不得反向扩大 P0/P1；各平台凭据库与等价命令沙箱仍须分别完成打包验收。
+
+发布状态（2026-08-17）：仓库已包含 tag/手动触发的跨平台 Release Workflow、DMG/ZIP/NSIS/AppImage/DEB 目标、跨平台 TUI 资源准备、SHA-256/JSON Manifest、Release Notes 与升级/回滚 Playbook。macOS Job 在签名输入缺失时 fail closed，并在产出后强制 codesign、Gatekeeper 和 stapled notarization 验证；最终发布由 `production-release` 环境审批。真实 Developer ID/App Store Connect 凭据、Windows/Linux 目标机安全验收和签名应用内更新 Feed 尚未完成，因此当前产物不能宣称正式公开发布。
+
+本机指标状态（2026-08-17）：除从持久化 Task/Run 推导的成功指标外，Main 还以独立、有界、跨启动 Event Store 记录 CLI 检测、Run 成功/失败、重启恢复、会话导入/去重/继续、Handoff 分支和错误恢复。事件仅含固定 Kind、时间、计数、Engine/Mode 与单向 Subject Hash；不含 Prompt、消息、路径、原生 Session ID 或凭据。Renderer 只读取聚合计数，当前没有任何上传通道。
 
 ## 16. 官方能力参考
 

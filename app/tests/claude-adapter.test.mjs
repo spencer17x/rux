@@ -85,9 +85,11 @@ console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false
     .map((line) => JSON.parse(line));
   assert.equal(invocations.length, 3);
   assert.equal(invocations[0].includes("--resume"), false);
+  assert.deepEqual(invocations[0].slice(-2), ["--", "Start fresh"]);
   const resumeIndex = invocations[1].indexOf("--resume");
   assert.notEqual(resumeIndex, -1);
   assert.equal(invocations[1][resumeIndex + 1], "existing-session-id");
+  assert.deepEqual(invocations[1].slice(-2), ["--", "Continue the task"]);
   assert.equal(invocations[2].includes("--no-session-persistence"), true);
   const toolsIndex = invocations[2].indexOf("--tools");
   assert.notEqual(toolsIndex, -1);

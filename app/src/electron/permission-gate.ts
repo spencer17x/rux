@@ -61,9 +61,9 @@ export class PermissionGateError extends Error {
 
 /**
  * RUX owns this coarse Run-scoped gate only for adapters that cannot surface
- * provider-native approvals. Codex app-server provides exact command, file,
- * and permission requests, so Codex Runs bypass this gate and rely on those
- * narrower approvals instead of asking twice.
+ * provider-native approvals. Codex app-server and Claude Code both provide
+ * exact command, file, network, and tool requests, so those Runs bypass this
+ * gate and rely on narrower approvals instead of asking twice.
  */
 export class RunPermissionGate {
   private readonly pending = new Map<string, PendingPermissionRun>();
@@ -88,7 +88,7 @@ export class RunPermissionGate {
 
   async start(params: RunStartParams): Promise<PermissionStartResult> {
     if (this.disposed) throw new Error("Rux permission gate is stopped");
-    if (params.adapter === "codex" || params.permissionMode !== "acceptEdits") {
+    if (["codex", "claude-code"].includes(params.adapter) || params.permissionMode !== "acceptEdits") {
       const launched = await this.launch(params);
       return { ...launched, state: "running" };
     }

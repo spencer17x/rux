@@ -42,10 +42,9 @@ import {
   Link2,
   ListFilter,
   LoaderCircle,
-  LockKeyhole,
   LogIn,
+  LogOut,
   Menu,
-  MessageSquare,
   Maximize2,
   Mic,
   MoreHorizontal,
@@ -97,6 +96,7 @@ import {
   resumeFailureForTask,
 } from "./session-link.js";
 import { mergeTokenUsage, tokenUsageTotal } from "./token-usage-state.js";
+import { computeLocalSuccessMetrics } from "./local-success-metrics.js";
 import {
   agentRevisionIdFor,
   builtInAgentRevisionId,
@@ -122,7 +122,7 @@ function sessionDiscoveryErrorMessage(error, engine) {
   if (message.includes("SESSION_CAPABILITY_UNAVAILABLE")) {
     return engine === "claude-code"
       ? "本机 Claude Agent SDK 尚未提供会话浏览能力。Rux 不会改读 Claude Code 内部 Transcript；安装受支持 SDK 后可重试。"
-      : "当前 Rux CLI 不支持会话浏览接口，请更新官方 CLI 后重试。";
+      : "当前 Codex CLI 不支持会话浏览接口，请更新官方 CLI 后重试。";
   }
   if (message.includes("SESSION_CANCELLED")) return "会话查找已取消。";
   if (message.includes("SESSION_TIMEOUT")) return "会话查找超时，请稍后重试。";
@@ -158,7 +158,7 @@ const fallbackWorkspaceState = showcaseMode
     };
 
 const fallbackAdapters = [
-  { id: "codex", name: "Rux", available: false, detail: "尚未检测本机 Rux" },
+  { id: "codex", name: "Codex", available: false, detail: "尚未检测本机 Codex" },
   { id: "claude-code", name: "Claude Code", available: false, detail: "尚未检测本机 Claude Code" },
   { id: "rux-native", name: "Rux Native", available: false, detail: "添加原生 Provider 后即可使用，无需安装 Agent CLI" },
 ];
@@ -167,7 +167,7 @@ const providerSurfaces = [
   {
     id: "chatgpt",
     adapter: "codex",
-    engineName: "Rux",
+    engineName: "Codex",
     connectionName: "ChatGPT、API Key 或自定义 Provider",
     cliLabel: "codex CLI",
     installUrl: "https://developers.openai.com/codex/cli/",
@@ -208,9 +208,9 @@ function mergeAuthState(current, incoming) {
 }
 
 const permissionOptions = [
-  { id: "plan", label: "只读规划", short: "Read only" },
-  { id: "acceptEdits", label: "工作区写入，按需确认", short: "Workspace write" },
-  { id: "dontAsk", label: "工作区写入，不询问", short: "Workspace write · no prompts" },
+  { id: "acceptEdits", label: "请求批准", description: "在具体命令、文件或网络操作需要授权时询问", short: "Ask for approval" },
+  { id: "dontAsk", label: "自动批准", description: "自动批准当前工作区内的操作，仍受 Runtime 沙箱限制", short: "Approve for me" },
+  { id: "plan", label: "只读", description: "只允许分析和规划，不修改工作区", short: "Read only" },
 ];
 
 function permissionLabel(mode) {
@@ -218,7 +218,7 @@ function permissionLabel(mode) {
 }
 
 function ruxVisibleText(value) {
-  return typeof value === "string" ? value.replace(/codex/gi, "Rux") : value;
+  return value;
 }
 
 function ruxAgentLabel(value) {
@@ -227,14 +227,14 @@ function ruxAgentLabel(value) {
 }
 
 function ruxAdapterLabel(value) {
-  if (value === "codex") return "Rux";
+  if (value === "codex") return "Codex";
   if (value === "rux-native") return "Rux Native";
   if (value === "mock") return "Rux Demo";
   return ruxVisibleText(value) || "Rux";
 }
 
 function ruxModelLabel(value) {
-  if (!value || /^(codex|rux) default$/i.test(String(value))) return "Rux 默认";
+  if (!value || /^(codex|rux) default$/i.test(String(value))) return "Codex 默认";
   if (/^claude default$/i.test(String(value))) return "Claude 默认";
   return ruxVisibleText(String(value));
 }
@@ -274,6 +274,7 @@ function modelStateLabel(source, status) {
 }
 
 const uiPreferencesKey = "rux.ui-preferences.v1";
+const agentDetectionCacheKey = "rux.agent-detection.v1";
 const legacyShowcaseTaskIds = new Set(["desktop-workbench", "prd", "market", "adapter"]);
 const defaultCodexSettings = {
   model: "Rux default",
@@ -293,6 +294,46 @@ function readUiPreferences() {
   }
 }
 
+function sanitizeAgentDetectionCache(value) {
+  if (!value || typeof value !== "object") return null;
+  const providers = Array.isArray(value.authState?.providers)
+    ? value.authState.providers.filter((provider) => provider && typeof provider.id === "string").map((provider) => ({
+        id: provider.id,
+        installed: Boolean(provider.installed),
+        status: provider.status,
+        ...(provider.authMethod ? { authMethod: provider.authMethod } : {}),
+        ...(provider.version ? { version: String(provider.version) } : {}),
+        ...(provider.executable ? { executable: String(provider.executable) } : {}),
+        ...(provider.detail ? { detail: String(provider.detail) } : {}),
+        ...(typeof provider.canLogin === "boolean" ? { canLogin: provider.canLogin } : {}),
+      }))
+    : [];
+  const adapters = Array.isArray(value.adapters)
+    ? value.adapters.filter((adapter) => adapter && typeof adapter.id === "string").map((adapter) => ({
+        id: adapter.id,
+        name: String(adapter.name || adapter.id),
+        available: Boolean(adapter.available),
+        ...(adapter.version ? { version: String(adapter.version) } : {}),
+        ...(adapter.executable ? { executable: String(adapter.executable) } : {}),
+        ...(adapter.detail ? { detail: String(adapter.detail) } : {}),
+      }))
+    : [];
+  if (!providers.length || !adapters.length || !value.authState?.checkedAt) return null;
+  return {
+    authState: { providers, checkedAt: String(value.authState.checkedAt) },
+    adapters,
+    cachedAt: String(value.cachedAt || value.authState.checkedAt),
+  };
+}
+
+function readAgentDetectionCache() {
+  try {
+    return sanitizeAgentDetectionCache(JSON.parse(window.localStorage.getItem(agentDetectionCacheKey) || "null"));
+  } catch {
+    return null;
+  }
+}
+
 function createWorkspaceStarterTask(workspace, codexSettings = defaultCodexSettings) {
   const needsProject = workspace.placeholder;
   return {
@@ -302,7 +343,7 @@ function createWorkspaceStarterTask(workspace, codexSettings = defaultCodexSetti
     preview: needsProject ? "请选择本机项目目录" : "工作区已就绪",
     status: "waiting",
     updatedAt: "现在",
-    agent: "Rux",
+    agent: "Codex",
     adapter: "codex",
     agentRevisionId: builtInAgentRevisionId("codex"),
     providerConnection: defaultProviderConnectionForAdapter("codex"),
@@ -323,6 +364,17 @@ function createWorkspaceStarterTask(workspace, codexSettings = defaultCodexSetti
 function taskTitleFromPrompt(prompt) {
   const title = String(prompt || "").trim().replace(/\s+/g, " ");
   return title.length > 24 ? `${title.slice(0, 24)}…` : title;
+}
+
+function conversationHistoryForRun(task, prompt) {
+  const history = (task.messages || [])
+    .filter((message) => ["user", "assistant"].includes(message.role) && !String(message.id || "").startsWith("error-"))
+    .map((message) => ({ role: message.role, content: String(message.text || "").slice(0, 100_000) }))
+    .filter((message) => message.content.trim())
+    .slice(-200);
+  const last = history.at(-1);
+  if (last?.role === "user" && last.content.trim() === String(prompt || "").trim()) history.pop();
+  return history;
 }
 
 function withoutSupersededWorkspaceStarter(tasks, workspaceId) {
@@ -423,8 +475,8 @@ function normalizePersistedTask(task, workspaceId = task.workspaceId) {
       ? defaultProviderConnectionForAdapter("codex")
       : providerConnection,
     ...(migrateEmptyWorkspaceStarter ? defaultModelState("Rux default") : taskModelState),
-    ...(adapter === "codex" ? { agent: ruxAgentLabel(task.agent || "Rux") } : {}),
-    ...(migrateEmptyWorkspaceStarter ? { agent: "Rux", model: "Rux default" } : {}),
+    ...(adapter === "codex" ? { agent: "Codex" } : {}),
+    ...(migrateEmptyWorkspaceStarter ? { agent: "Codex", model: "Rux default" } : {}),
     permissionMode: task.permissionMode || "acceptEdits",
     contextFiles: Array.isArray(task.contextFiles) ? task.contextFiles : [],
     createdAt: task.createdAt || now,
@@ -1419,9 +1471,16 @@ function PermissionCard({ request, busy, error, onDecision }) {
   };
   const singleAction = request.scope.appliesTo === "single-action";
   const workspacePreflight = request.action === "workspace.write" && !request.provider;
-  const providerLabel = request.provider === "claude-code"
-    ? "Claude Code 原生审批"
-    : request.provider === "codex" ? "Rux 原生审批" : "Rux preflight";
+  const title = request.action === "command.execute"
+    ? "允许 Rux 运行此命令？"
+    : request.action === "file.write"
+      ? "允许 Rux 编辑此文件？"
+      : request.action === "network.access"
+        ? "允许 Rux 访问网络？"
+        : singleAction
+          ? "允许 Rux 使用此工具？"
+          : "允许 Rux 修改工作区？";
+  const providerLabel = request.provider ? "Rux 请求批准" : "Rux 工作区批准";
   return (
     <section
       className="permission-request-card"
@@ -1433,8 +1492,8 @@ function PermissionCard({ request, busy, error, onDecision }) {
       <header>
         <span><ShieldCheck size={18} /></span>
         <div>
-          <strong id={`permission-title-${request.id}`}>{singleAction ? "允许 Agent 执行这项操作？" : workspacePreflight ? "允许此 Run 修改工作区？" : "允许 Agent 在本次 Run 使用这些权限？"}</strong>
-          <small>{providerLabel} · Agent 已暂停，等待你的决定</small>
+          <strong id={`permission-title-${request.id}`}>{title}</strong>
+          <small>{providerLabel} · 当前任务已暂停</small>
         </div>
       </header>
       <dl>
@@ -1445,7 +1504,7 @@ function PermissionCard({ request, busy, error, onDecision }) {
       {error ? <div className="permission-error" role="alert"><CircleAlert size={14} />{error}</div> : null}
       <div className="permission-actions">
         <button type="button" className="secondary-button" disabled={busy} onClick={() => onDecision(request, "denied")}>拒绝</button>
-        <button type="button" className="primary-button" disabled={busy} onClick={() => onDecision(request, "approved")}>{busy ? "正在处理…" : singleAction ? "允许这项操作" : "允许本次 Run"}</button>
+        <button type="button" className="primary-button" disabled={busy} onClick={() => onDecision(request, "approved")}>{busy ? "正在处理…" : singleAction ? "允许一次" : workspacePreflight ? "允许本次任务" : "允许"}</button>
       </div>
     </section>
   );
@@ -1640,16 +1699,16 @@ function TaskTimeline({ task, streamingMessages = [], changes, onOpenChanges, on
           );
         })}
 
-        {isWaiting ? (
+        {isWaiting && workspacePlaceholder ? (
           <section className="waiting-card">
             <span className="waiting-icon"><Play size={18} /></span>
             <div>
               <h3>这个 Run 还未开始</h3>
-              <p>{workspacePlaceholder ? "先打开一个项目，然后描述你想完成的任务。" : "在下方输入框描述任务，确认 Agent、模型和 Permission 后发送。"}</p>
+              <p>先打开一个项目，然后描述你想完成的任务。</p>
             </div>
-            <button type="button" className="primary-button" onClick={onWaitingAction}>{workspacePlaceholder ? "打开项目" : "描述任务"}</button>
+            <button type="button" className="primary-button" onClick={onWaitingAction}>打开项目</button>
           </section>
-        ) : (
+        ) : !isWaiting ? (
           <section className="agent-response">
             {!hasAssistantMessage || !isCompleted ? <p className="agent-response-lead">{responseLead}</p> : null}
 
@@ -1747,7 +1806,7 @@ function TaskTimeline({ task, streamingMessages = [], changes, onOpenChanges, on
               </div>
             ) : null}
           </section>
-        )}
+        ) : null}
           <div ref={timelineEndRef} aria-hidden="true" />
         </div>
       </div>
@@ -1759,8 +1818,8 @@ function TaskTimeline({ task, streamingMessages = [], changes, onOpenChanges, on
   );
 }
 
-function Composer({ task, draft, onDraft, onSend, onAgentChange, onModelChange, onReasoningEffortChange, onPermissionChange, onOpenAccounts, onStartConversation, interactionLockReason = "", focusRef, agentChoices, codexModels, codexCatalog, canRun = true }) {
-  const [optionsOpen, setOptionsOpen] = useState(false);
+function Composer({ task, draft, onDraft, onSend, onAgentChange, onModelChange, onReasoningEffortChange, onPermissionChange, onOpenAccounts, onChooseContextFiles, onRemoveContextFile, contextBusy = false, interactionLockReason = "", focusRef, agentChoices, codexModels, codexCatalog, canRun = true, canSwitchAgent = true }) {
+  const [optionsOpen, setOptionsOpen] = useState("");
   const [dictating, setDictating] = useState(false);
   const [manualModel, setManualModel] = useState(task.model || "");
   const composerRef = useRef(null);
@@ -1786,13 +1845,11 @@ function Composer({ task, draft, onDraft, onSend, onAgentChange, onModelChange, 
   const reasoningOptions = runtimeAdapterForTask(task) === "codex"
     ? codexReasoningOptions(codexModels, task.model)
     : [];
-  const permissionVisualLabel = (!window.rux && task.id === "devspace-intro") ? "完全访问" : (task.permissionMode === "dontAsk"
-    ? "工作区访问"
-    : task.permissionMode === "plan" ? "只读访问" : "工作区访问");
+  const permissionVisualLabel = permissionOptions.find((option) => option.id === task.permissionMode)?.label || "请求批准";
   const modelVisualLabel = (model) => {
     const value = String(model || "");
     if (/5\.6/i.test(value)) return "5.6 Sol 中";
-    if (/^(codex|rux) default$/i.test(value)) return "Rux 中";
+    if (/^(codex|rux) default$/i.test(value)) return "Codex 中";
     if (/sonnet/i.test(value)) return "Sonnet 中";
     if (/opus/i.test(value)) return "Opus 中";
     return ruxModelLabel(value.replace(/^GPT-/i, "")) || "默认模型";
@@ -1815,7 +1872,7 @@ function Composer({ task, draft, onDraft, onSend, onAgentChange, onModelChange, 
   }, [optionsOpen]);
 
   useEffect(() => {
-    if (optionsOpen) setManualModel(task.model || "");
+    if (optionsOpen === "more") setManualModel(task.model || "");
   }, [optionsOpen, task.id, task.model]);
 
   useEffect(() => {
@@ -1842,19 +1899,24 @@ function Composer({ task, draft, onDraft, onSend, onAgentChange, onModelChange, 
           }}
           placeholder={interactionLockReason ? "当前会话不可编辑" : "随心输入"}
           aria-label="给 Agent 发送消息"
-          aria-describedby={interactionLockReason ? "composer-interaction-lock" : undefined}
           rows={2}
           disabled={!canRun}
         />
         <div className="composer-toolbar">
           <div className="composer-tools">
-            <button type="button" className={`composer-icon-button ${optionsOpen ? "is-active" : ""}`} aria-label="添加内容与运行设置" aria-expanded={optionsOpen} disabled={!canRun || isActive} onClick={() => setOptionsOpen((open) => !open)}><Plus size={19} /></button>
-            <select className="composer-agent-select" aria-label="选择 Agent" value={selectedAgentId} onChange={(event) => onAgentChange(event.target.value)} disabled={!canRun || isActive}>
-              {!selectedAgentChoice ? <option value={selectedAgentId} disabled>{ruxAgentLabel(task.agent)}（Definition 已删除）</option> : null}
-              {agentChoices.map((agent) => <option value={agent.id} key={agent.id} disabled={!agent.available}>{ruxAgentLabel(agent.name)}{agent.available ? "" : "（不可用）"}</option>)}
-            </select>
+            <button type="button" className={`composer-icon-button ${optionsOpen === "more" ? "is-active" : ""}`} aria-label="添加文件和更多" title="添加文件和更多" aria-expanded={optionsOpen === "more"} disabled={!canRun || isActive} onClick={() => setOptionsOpen((open) => open === "more" ? "" : "more")}><Plus size={19} /></button>
+            <button
+              type="button"
+              className={`composer-agent-button ${optionsOpen === "agent" ? "is-active" : ""}`}
+              aria-label={`选择 Agent：${ruxAgentLabel(selectedAgentChoice?.name || task.agent)}`}
+              aria-expanded={optionsOpen === "agent"}
+              disabled={!canSwitchAgent}
+              onClick={() => setOptionsOpen((open) => open === "agent" ? "" : "agent")}
+            >
+              <span>{ruxAgentLabel(selectedAgentChoice?.name || task.agent)}</span><ChevronDown size={13} />
+            </button>
             {!selectedAgentAvailable ? <button type="button" className="composer-connect-button" onClick={onOpenAccounts}><CircleAlert size={13} />配置连接</button> : null}
-            <button type="button" className={`permission-chip ${permissionVisualLabel === "完全访问" ? "is-full-access" : ""}`} disabled={!canRun || isActive} onClick={() => setOptionsOpen((open) => !open)} aria-label={`权限：${permissionVisualLabel}`}><ShieldCheck size={16} /><span>{permissionVisualLabel}</span></button>
+            <button type="button" className={`permission-chip ${task.permissionMode === "dontAsk" ? "is-full-access" : ""}`} disabled={!canRun || isActive} onClick={() => setOptionsOpen((open) => open === "permission" ? "" : "permission")} aria-label={`批准方式：${permissionVisualLabel}`} aria-expanded={optionsOpen === "permission"}><ShieldCheck size={16} /><span>{permissionVisualLabel}</span><ChevronDown size={13} /></button>
           </div>
           <div className="composer-submit-area">
             <CircleDashed size={18} className={isActive ? "status-running" : "composer-context-status"} aria-label={isActive ? "运行中" : "上下文就绪"} />
@@ -1879,11 +1941,9 @@ function Composer({ task, draft, onDraft, onSend, onAgentChange, onModelChange, 
             </button>
           </div>
         </div>
-        {optionsOpen ? (
+        {optionsOpen === "more" ? (
           <div className="composer-options-popover" role="group" aria-label="运行设置">
-            <label><span>访问权限</span><select aria-label="Permission" value={task.permissionMode || "acceptEdits"} onChange={(event) => onPermissionChange(event.target.value)} disabled={!canRun || isActive}>
-              {permissionOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
-            </select></label>
+            <button type="button" className="composer-add-context" disabled={!window.rux || contextBusy || !canRun || isActive} onClick={() => { setOptionsOpen(""); void onChooseContextFiles(); }}><Paperclip size={14} /><span><strong>添加项目文件</strong><small>{window.rux ? "选择一个或多个 Workspace 文件作为下一次 Run 的 Context" : "文件选择仅在桌面应用中可用"}</small></span></button>
             {runtimeAdapterForTask(task) === "codex" ? (
               <label><span>推理强度</span><select aria-label="Rux 推理强度" value={task.reasoningEffort || ""} onChange={(event) => onReasoningEffortChange(event.target.value)} disabled={!canRun || isActive}>
                 <option value="">模型默认</option>
@@ -1898,13 +1958,53 @@ function Composer({ task, draft, onDraft, onSend, onAgentChange, onModelChange, 
             <p><CircleDot size={11} /> 本地 · <GitBranch size={11} /> {task.branch} · {permissionLabel(task.permissionMode)}</p>
           </div>
         ) : null}
+        {optionsOpen === "permission" ? (
+          <div className="composer-permission-popover" role="menu" aria-label="如何批准 Rux 操作">
+            <strong>如何批准 Rux 操作？</strong>
+            {permissionOptions.map((option) => (
+              <button
+                type="button"
+                role="menuitemradio"
+                aria-checked={(task.permissionMode || "acceptEdits") === option.id}
+                key={option.id}
+                onClick={() => { onPermissionChange(option.id); setOptionsOpen(""); }}
+              >
+                <span className="composer-permission-check">{(task.permissionMode || "acceptEdits") === option.id ? <Check size={14} /> : null}</span>
+                <span><b>{option.label}</b><small>{option.description}</small></span>
+              </button>
+            ))}
+          </div>
+        ) : null}
+        {optionsOpen === "agent" ? (
+          <div className="composer-agent-menu" role="menu" aria-label="切换 Agent">
+            <div className="composer-agent-menu-heading"><strong>选择 Agent</strong><small>切换后将在当前项目中创建新任务</small></div>
+            {!selectedAgentChoice ? <div className="composer-agent-menu-history"><span>{ruxAgentLabel(task.agent)}</span><small>当前任务固定的 Agent Definition 已删除</small></div> : null}
+            {agentChoices.map((agent) => {
+              const current = agent.id === selectedAgentId;
+              return <button
+                type="button"
+                role="menuitemradio"
+                aria-checked={current}
+                key={agent.id}
+                disabled={!agent.available}
+                onClick={() => {
+                  setOptionsOpen("");
+                  if (!current) onAgentChange(agent.id);
+                }}
+              >
+                <span><strong>{ruxAgentLabel(agent.name)}</strong><small>{agent.available ? agent.detail || agent.adapter : agent.unavailableReason || "当前不可用"}</small></span>
+                {current ? <Check size={14} /> : agent.available ? <ChevronRight size={14} /> : <CircleAlert size={14} />}
+              </button>;
+            })}
+            <button type="button" className="composer-agent-manage" onClick={() => { setOptionsOpen(""); onOpenAccounts(); }}><Settings size={14} /><span>管理 Agent 与 Provider</span></button>
+          </div>
+        ) : null}
+        {(task.contextFiles || []).length ? (
+          <div className="composer-context-files" aria-label="下一次 Run 的文件 Context">
+            {(task.contextFiles || []).map((path) => <span key={path}><FileCode2 size={12} /><span title={path}>{path}</span><button type="button" disabled={contextBusy || isActive} onClick={() => void onRemoveContextFile(path)} aria-label={`移除文件 Context：${path}`}><X size={11} /></button></span>)}
+          </div>
+        ) : null}
       </div>
-      {interactionLockReason ? (
-        <div className="composer-interaction-lock" id="composer-interaction-lock" role="status">
-          <span><LockKeyhole size={13} />{interactionLockReason}</span>
-          <button type="button" onClick={onStartConversation}><MessageSquare size={13} />开始新对话</button>
-        </div>
-      ) : null}
       {missingFromCatalog ? (
         <div className="composer-context-row" role="status">
           <span className="composer-agent-warning"><CircleAlert size={11} /> {ruxModelLabel(task.model)} 已不在最新官方目录中，不会自动替换</span>
@@ -3241,9 +3341,26 @@ function NewTaskDialog({ open, onClose, onCreate, onOpenAccounts, agentChoices, 
   );
 }
 
-function AccountsDialog({ open, state, adapters, agentChoices, selectedAgentId, canCreateTask, nativeConnections, nativeBusy, checking, loginProvider, error, notice, onClose, onDetect, onLogin, onCancelLogin, onSaveNative, onTestNative, onDeleteNative, onUseAgent, onOpenSettings }) {
+function parseNativeCustomHeaders(text) {
+  if (!text.trim()) return [];
+  const seen = new Set();
+  return text.split("\n").filter((line) => line.trim()).map((line, index) => {
+    const separator = line.indexOf(":");
+    if (separator <= 0) throw new Error(`Custom Header 第 ${index + 1} 行必须使用 Name: Value 格式`);
+    const name = line.slice(0, separator).trim();
+    const value = line.slice(separator + 1).trim();
+    if (!value) throw new Error(`Custom Header 第 ${index + 1} 行缺少值`);
+    const normalized = name.toLowerCase();
+    if (seen.has(normalized)) throw new Error(`Custom Header ${name} 重复`);
+    seen.add(normalized);
+    return { name, value };
+  });
+}
+
+function AccountsDialog({ open, state, adapters, agentChoices, selectedAgentId, canCreateTask, nativeConnections, nativeDiagnostics, nativeBusy, checking, loginProvider, logoutProvider, error, notice, onClose, onDetect, onLogin, onLogout, onCancelLogin, onSaveNative, onTestNative, onDeleteNative, onDiagnoseNative, onMigrateNative, onUseAgent, onOpenSettings }) {
   const dialogRef = useDialogFocus(open, onClose);
-  const [nativeDraft, setNativeDraft] = useState({ label: "OpenAI", baseUrl: "https://api.openai.com/v1", defaultModel: "", apiKey: "" });
+  const emptyNativeDraft = () => ({ label: "OpenAI", providerType: "openai-responses", baseUrl: "https://api.openai.com/v1", defaultModel: "", apiKey: "", customHeadersText: "", clearCustomHeaders: false });
+  const [nativeDraft, setNativeDraft] = useState(emptyNativeDraft);
   const [editingConnectionId, setEditingConnectionId] = useState("");
   if (!open) return null;
   const hasDetected = Boolean(state);
@@ -3271,28 +3388,35 @@ function AccountsDialog({ open, state, adapters, agentChoices, selectedAgentId, 
 
         <div className="account-dialog-body">
           <section className="native-provider-section" aria-labelledby="native-provider-title">
-            <header><span><strong id="native-provider-title">Rux Native Provider</strong><small>直接使用 Responses-compatible API，不依赖 Codex 或 Claude Code</small></span><span className="account-provider-status is-connected"><Zap size={13} />无需 CLI</span></header>
+            <header><span><strong id="native-provider-title">Rux Native Provider</strong><small>直接使用 OpenAI Responses、Chat Completions 或 Anthropic Messages API，不依赖 Agent CLI</small></span><span className="account-provider-status is-connected"><Zap size={13} />无需 CLI</span></header>
             {nativeConnections.length ? <div className="native-provider-connections">{nativeConnections.map((connection) => {
               const agent = agentChoices.find((choice) => choice.providerConnection?.id === connection.id);
               const isSelected = Boolean(agent && agent.id === selectedAgentId);
-              return <article key={connection.id}><span><strong>{connection.label}</strong><small>{connection.baseUrl} · {connection.defaultModel}</small>{connection.modelCatalog ? <small>Provider 目录 · {connection.modelCatalog.models.length} 个模型 · {new Date(connection.modelCatalog.refreshedAt).toLocaleString("zh-CN")}</small> : <small>目录未刷新 · 可使用默认模型、已验证模型或手动 ID</small>}{connection.capabilities ? <small>逐 Run 换模：{connection.capabilities.perRunModelSelection === true ? "Provider 已声明支持" : connection.capabilities.perRunModelSelection === false ? "Provider 已声明不支持" : "Provider 未报告"}</small> : null}{connection.lastTestDetail ? <small className={connection.lastTestStatus === "error" ? "is-error" : "is-success"}>{connection.lastTestDetail}</small> : null}</span><span className="native-provider-actions">{agent?.available ? <>{isSelected ? <span className="account-current-agent-badge"><Check size={13} />当前使用</span> : null}<button type="button" className="account-use-agent-button" disabled={!canCreateTask} title={canCreateTask ? `使用 ${agent.name} 新建任务` : "请先打开项目"} onClick={() => onUseAgent(agent.id)}><SquarePen size={13} />新建任务</button></> : null}<button type="button" className="secondary-button" disabled={nativeBusy} onClick={() => { setEditingConnectionId(connection.id); setNativeDraft({ label: connection.label, baseUrl: connection.baseUrl, defaultModel: connection.defaultModel, apiKey: "" }); }}>编辑</button><button type="button" className="secondary-button" disabled={nativeBusy} onClick={() => onTestNative(connection.id)}>刷新目录与测试</button><button type="button" className="danger-ghost-button" disabled={nativeBusy} onClick={() => onDeleteNative(connection.id)}>删除</button></span></article>;
+              return <article key={connection.id}><span><strong>{connection.label}</strong><small>{connection.providerType === "anthropic-messages" ? "Anthropic Messages" : connection.providerType === "openai-chat-completions" ? "OpenAI Chat Completions" : "OpenAI Responses"} · {connection.baseUrl} · {connection.defaultModel}</small>{connection.customHeaderNames?.length ? <small>Custom Headers：{connection.customHeaderNames.join("、")}（值已加密隐藏）</small> : null}{connection.modelCatalog ? <small>Provider 目录 · {connection.modelCatalog.models.length} 个模型 · {new Date(connection.modelCatalog.refreshedAt).toLocaleString("zh-CN")}</small> : <small>目录未刷新 · 可使用默认模型、已验证模型或手动 ID</small>}{connection.capabilities ? <small>逐 Run 换模：{connection.capabilities.perRunModelSelection === true ? "Provider 已声明支持" : connection.capabilities.perRunModelSelection === false ? "Provider 已声明不支持" : "Provider 未报告"}</small> : null}{connection.lastTestDetail ? <small className={connection.lastTestStatus === "error" ? "is-error" : "is-success"}>{connection.lastTestDetail}</small> : null}</span><span className="native-provider-actions">{agent?.available ? <>{isSelected ? <span className="account-current-agent-badge"><Check size={13} />当前使用</span> : null}<button type="button" className="account-use-agent-button" disabled={!canCreateTask} title={canCreateTask ? `使用 ${agent.name} 新建任务` : "请先打开项目"} onClick={() => onUseAgent(agent.id)}><SquarePen size={13} />新建任务</button></> : null}<button type="button" className="secondary-button" disabled={nativeBusy} onClick={() => { setEditingConnectionId(connection.id); setNativeDraft({ label: connection.label, providerType: connection.providerType, baseUrl: connection.baseUrl, defaultModel: connection.defaultModel, apiKey: "", customHeadersText: "", clearCustomHeaders: false }); }}>编辑</button><button type="button" className="secondary-button" disabled={nativeBusy} onClick={() => onTestNative(connection.id)}>刷新目录与测试</button><button type="button" className="danger-ghost-button" disabled={nativeBusy} onClick={() => onDeleteNative(connection.id)}>删除</button></span></article>;
             })}</div> : null}
-            <form className="native-provider-form" onSubmit={(event) => { event.preventDefault(); if (!nativeDraft.label.trim() || !nativeDraft.defaultModel.trim() || (!editingConnectionId && !nativeDraft.apiKey)) return; onSaveNative({ ...(editingConnectionId ? { id: editingConnectionId } : {}), label: nativeDraft.label.trim(), providerType: "openai-responses", baseUrl: nativeDraft.baseUrl.trim(), defaultModel: nativeDraft.defaultModel.trim(), ...(nativeDraft.apiKey ? { apiKey: nativeDraft.apiKey } : {}) }).then((saved) => { if (!saved) return; setEditingConnectionId(""); setNativeDraft({ label: "OpenAI", baseUrl: "https://api.openai.com/v1", defaultModel: "", apiKey: "" }); }).catch(() => undefined); }}>
+            <form className="native-provider-form" onSubmit={(event) => { event.preventDefault(); if (!nativeDraft.label.trim() || !nativeDraft.defaultModel.trim() || (!editingConnectionId && !nativeDraft.apiKey)) return; let customHeaders; try { customHeaders = parseNativeCustomHeaders(nativeDraft.customHeadersText); } catch (parseError) { window.alert(parseError instanceof Error ? parseError.message : String(parseError)); return; } onSaveNative({ ...(editingConnectionId ? { id: editingConnectionId } : {}), label: nativeDraft.label.trim(), providerType: nativeDraft.providerType, baseUrl: nativeDraft.baseUrl.trim(), defaultModel: nativeDraft.defaultModel.trim(), ...(nativeDraft.apiKey ? { apiKey: nativeDraft.apiKey } : {}), ...(nativeDraft.customHeadersText.trim() || nativeDraft.clearCustomHeaders ? { customHeaders } : {}) }).then((saved) => { if (!saved) return; setEditingConnectionId(""); setNativeDraft(emptyNativeDraft()); }).catch(() => undefined); }}>
               <label><span>名称</span><input value={nativeDraft.label} maxLength={80} onChange={(event) => setNativeDraft((draft) => ({ ...draft, label: event.target.value }))} /></label>
+              <label><span>协议</span><select value={nativeDraft.providerType} disabled={Boolean(editingConnectionId)} onChange={(event) => { const providerType = event.target.value; setNativeDraft((draft) => ({ ...draft, providerType, label: providerType === "anthropic-messages" ? "Anthropic" : providerType === "openai-chat-completions" ? "OpenAI Chat" : "OpenAI", baseUrl: providerType === "anthropic-messages" ? "https://api.anthropic.com/v1" : "https://api.openai.com/v1", defaultModel: "" })); }}><option value="openai-responses">OpenAI Responses</option><option value="openai-chat-completions">OpenAI Chat Completions</option><option value="anthropic-messages">Anthropic Messages</option></select></label>
               <label><span>Base URL</span><input value={nativeDraft.baseUrl} onChange={(event) => setNativeDraft((draft) => ({ ...draft, baseUrl: event.target.value }))} /></label>
-              <label><span>默认模型</span><input value={nativeDraft.defaultModel} placeholder="例如 gpt-5.6" onChange={(event) => setNativeDraft((draft) => ({ ...draft, defaultModel: event.target.value }))} /></label>
+              <label><span>默认模型</span><input value={nativeDraft.defaultModel} placeholder={nativeDraft.providerType === "anthropic-messages" ? "例如 claude-model-id" : "例如 gpt-model-id"} onChange={(event) => setNativeDraft((draft) => ({ ...draft, defaultModel: event.target.value }))} /></label>
               <label><span>API Key</span><input type="password" autoComplete="off" value={nativeDraft.apiKey} placeholder={editingConnectionId ? "留空保留当前 Key；填写则替换" : "仅提交到 Main 安全边界"} onChange={(event) => setNativeDraft((draft) => ({ ...draft, apiKey: event.target.value }))} /></label>
+              <label className="native-provider-custom-headers"><span>Custom Headers（可选，每行 Name: Value）</span><textarea autoComplete="off" value={nativeDraft.customHeadersText} placeholder={editingConnectionId ? "留空保留已加密 Headers；填写则整体替换" : "例如 X-Tenant: tenant-a"} onChange={(event) => setNativeDraft((draft) => ({ ...draft, customHeadersText: event.target.value, clearCustomHeaders: false }))} /></label>
+              {editingConnectionId && nativeConnections.find((connection) => connection.id === editingConnectionId)?.customHeaderNames?.length ? <label className="native-provider-clear-headers"><input type="checkbox" checked={nativeDraft.clearCustomHeaders} disabled={Boolean(nativeDraft.customHeadersText.trim())} onChange={(event) => setNativeDraft((draft) => ({ ...draft, clearCustomHeaders: event.target.checked }))} /><span>删除已保存的 Custom Headers</span></label> : null}
               <button type="submit" className="primary-button" disabled={nativeBusy || !nativeDraft.label.trim() || !nativeDraft.baseUrl.trim() || !nativeDraft.defaultModel.trim() || (!editingConnectionId && !nativeDraft.apiKey)}>{nativeBusy ? <LoaderCircle size={14} className="status-running" /> : editingConnectionId ? <Check size={14} /> : <Plus size={14} />}{editingConnectionId ? (nativeDraft.apiKey ? "确认替换 Key" : "保存修改") : "添加 Connection"}</button>
-              {editingConnectionId ? <button type="button" className="secondary-button" disabled={nativeBusy} onClick={() => { setEditingConnectionId(""); setNativeDraft({ label: "OpenAI", baseUrl: "https://api.openai.com/v1", defaultModel: "", apiKey: "" }); }}>取消编辑</button> : null}
+              {editingConnectionId ? <button type="button" className="secondary-button" disabled={nativeBusy} onClick={() => { setEditingConnectionId(""); setNativeDraft(emptyNativeDraft()); }}>取消编辑</button> : null}
             </form>
-            <p className="native-provider-security"><ShieldCheck size={13} />API Key 由 Main 使用操作系统加密能力保存；Renderer、普通 IPC、日志和导出都不会获得原始值。</p>
+            <p className="native-provider-security"><ShieldCheck size={13} />API Key 与 Custom Header 值由 Main 使用操作系统加密能力保存；Renderer 响应、普通状态、日志和导出都不会获得原始值。</p>
+            <div className="native-provider-diagnostics" aria-label="Provider 凭据库诊断">
+              <span><strong>凭据库诊断</strong><small>{nativeDiagnostics ? `${nativeDiagnostics.detail} · ${nativeDiagnostics.storageBackend} · ${nativeDiagnostics.decryptableCount}/${nativeDiagnostics.connectionCount} 可解密` : "仅在你点击后检查当前 OS 安全存储与密文可解密性，不读取或显示 Secret"}</small>{nativeDiagnostics?.failedConnectionLabels?.length ? <small className="is-error">失败：{nativeDiagnostics.failedConnectionLabels.join("、")}</small> : null}</span>
+              <span className="native-provider-actions"><button type="button" className="secondary-button" disabled={nativeBusy} onClick={onDiagnoseNative}>运行诊断</button>{nativeDiagnostics?.migrationAvailable ? <button type="button" className="secondary-button" disabled={nativeBusy} onClick={onMigrateNative}>重新封装凭据</button> : null}</span>
+            </div>
           </section>
 
           <section className="account-detection-card" aria-label="本机 Agent 检测">
             <span className="account-sync-icon">{checking ? <LoaderCircle size={17} className="status-running" /> : <Laptop size={17} />}</span>
             <span>
-              <strong>{checking ? "正在检测 Rux 与 Claude Code…" : hasDetected ? "本机 Agent 检测完成" : "检测本机 Agent"}</strong>
-              <small>{hasDetected ? `上次检测 ${checkedAt} · 不会后台自动刷新` : "检查安装、版本和非敏感连接状态，不读取凭据文件"}</small>
+              <strong>{checking ? "正在检测 Codex 与 Claude Code…" : hasDetected ? "本机 Agent 检测完成" : "检测本机 Agent"}</strong>
+              <small>{hasDetected ? `上次检测 ${checkedAt} · 已安全缓存，不会后台自动刷新；发送前会重新校验` : "检查安装、版本和非敏感连接状态，不读取凭据文件"}</small>
             </span>
             <button
               data-dialog-initial-focus
@@ -3320,6 +3444,7 @@ function AccountsDialog({ open, state, adapters, agentChoices, selectedAgentId, 
               const provider = state?.providers?.find((item) => item.id === surface.id);
               const adapter = adapters.find((item) => item.id === surface.adapter);
               const isLoggingIn = loginProvider === surface.id;
+              const isLoggingOut = logoutProvider === surface.id;
               const phase = checking
                 ? "checking"
                 : !hasDetected ? "unchecked" : provider?.status || "error";
@@ -3334,7 +3459,9 @@ function AccountsDialog({ open, state, adapters, agentChoices, selectedAgentId, 
                     connected: `已连接 · ${authMethodLabel(provider?.authMethod)}`,
                     error: "检测错误",
                   }[phase];
-              const detail = isLoggingIn
+              const detail = isLoggingOut
+                ? `正在通过官方 ${surface.cliLabel} 退出登录…`
+                : isLoggingIn
                 ? "请在官方浏览器授权页完成登录；Rux 不接收或保存 Token。"
                 : phase === "unchecked"
                   ? `点击“开始检测”后检查 ${surface.cliLabel}。`
@@ -3345,7 +3472,8 @@ function AccountsDialog({ open, state, adapters, agentChoices, selectedAgentId, 
                 && provider?.installed
                 && provider?.canLogin
                 && !checking
-                && !loginProvider;
+                && !loginProvider
+                && !logoutProvider;
               const loginLabel = connected
                 ? ["api-key", "cloud"].includes(provider?.authMethod) ? "改用 OAuth" : "重新登录"
                 : surface.id === "chatgpt" ? "使用 ChatGPT 登录" : "使用 Claude 登录";
@@ -3370,6 +3498,7 @@ function AccountsDialog({ open, state, adapters, agentChoices, selectedAgentId, 
                       {statusCopy}
                     </span>
                     {connected && agent?.available ? <div className="account-agent-action-row">{isSelectedAgent ? <span className="account-current-agent-badge"><Check size={13} />当前使用</span> : null}<button type="button" className="account-use-agent-button" disabled={!canCreateTask} title={canCreateTask ? `使用 ${agent.name} 新建任务` : "请先打开项目"} onClick={() => onUseAgent(agent.id)}><SquarePen size={13} />新建任务</button></div> : null}
+                    {connected ? <button type="button" className="account-login-button is-secondary" disabled={Boolean(loginProvider) || Boolean(logoutProvider) || checking} onClick={() => onLogout(surface.id)}>{isLoggingOut ? <LoaderCircle size={13} className="status-running" /> : <LogOut size={13} />}{isLoggingOut ? "正在退出" : "退出登录"}</button> : null}
                     {phase === "not-installed" ? (
                       <a className="account-install-link" href={surface.installUrl} target="_blank" rel="noreferrer"><Globe2 size={13} />官方安装说明</a>
                     ) : phase === "error" ? (
@@ -3391,14 +3520,14 @@ function AccountsDialog({ open, state, adapters, agentChoices, selectedAgentId, 
             })}
           </div>
           <div className="account-dialog-secondary-actions">
-            <button type="button" className="secondary-button" onClick={onOpenSettings} disabled={Boolean(loginProvider)}><Settings size={14} /> Rux 设置</button>
+            <button type="button" className="secondary-button" onClick={onOpenSettings} disabled={Boolean(loginProvider) || Boolean(logoutProvider)}><Settings size={14} /> Rux 设置</button>
             <p>原生 Connection 在上方管理；CLI 自有的 API Key、Base URL 与云 Provider 配置仍由对应 CLI 管理。</p>
           </div>
         </div>
 
         <footer className="account-dialog-footer">
           <ShieldCheck size={15} />
-          <p>原生 API Key 只在 Main/Runtime 特权边界内使用；CLI 登录与 CLI 凭据仍由官方工具管理，二者互不复制。</p>
+                      <p>原生 API Key 与 Custom Header 值只在 Main/Runtime 特权边界内使用；CLI 登录与 CLI 凭据仍由官方工具管理，二者互不复制。</p>
         </footer>
       </section>
     </div>
@@ -3530,15 +3659,62 @@ function SessionSyncDialog({ state, onClose, onRebuild, onRestore }) {
 
 function ContextHandoffDialog({ state, agents, onChange, onPreview, onGenerateSummary, onCommit, onClose }) {
   const dialogRef = useDialogFocus(state.open, onClose);
+  const [messageQuery, setMessageQuery] = useState("");
+  const [messageRole, setMessageRole] = useState("all");
+  useEffect(() => {
+    if (state.open) {
+      setMessageQuery("");
+      setMessageRole("all");
+    }
+  }, [state.open]);
   if (!state.open) return null;
   const facts = state.preview?.facts;
+  const normalizedQuery = messageQuery.trim().toLocaleLowerCase();
+  const visibleMessages = state.source.messages.filter((message) => (
+    (messageRole === "all" || message.role === messageRole)
+    && (!normalizedQuery || message.text.toLocaleLowerCase().includes(normalizedQuery))
+  ));
+  const clearDerivedPreview = { preview: null, agentSummary: "", agentSummaryGenerationId: "", summaryProvenance: null };
+  const selectMessages = (messageIds) => onChange({ messageIds, ...clearDerivedPreview });
+  const toggleMessage = (messageId) => selectMessages(state.messageIds.includes(messageId)
+    ? state.messageIds.filter((id) => id !== messageId)
+    : [...state.messageIds, messageId]);
   return <div className="dialog-backdrop account-dialog-backdrop" role="presentation"><section ref={dialogRef} tabIndex={-1} className="account-dialog handoff-dialog" role="dialog" aria-modal="true" aria-labelledby="handoff-title">
     <header className="account-dialog-header"><div><span className="account-dialog-icon"><GitCompareArrows size={18} /></span><span><h2 id="handoff-title">复制为新任务</h2><p>先审查确定性事实包，确认后才创建目标 Task</p></span></div><button type="button" className="icon-button" onClick={onClose} aria-label="关闭 Context Handoff"><X size={17} /></button></header>
     <div className="account-dialog-body handoff-body">
       <label className="handoff-field"><span>目标 Agent 与 Provider</span><select value={state.targetAgentId} onChange={(event) => onChange({ targetAgentId: event.target.value, preview: null, agentSummary: "", agentSummaryGenerationId: "", summaryProvenance: null })}>{agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name} · {agent.providerConnection.label}</option>)}</select></label>
-      <section className="handoff-selection"><header><strong>本地事实来源</strong><small>只使用当前 Task 已持久化的消息与 Run-owned 文件证据</small></header><div className="handoff-message-select">{state.source.messages.map((message) => <label key={message.id}><input type="checkbox" checked={state.messageIds.includes(message.id)} onChange={() => onChange({ messageIds: state.messageIds.includes(message.id) ? state.messageIds.filter((id) => id !== message.id) : [...state.messageIds, message.id], preview: null, agentSummary: "", agentSummaryGenerationId: "", summaryProvenance: null })} /><span><strong>{message.role === "user" ? "你" : "Agent"}</strong><small>{message.text.slice(0, 160)}</small></span></label>)}</div>{state.source.files.length ? <div className="handoff-file-select">{state.source.files.map((file) => <label key={file.path}><input type="checkbox" checked={state.filePaths.includes(file.path)} onChange={() => onChange({ filePaths: state.filePaths.includes(file.path) ? state.filePaths.filter((path) => path !== file.path) : [...state.filePaths, file.path], preview: null, agentSummary: "", agentSummaryGenerationId: "", summaryProvenance: null })} /><code>{file.path}</code></label>)}</div> : <small>当前没有可引用的持久化 Run-owned 文件变更；不会使用展示数据补齐。</small>}</section>
+      <section className="handoff-selection">
+        <header><strong>本地事实来源</strong><small>只使用当前 Task 已持久化的消息与 Run-owned 文件证据</small></header>
+        <div className="handoff-filter-bar">
+          <label><Search size={13} /><input aria-label="筛选交接消息" value={messageQuery} onChange={(event) => setMessageQuery(event.target.value)} placeholder="筛选最多 500 条消息…" /></label>
+          <select aria-label="按角色筛选交接消息" value={messageRole} onChange={(event) => setMessageRole(event.target.value)}><option value="all">全部角色</option><option value="user">仅用户</option><option value="assistant">仅 Agent</option></select>
+        </div>
+        <div className="handoff-selection-actions" role="group" aria-label="交接消息快速选择">
+          <span>已选 {state.messageIds.length}/{state.source.messages.length} · 当前显示 {visibleMessages.length}</span>
+          <button type="button" onClick={() => selectMessages(Array.from(new Set([...state.messageIds, ...visibleMessages.map((message) => message.id)])))}>全选当前结果</button>
+          <button type="button" onClick={() => selectMessages(state.source.messages.slice(-20).map((message) => message.id))}>最近 20 条</button>
+          <button type="button" onClick={() => selectMessages([])}>清空</button>
+        </div>
+        <div className="handoff-message-select">{visibleMessages.map((message) => <label key={message.id}><input type="checkbox" checked={state.messageIds.includes(message.id)} onChange={() => toggleMessage(message.id)} /><span><strong>{message.role === "user" ? "你" : "Agent"}</strong><small>{message.text.slice(0, 220)}</small></span></label>)}{!visibleMessages.length ? <small className="handoff-empty-filter">没有匹配的持久化消息。</small> : null}</div>
+        {state.source.files.length ? <div className="handoff-file-select">{state.source.files.map((file) => <label key={file.path}><input type="checkbox" checked={state.filePaths.includes(file.path)} onChange={() => onChange({ filePaths: state.filePaths.includes(file.path) ? state.filePaths.filter((path) => path !== file.path) : [...state.filePaths, file.path], ...clearDerivedPreview })} /><span><code>{file.path}</code><small>{file.status} · +{file.additions} −{file.deletions}</small></span></label>)}</div> : <small>当前没有可引用的持久化 Run-owned 文件变更；不会使用展示数据补齐。</small>}
+      </section>
       {state.error ? <div className="account-error" role="alert"><CircleAlert size={15} /><span>{state.error}</span></div> : null}
-      {facts ? <section className="handoff-preview"><header><strong>确定性事实包</strong><small>{facts.messages.length} 条消息 · {facts.files.length} 个文件 · {facts.incomplete.length} 个未完成项</small></header>{!state.preview.sourceAgentAvailable ? <p className="handoff-note">来源 Agent 不可用；仍可仅使用以下事实包交接。</p> : null}<div className="handoff-field"><span className="handoff-summary-heading"><span>可选叙事摘要</span><button type="button" className="secondary-button" aria-label="让来源 Agent 生成交接摘要" onClick={onGenerateSummary} disabled={state.loading || !state.preview.sourceAgentAvailable}>{state.loading ? "来源 Agent 正在生成…" : "让来源 Agent 生成"}</button></span>{state.summaryProvenance ? <small className="handoff-summary-provenance">由 {state.summaryProvenance.sourceAdapter === "codex" ? "Rux" : "Claude Code"} 的固定 Revision 临时生成 · 未保存原生会话 · 可编辑或移除</small> : <small>可自行填写，或显式调用来源 Agent 生成；留空不会影响交接。</small>}<textarea aria-label="可选叙事摘要" value={state.agentSummary} onChange={(event) => onChange({ agentSummary: event.target.value })} placeholder="摘要只用于帮助目标 Agent 理解事实包，不替代下方确定性事实。" /></div><label className="handoff-field"><span>补充约束</span><textarea value={state.constraints} onChange={(event) => onChange({ constraints: event.target.value })} placeholder="例如：先只做方案，不修改文件。" /></label><footer><span><ShieldCheck size={14} />确认前不会调用目标 Agent，也不会创建 Native Session。</span><button type="button" className="primary-button" onClick={onCommit} disabled={state.loading}>确认并创建新任务</button></footer></section> : <button type="button" className="primary-button handoff-preview-button" onClick={onPreview} disabled={state.loading || !state.targetAgentId}>{state.loading ? "正在生成…" : "生成交接预览"}</button>}
+      {facts ? <section className="handoff-preview">
+        <header><strong>确定性事实包</strong><small>{facts.messages.length} 条消息 · {facts.files.length} 个文件 · {facts.incomplete.length} 个未完成项</small></header>
+        <div className="handoff-diagnostics" aria-label="交接诊断">
+          <span><small>来源 Revision</small><code>{facts.sourceTask.agentRevisionId}</code></span>
+          <span><small>目标 Revision</small><code>{state.preview.target.agentRevisionId}</code></span>
+          <span><small>目标 Engine / Connection</small><strong>{ruxAdapterLabel(state.preview.target.adapter)} · {state.preview.target.providerConnection.label}</strong></span>
+          <span><small>目标模型 / 权限</small><strong>{state.preview.target.model} · {permissionLabel(state.preview.target.permissionMode)}</strong></span>
+          <span><small>事实指纹</small><code>{state.preview.fingerprint.slice(0, 16)}…</code></span>
+          <span><small>最新 Run</small><strong>{facts.latestRun ? `${facts.latestRun.status} · ${facts.latestRun.id}` : "未包含"}</strong></span>
+        </div>
+        {facts.incomplete.length ? <div className="handoff-incomplete"><strong>未完成项</strong><ul>{facts.incomplete.slice(0, 12).map((item) => <li key={item}>{item}</li>)}</ul>{facts.incomplete.length > 12 ? <small>另有 {facts.incomplete.length - 12} 项已包含在不可变事实包中。</small> : null}</div> : null}
+        {!state.preview.sourceAgentAvailable ? <p className="handoff-note">来源 Agent 不可用；仍可仅使用以下事实包交接。</p> : null}
+        <div className="handoff-field"><span className="handoff-summary-heading"><span>可选叙事摘要</span><button type="button" className="secondary-button" aria-label="让来源 Agent 生成交接摘要" onClick={onGenerateSummary} disabled={state.loading || !state.preview.sourceAgentAvailable}>{state.loading ? "来源 Agent 正在生成…" : "让来源 Agent 生成"}</button></span>{state.summaryProvenance ? <small className="handoff-summary-provenance">由 {state.summaryProvenance.sourceAdapter === "codex" ? "Rux" : "Claude Code"} 的固定 Revision 临时生成 · 未保存原生会话 · 可编辑或移除</small> : <small>可自行填写，或显式调用来源 Agent 生成；留空不会影响交接。</small>}<textarea aria-label="可选叙事摘要" value={state.agentSummary} onChange={(event) => onChange({ agentSummary: event.target.value })} placeholder="摘要只用于帮助目标 Agent 理解事实包，不替代下方确定性事实。" /></div>
+        <label className="handoff-field"><span>补充约束</span><textarea value={state.constraints} onChange={(event) => onChange({ constraints: event.target.value })} placeholder="例如：先只做方案，不修改文件。" /></label>
+        <footer><span><ShieldCheck size={14} />确认前不会调用目标 Agent，也不会创建 Native Session。</span><button type="button" className="primary-button" onClick={onCommit} disabled={state.loading}>确认并创建新任务</button></footer>
+      </section> : <button type="button" className="primary-button handoff-preview-button" onClick={onPreview} disabled={state.loading || !state.targetAgentId || (!state.messageIds.length && !state.filePaths.length)}>{state.loading ? "正在生成…" : "生成交接预览"}</button>}
     </div>
   </section></div>;
 }
@@ -3599,7 +3775,7 @@ function LocalDataDialog({ state, task, workspace, onChange, onPreview, onExecut
   </div>;
 }
 
-function CodexSettingsDialog({ open, connected, catalog, settings, onClose, onReload, onSave, onOpenAccounts, onOpenLocalData }) {
+function CodexSettingsDialog({ open, connected, catalog, settings, localMetrics, localEventMetrics, updateState, updateBusy, onCheckUpdate, onDownloadUpdate, onInstallUpdate, onConfirmUpdateHealthy, onClose, onReload, onSave, onOpenAccounts, onOpenLocalData }) {
   const [draft, setDraft] = useState(settings);
   const [query, setQuery] = useState("");
   const dialogRef = useDialogFocus(open, onClose);
@@ -3624,6 +3800,8 @@ function CodexSettingsDialog({ open, connected, catalog, settings, onClose, onRe
     || terms.some((term) => String(term).toLocaleLowerCase().includes(normalizedQuery));
   const showPermissions = matchesQuery("权限", "只读", "工作区", "确认", "写入");
   const showGeneral = matchesQuery("常规", "模型", "推理", "登录", "Agent", "刷新");
+  const showMetrics = matchesQuery("指标", "统计", "成功", "Run", "本机", "隐私");
+  const showUpdates = matchesQuery("更新", "版本", "升级", "回滚", "签名");
   const applyDraft = (nextDraft) => {
     setDraft(nextDraft);
     onSave(nextDraft);
@@ -3652,6 +3830,7 @@ function CodexSettingsDialog({ open, connected, catalog, settings, onClose, onRe
               <button type="button" className="is-active"><Settings size={16} /><span>常规</span></button>
               <button type="button" onClick={onOpenAccounts}><UserRound size={16} /><span>账户与登录</span><ArrowRight size={13} /></button>
               <button type="button" onClick={onOpenLocalData}><Database size={16} /><span>本地数据</span><ArrowRight size={13} /></button>
+              <button type="button" onClick={() => document.getElementById("rux-update-settings")?.scrollIntoView({ behavior: "smooth", block: "start" })}><Download size={16} /><span>应用更新</span></button>
             </div>
             <div className="rux-settings-nav-group">
               <p>编码</p>
@@ -3668,7 +3847,7 @@ function CodexSettingsDialog({ open, connected, catalog, settings, onClose, onRe
               <button type="button" className="icon-button rux-settings-close" onClick={onClose} aria-label="关闭 Rux 设置"><X size={17} /></button>
             </header>
 
-            {!showPermissions && !showGeneral ? (
+            {!showPermissions && !showGeneral && !showMetrics && !showUpdates ? (
               <div className="rux-settings-empty"><Search size={20} /><strong>没有匹配的设置</strong><span>请尝试搜索“权限”“模型”或“推理”。</span></div>
             ) : null}
 
@@ -3677,15 +3856,15 @@ function CodexSettingsDialog({ open, connected, catalog, settings, onClose, onRe
                 <h2 id="rux-permission-settings">权限</h2>
                 <div className="rux-settings-card rux-permission-card" role="radiogroup" aria-label="默认权限">
                   <button type="button" role="radio" aria-checked={(draft.permissionMode || "acceptEdits") === "plan"} onClick={() => choosePermission("plan")}>
-                    <span><strong>只读规划</strong><small>Rux 可以读取当前工作区并制定方案，不会编辑文件或运行写操作。</small></span>
+                    <span><strong>只读</strong><small>Rux 仅分析和规划，不修改工作区。</small></span>
                     <i className={(draft.permissionMode || "acceptEdits") === "plan" ? "is-selected" : ""} aria-hidden="true"><Check size={13} /></i>
                   </button>
                   <button type="button" role="radio" aria-checked={(draft.permissionMode || "acceptEdits") === "acceptEdits"} onClick={() => choosePermission("acceptEdits")}>
-                    <span><strong>工作区访问</strong><small>Rux 可以读取和编辑工作区文件；需要额外访问时会请求你的确认。</small></span>
+                    <span><strong>请求批准</strong><small>在具体命令、文件或网络操作需要授权时询问。</small></span>
                     <i className={(draft.permissionMode || "acceptEdits") === "acceptEdits" ? "is-selected" : ""} aria-hidden="true"><Check size={13} /></i>
                   </button>
                   <button type="button" role="radio" aria-checked={(draft.permissionMode || "acceptEdits") === "dontAsk"} onClick={() => choosePermission("dontAsk")}>
-                    <span><strong>工作区访问，不询问</strong><small>Rux 可以在当前工作区内直接编辑；仍不会获得系统完整访问权限。</small></span>
+                    <span><strong>自动批准</strong><small>自动批准当前工作区内的操作，仍受 Runtime 沙箱限制。</small></span>
                     <i className={(draft.permissionMode || "acceptEdits") === "dontAsk" ? "is-selected" : ""} aria-hidden="true"><Check size={13} /></i>
                   </button>
                 </div>
@@ -3698,7 +3877,7 @@ function CodexSettingsDialog({ open, connected, catalog, settings, onClose, onRe
                 {!connected ? (
                   <div className="settings-login-required" role="status">
                     <Bot size={18} />
-                    <span><strong>先连接 Rux</strong><small>在 Agent 与 Provider 中检测并连接后，即可读取模型与推理强度。</small></span>
+                    <span><strong>先连接 Codex</strong><small>在 Agent 与 Provider 中检测并连接后，即可读取模型与推理强度。</small></span>
                     <button type="button" className="primary-button" onClick={onOpenAccounts}>账户与登录</button>
                   </div>
                 ) : null}
@@ -3707,7 +3886,7 @@ function CodexSettingsDialog({ open, connected, catalog, settings, onClose, onRe
                   <label>
                     <span><strong>默认模型</strong><small>可选择官方目录，或输入高级模型 ID</small></span>
                     <input list="rux-settings-models" value={selectedModel} onChange={(event) => applyDraft({ ...draft, model: event.target.value, reasoningEffort: "" })} disabled={catalog.loading} aria-label="默认模型或高级模型 ID" />
-                    <datalist id="rux-settings-models"><option value="Rux default">Rux 默认</option>{models.map((model) => <option key={model.id} value={model.model}>{ruxModelLabel(model.displayName || model.model)}{model.isDefault ? "（默认）" : ""}</option>)}</datalist>
+                    <datalist id="rux-settings-models"><option value="Rux default">Codex 默认</option>{models.map((model) => <option key={model.id} value={model.model}>{ruxModelLabel(model.displayName || model.model)}{model.isDefault ? "（默认）" : ""}</option>)}</datalist>
                   </label>
                   <label>
                     <span><strong>推理强度</strong><small>只显示所选模型支持的值</small></span>
@@ -3722,6 +3901,38 @@ function CodexSettingsDialog({ open, connected, catalog, settings, onClose, onRe
                     <button type="button" className="secondary-button" onClick={onReload} disabled={!connected || catalog.loading}>{catalog.loading ? <LoaderCircle size={14} className="status-running" /> : <RefreshCw size={14} />}刷新模型</button>
                   </div>
                   <div className="rux-settings-boundary"><ShieldCheck size={15} /><span><strong>权限边界</strong><small>设置会自动保存。Rux 的所有写入仍限制在当前工作区内。</small></span></div>
+                </div>
+              </section>
+            ) : null}
+
+            {showMetrics ? (
+              <section className="rux-settings-section" aria-labelledby="rux-local-metrics">
+                <h2 id="rux-local-metrics">本机成功指标</h2>
+                <div className="rux-settings-card rux-local-metrics-card">
+                  <div><strong>{localMetrics.runCount}</strong><small>已记录 Run</small></div>
+                  <div><strong>{localMetrics.completionRate === undefined ? "未报告" : `${localMetrics.completionRate}%`}</strong><small>终态 Run 完成率</small></div>
+                  <div><strong>{localMetrics.successfulTaskCount}/{localMetrics.taskCount}</strong><small>至少完成一次的 Task</small></div>
+                  <div><strong>{formatDuration(localMetrics.medianCompletedDurationMs) || "未报告"}</strong><small>完成 Run 中位耗时</small></div>
+                  <p>完成 {localMetrics.completedRunCount} · 失败 {localMetrics.failedRunCount} · 停止/中断 {localMetrics.stoppedRunCount} · 权限批准 {localMetrics.approvedPermissionCount}/{localMetrics.permissionDecisionCount}</p>
+                  <p>Engine：{Object.entries(localMetrics.adapters).map(([adapter, count]) => `${ruxAdapterLabel(adapter)} ${count}`).join(" · ") || "暂无 Run"}</p>
+                  <div className="rux-local-event-funnel"><strong>跨启动本机事件</strong><p>CLI 检测 {localEventMetrics?.counts?.["cli-detection"] ?? 0} · 成功 Run {localEventMetrics?.counts?.["run-succeeded"] ?? 0} · 重启恢复 {localEventMetrics?.counts?.["restart-recovery"] ?? 0}</p><p>导入 {localEventMetrics?.counts?.["session-imported"] ?? 0} · 去重 {localEventMetrics?.counts?.["session-import-deduplicated"] ?? 0} · 继续 {localEventMetrics?.counts?.["session-continued"] ?? 0} · 分支 {localEventMetrics?.counts?.["task-branched"] ?? 0}</p><p>恢复尝试 {localEventMetrics?.counts?.["error-recovery-attempted"] ?? 0} · 恢复成功 {localEventMetrics?.counts?.["error-recovered"] ?? 0}</p></div>
+                  <div className="rux-local-metrics-privacy"><ShieldCheck size={15} /><span><strong>仅在本机计算</strong><small>只读取当前已加载的持久化 Task/Run；没有遥测或上传通道。未来任何上传都必须单独说明数据与目的并再次征得同意。</small></span></div>
+                </div>
+              </section>
+            ) : null}
+
+            {showUpdates ? (
+              <section className="rux-settings-section" id="rux-update-settings" aria-labelledby="rux-update-heading">
+                <h2 id="rux-update-heading">应用更新</h2>
+                <div className="rux-settings-card rux-general-card">
+                  <div className="rux-settings-action-row">
+                    <span><strong>Rux {updateState?.currentVersion || "—"}</strong><small>{updateState?.configured ? `${updateState.channel} 分阶段更新通道` : "正式签名 Feed 未配置"}</small></span>
+                    <button type="button" className="secondary-button" onClick={onCheckUpdate} disabled={updateBusy || !updateState?.configured}>{updateBusy && updateState?.phase === "checking" ? <LoaderCircle size={14} className="status-running" /> : <RefreshCw size={14} />}检查更新</button>
+                  </div>
+                  {updateState?.updateVersion ? <div className="rux-settings-action-row"><span><strong>版本 {updateState.updateVersion}</strong><small>{updateState.detail}</small></span>{updateState.phase === "available" ? <button type="button" className="secondary-button" onClick={onDownloadUpdate} disabled={updateBusy}><Download size={14} />下载</button> : null}{updateState.phase === "downloaded" ? <button type="button" className="primary-button" onClick={onInstallUpdate} disabled={updateBusy}>重启并安装</button> : null}</div> : <div className="rux-settings-boundary"><ShieldCheck size={15} /><span><strong>{updateState?.detail || "等待显式检查"}</strong><small>不开机自动下载；只有 Feed 分阶段资格、SHA-512 与平台代码签名校验均通过后才允许安装。</small></span></div>}
+                  {updateState?.phase === "downloading" ? <div role="status">正在下载并校验… {Math.round(updateState.progressPercent || 0)}%</div> : null}
+                  {updateState?.rollbackPending ? <div className="account-error" role="alert"><CircleAlert size={15} /><span>新版本尚未确认健康，自动更新已暂停。请从签名 Release 恢复上一健康版本。</span></div> : null}
+                  {updateState?.configured && !updateState?.rollbackPending ? <button type="button" className="secondary-button" onClick={onConfirmUpdateHealthy} disabled={updateBusy}>确认当前版本运行正常</button> : null}
                 </div>
               </section>
             ) : null}
@@ -3949,6 +4160,7 @@ function AgentsDialog({ open, profiles, adapters, nativeConnections, codexModels
 
 export function App() {
   const uiPreferences = useMemo(() => showcaseMode ? {} : readUiPreferences(), []);
+  const cachedAgentDetection = useMemo(() => showcaseMode ? null : readAgentDetectionCache(), []);
   const [tasks, setTasks] = useState(() => window.rux || !showcaseMode
     ? []
     : initialTasks.map((task) => normalizePersistedTask(task)));
@@ -3967,7 +4179,7 @@ export function App() {
   const [expandedProjectIds, setExpandedProjectIds] = useState(() => showcaseMode
     ? [fallbackWorkspaceState.active.id]
     : Array.isArray(uiPreferences.expandedProjectIds) ? uiPreferences.expandedProjectIds : []);
-  const [adapters, setAdapters] = useState(fallbackAdapters);
+  const [adapters, setAdapters] = useState(() => cachedAgentDetection?.adapters || fallbackAdapters);
   const [inspectorTab, setInspectorTab] = useState(showcaseMode ? "environment" : uiPreferences.inspectorTab || "environment");
   const [inspectorOpen, setInspectorOpen] = useState(showcaseMode || (Boolean(uiPreferences.inspectorOpen) && Boolean(window.rux)));
   const [selectedFile, setSelectedFile] = useState(uiPreferences.selectedFile || "");
@@ -3990,6 +4202,10 @@ export function App() {
   const [agentProfileBusy, setAgentProfileBusy] = useState(false);
   const [agentProfileError, setAgentProfileError] = useState("");
   const [nativeConnections, setNativeConnections] = useState([]);
+  const [nativeCredentialDiagnostics, setNativeCredentialDiagnostics] = useState(null);
+  const [localProductEventMetrics, setLocalProductEventMetrics] = useState(null);
+  const [updateState, setUpdateState] = useState({ phase: "disabled", currentVersion: "—", channel: "stable", configured: false });
+  const [updateBusy, setUpdateBusy] = useState(false);
   const [nativeProviderBusy, setNativeProviderBusy] = useState(false);
   const [accountsOpen, setAccountsOpen] = useState(false);
   const [sessionDiscoveryOpen, setSessionDiscoveryOpen] = useState(false);
@@ -4000,9 +4216,11 @@ export function App() {
   const [handoffState, setHandoffState] = useState({ open: false, loading: false, error: "", targetAgentId: "", messageIds: [], filePaths: [], agentSummary: "", agentSummaryGenerationId: "", summaryProvenance: null, constraints: "", preview: null, source: { messages: [], files: [] } });
   const [localDataState, setLocalDataState] = useState({ open: false, loading: false, error: "", notice: "", summary: null, preview: null, scope: "task", action: "unlink", format: "markdown", revisions: "current" });
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [authState, setAuthState] = useState(null);
+  const [authState, setAuthState] = useState(() => cachedAgentDetection?.authState || null);
   const [authChecking, setAuthChecking] = useState(false);
+  const [runValidationBusy, setRunValidationBusy] = useState(false);
   const [authLoginProvider, setAuthLoginProvider] = useState(null);
+  const [authLogoutProvider, setAuthLogoutProvider] = useState(null);
   const [authError, setAuthError] = useState("");
   const [authNotice, setAuthNotice] = useState("");
   const [codexSettings, setCodexSettings] = useState(() => {
@@ -4043,11 +4261,13 @@ export function App() {
     if (window.rux) setHydratedWorkspaceId(null);
 
     const hydrate = async () => {
-      const [agentResult, profileResult, connectionResult, nextState] = await Promise.all([
-        window.rux ? Promise.resolve({ adapters: fallbackAdapters }) : runtime.listAgents(),
+      const [agentResult, profileResult, connectionResult, nextState, eventMetrics, nextUpdateState] = await Promise.all([
+        window.rux ? Promise.resolve({ adapters: cachedAgentDetection?.adapters || fallbackAdapters }) : runtime.listAgents(),
         runtime.listAgentProfiles(),
         runtime.listProviderConnections(),
         window.rux ? window.rux.getWorkspaceState() : Promise.resolve(null),
+        runtime.getLocalProductEventSummary(),
+        runtime.getUpdateState(),
       ]);
       if (disposed) return;
       setAdapters(agentResult.adapters.map((adapter) => adapter.id === "rux-native" ? {
@@ -4057,6 +4277,8 @@ export function App() {
       } : adapter));
       setAgentProfiles(profileResult.profiles);
       setNativeConnections(connectionResult);
+      setLocalProductEventMetrics(eventMetrics);
+      setUpdateState(nextUpdateState);
       setAgentProfileError("");
 
       if (window.rux && nextState) {
@@ -4136,6 +4358,16 @@ export function App() {
   }, [codexSettings, drafts, expandedProjectIds, inspectorOpen, inspectorTab, selectedFile, selectedTaskId, sidebarCollapsed]);
 
   useEffect(() => {
+    if (showcaseMode || !authState?.checkedAt) return;
+    try {
+      const safe = sanitizeAgentDetectionCache({ authState, adapters, cachedAt: isoNow() });
+      if (safe) window.localStorage.setItem(agentDetectionCacheKey, JSON.stringify(safe));
+    } catch {
+      // Detection cache is optional and contains normalized non-sensitive status only.
+    }
+  }, [adapters, authState]);
+
+  useEffect(() => {
     const handleGlobalShortcut = (event) => {
       if (event.key === "Escape") {
         setInspectorOpen(false);
@@ -4165,10 +4397,7 @@ export function App() {
         setInspectorOpen(false);
         setTerminalOpen(false);
         if (workspaceState.active.placeholder) void chooseWorkspace();
-        else {
-          setNewTaskAgentId("");
-          setNewTaskOpen(true);
-        }
+        else startEditableConversation();
       }
     };
 
@@ -4180,6 +4409,7 @@ export function App() {
     () => tasks.filter((task) => task.workspaceId === workspaceState.active.id),
     [tasks, workspaceState.active.id],
   );
+  const localSuccessMetrics = useMemo(() => computeLocalSuccessMetrics(tasks), [tasks]);
 
   const selectedTask = useMemo(
     () => workspaceTasks.find((task) => task.id === selectedTaskId)
@@ -4224,10 +4454,10 @@ export function App() {
         : adapter.id === "claude-code" ? "Claude default" : "Rux prototype";
       return {
         id: adapter.id,
-        name: adapter.id === "mock" ? "Rux Demo" : adapter.id === "claude-code" ? "Claude Code" : "Rux",
+        name: adapter.id === "mock" ? "Rux Demo" : adapter.id === "claude-code" ? "Claude Code" : "Codex",
         adapter: adapter.id,
         available: adapter.available && authenticationReady,
-        detail: adapter.id === "codex" ? "Rux 本机 Agent" : adapter.detail,
+        detail: adapter.id === "codex" ? "Codex 本机 Agent" : adapter.detail,
         unavailableReason: !adapter.available
           ? authState
             ? `未找到可用的 ${adapter.id === "claude-code" ? "Claude Code" : "Rux"} 本机组件`
@@ -4518,6 +4748,32 @@ export function App() {
       const message = error instanceof Error ? error.message : String(error);
       setContextState((state) => ({ ...state, loading: false, error: message }));
       throw error;
+    }
+  };
+
+  const chooseContextFiles = async () => {
+    const runtime = runtimeRef.current;
+    if (!window.rux || !runtime || workspaceState.active.placeholder) {
+      setContextState((state) => ({ ...state, error: "请先在 Rux 桌面应用中打开项目。" }));
+      return;
+    }
+    setContextState((state) => ({ ...state, loading: true, error: "" }));
+    try {
+      const selectedPaths = await window.rux.chooseContextFiles();
+      if (!selectedPaths.length) {
+        setContextState((state) => ({ ...state, loading: false }));
+        return;
+      }
+      const requested = [...new Set([...(selectedTask.contextFiles || []), ...selectedPaths])];
+      // Runtime remains authoritative for canonical paths, symlinks, file size and secret checks.
+      const snapshot = await runtime.contextSnapshot(requested);
+      const next = [...new Set((snapshot.selectedFiles || []).filter((source) => source.exists).map((source) => source.path))];
+      setTasks((items) => items.map((task) => task.id === selectedTask.id
+        ? { ...task, contextFiles: next, updatedAtIso: isoNow() }
+        : task));
+      setContextState({ loading: false, snapshot, error: "" });
+    } catch (error) {
+      setContextState((state) => ({ ...state, loading: false, error: error instanceof Error ? error.message : String(error) }));
     }
   };
 
@@ -4830,6 +5086,7 @@ export function App() {
         agentRevisionId: taskSnapshot.agentRevisionId,
         providerConnectionId: taskSnapshot.providerConnection.id,
         contextFiles: taskSnapshot.contextFiles || [],
+        ...(adapter === "rux-native" ? { conversationHistory: conversationHistoryForRun(taskSnapshot, prompt) } : {}),
       }, (event) => receiveRunEvent(taskId, token, event));
     } catch (error) {
       runTokensRef.current.delete(taskId);
@@ -4883,15 +5140,49 @@ export function App() {
     }
   };
 
-  const sendMessage = () => {
+  const validateCliAgentForRun = async (taskSnapshot) => {
+    const adapterId = runtimeAdapterForTask(taskSnapshot);
+    if (!["codex", "claude-code"].includes(adapterId)) return { ok: true };
+    const runtime = runtimeRef.current;
+    if (!runtime) return { ok: false, error: "Rux Runtime 尚未就绪" };
+    try {
+      const [nextAuthState, agentResult] = await Promise.all([
+        runtime.authStatus(),
+        runtime.listAgents({ refresh: true }),
+      ]);
+      setAuthState(nextAuthState);
+      setAdapters(agentResult.adapters);
+      const provider = authProviderForAdapter(nextAuthState, adapterId);
+      const adapter = agentResult.adapters.find((item) => item.id === adapterId);
+      if (provider?.status !== "connected" || !adapter?.available) {
+        return {
+          ok: false,
+          error: adapter?.detail || provider?.detail || `${ruxAdapterLabel(adapterId)} 当前未连接。请在“账户与登录”中重新检测或登录。`,
+        };
+      }
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, error: `无法在运行前校验 Agent：${error instanceof Error ? error.message : String(error)}` };
+    }
+  };
+
+  const sendMessage = async () => {
     const prompt = draft.trim();
-    if (!prompt) return;
+    if (!prompt || runValidationBusy) return;
     const preflight = runPreflight(selectedTask, prompt);
     if (!preflight.ok) {
       setTaskActionError(preflight.error);
       return;
     }
-    const taskId = selectedTask.id;
+    const taskSnapshot = selectedTask;
+    setRunValidationBusy(true);
+    const validation = await validateCliAgentForRun(taskSnapshot);
+    setRunValidationBusy(false);
+    if (!validation.ok) {
+      setTaskActionError(validation.error);
+      return;
+    }
+    const taskId = taskSnapshot.id;
     const createdAt = isoNow();
     const messageId = `user-${Date.now()}`;
     setTasks((items) => items.map((task) => task.id === taskId ? {
@@ -4909,8 +5200,12 @@ export function App() {
         createdAt,
       }],
     } : task));
-    setDraft("");
-    launchRun(taskId, prompt, selectedTask, messageId, preflight);
+    setDrafts((items) => {
+      const next = { ...items };
+      delete next[taskId];
+      return next;
+    });
+    launchRun(taskId, prompt, taskSnapshot, messageId, preflight);
   };
 
   const toggleRun = () => {
@@ -5097,27 +5392,15 @@ export function App() {
     window.setTimeout(() => composerInputRef.current?.focus(), 0);
   };
 
-  const startEditableConversation = () => {
-    if (workspaceState.active.placeholder) {
-      void chooseWorkspace();
-      return;
-    }
-    const preferredAgentId = selectedTask.agentProfileId || runtimeAdapterForTask(selectedTask);
-    const choice = agentChoices.find((item) => item.id === preferredAgentId && item.available)
-      || agentChoices.find((item) => item.adapter === runtimeAdapterForTask(selectedTask) && item.available)
-      || agentChoices.find((item) => item.available);
-    if (!choice) {
-      setTaskActionError("当前没有可用 Agent。请先检测并连接 Agent，然后开始新对话。");
-      openAccounts();
-      return;
-    }
+  const createBlankTask = (choice, workspace = workspaceState.active, sourceTask = selectedTask, initialDraft = "") => {
+    if (!choice || workspace.placeholder) return false;
     const id = `task-${Date.now()}`;
     const createdAt = isoNow();
     const task = {
       id,
-      workspaceId: selectedTask.workspaceId,
+      workspaceId: workspace.id,
       title: "新对话",
-      preview: `使用 ${choice.name} 开始可编辑对话`,
+      preview: `使用 ${choice.name} 开始对话`,
       status: "waiting",
       updatedAt: "现在",
       updatedAtIso: createdAt,
@@ -5133,7 +5416,7 @@ export function App() {
       modelVerificationStatus: choice.modelVerificationStatus,
       ...(choice.reasoningEffort ? { reasoningEffort: choice.reasoningEffort } : {}),
       contextFiles: [],
-      branch: selectedTask.branch || workspaceState.active.branch,
+      branch: workspace.branch || sourceTask?.branch || "main",
       elapsed: "—",
       tokens: "—",
       messages: [],
@@ -5142,11 +5425,32 @@ export function App() {
       runs: [],
     };
     setTaskActionError("");
-    setTasks((items) => [task, ...items.filter((item) => item.id !== `workspace-${selectedTask.workspaceId}`)]);
+    setTasks((items) => [task, ...items.filter((item) => item.id !== `workspace-${workspace.id}`)]);
+    if (initialDraft) setDrafts((items) => ({ ...items, [id]: initialDraft }));
     setSelectedTaskId(id);
     setInspectorOpen(false);
+    setTerminalOpen(false);
     setSidebarOpen(false);
     window.setTimeout(() => composerInputRef.current?.focus(), 0);
+    return id;
+  };
+
+  const startEditableConversation = (preferredAgentId = "", workspace = workspaceState.active, sourceTask = selectedTask) => {
+    if (workspace.placeholder) {
+      void chooseWorkspace();
+      return false;
+    }
+    const pinnedAgentId = preferredAgentId || sourceTask?.agentProfileId || (sourceTask ? runtimeAdapterForTask(sourceTask) : "");
+    const sourceAdapter = sourceTask ? runtimeAdapterForTask(sourceTask) : "";
+    const choice = agentChoices.find((item) => item.id === pinnedAgentId && item.available)
+      || agentChoices.find((item) => item.adapter === sourceAdapter && item.available)
+      || agentChoices.find((item) => item.available);
+    if (!choice) {
+      setTaskActionError("当前没有可用 Agent。请先检测并连接 Agent，然后开始新对话。");
+      openAccounts();
+      return false;
+    }
+    return createBlankTask(choice, workspace, sourceTask);
   };
 
   const selectTask = (id) => {
@@ -5322,10 +5626,11 @@ export function App() {
   };
 
   const createTaskInWorkspace = async (path) => {
+    const workspace = workspaceState.recent.find((item) => item.path === path) || workspaceState.active;
     const activated = await activateWorkspace(path);
     if (!activated) return;
-    setNewTaskAgentId("");
-    setNewTaskOpen(true);
+    const sourceTask = tasks.find((task) => task.workspaceId === workspace.id);
+    startEditableConversation("", workspace, sourceTask);
   };
 
   const toggleProject = (workspaceId) => {
@@ -5406,8 +5711,11 @@ export function App() {
   const changeSelectedAgent = (choiceId) => {
     const choice = agentChoices.find((item) => item.id === choiceId);
     if (!choice || !choice.available) return;
-    if ((selectedTask.messages || []).length || (selectedTask.runs || []).length) {
-      setTaskActionError("已有内容的任务已固定 Agent Revision；请新建任务以切换 Agent。");
+    const selectedAgentId = selectedTask.agentProfileId || runtimeAdapterForTask(selectedTask);
+    if (choice.id === selectedAgentId) return;
+    if ((selectedTask.messages || []).length || (selectedTask.runs || []).length || ["running", "blocked"].includes(selectedTask.status)) {
+      const existingDraft = drafts[selectedTask.id] || "";
+      createBlankTask(choice, workspaceState.active, selectedTask, existingDraft);
       return;
     }
     setTaskActionError("");
@@ -5946,10 +6254,10 @@ export function App() {
 
   const openContextHandoff = () => {
     const latestRun = selectedTask.runs?.at(-1);
-    const messages = selectedTask.messages.slice(-20);
+    const messages = selectedTask.messages.slice(-500);
     const files = latestRun?.gitPatch?.files || [];
     const fallbackTarget = agentChoices.find((choice) => choice.id !== (selectedTask.agentProfileId || runtimeAdapterForTask(selectedTask))) || agentChoices[0];
-    setHandoffState({ open: true, loading: false, error: "", targetAgentId: fallbackTarget?.id || "", messageIds: messages.map((message) => message.id), filePaths: files.map((file) => file.path), agentSummary: "", agentSummaryGenerationId: "", summaryProvenance: null, constraints: "", preview: null, source: { messages, files } });
+    setHandoffState({ open: true, loading: false, error: "", targetAgentId: fallbackTarget?.id || "", messageIds: messages.slice(-20).map((message) => message.id), filePaths: files.map((file) => file.path), agentSummary: "", agentSummaryGenerationId: "", summaryProvenance: null, constraints: "", preview: null, source: { messages, files } });
   };
 
   const previewContextHandoff = async () => {
@@ -6022,10 +6330,10 @@ export function App() {
     try {
       let confirmedInput = input;
       if (input.id) {
-        const action = input.apiKey ? "replace-credential" : "update";
-        const preview = await runtime.previewProviderConnectionImpact({ id: input.id, action, next: { label: input.label, providerType: input.providerType, baseUrl: input.baseUrl, defaultModel: input.defaultModel } });
+        const action = input.apiKey || input.customHeaders ? "replace-credential" : "update";
+        const preview = await runtime.previewProviderConnectionImpact({ id: input.id, action, next: { label: input.label, providerType: input.providerType, baseUrl: input.baseUrl, defaultModel: input.defaultModel, ...(input.customHeaders ? { customHeaderNames: input.customHeaders.map((header) => header.name) } : {}) } });
         const agentNames = preview.agents.map((item) => item.name).join("、") || "无";
-        const message = `${action === "replace-credential" ? "替换本地加密 API Key" : "更新 Connection 元数据"}？\n\n受影响 Agent：${preview.agents.length}（${agentNames}）\n固定到该 Connection 的 Task：${preview.tasks.length}\n\n已有 Task/Agent Revision 不会被改写；配置不可用时将明确显示不可运行。`;
+        const message = `${action === "replace-credential" ? "替换本地加密 Provider Secret" : "更新 Connection 元数据"}？\n\n受影响 Agent：${preview.agents.length}（${agentNames}）\n固定到该 Connection 的 Task：${preview.tasks.length}\n\n已有 Task/Agent Revision 不会被改写；配置不可用时将明确显示不可运行。`;
         if (!window.confirm(message)) return undefined;
         confirmedInput = { ...input, impactFingerprint: preview.fingerprint, confirmed: true };
       }
@@ -6035,7 +6343,11 @@ export function App() {
       if (!input.id && !agentProfiles.some((profile) => profile.providerConnection?.id === saved.id)) {
         const profile = await runtime.createAgentProfile({
           name: `Rux Native · ${saved.label}`,
-          description: "Rux 内置 Responses API coding agent，无需安装外部 Agent CLI",
+          description: saved.providerType === "anthropic-messages"
+            ? "Rux 内置 Anthropic Messages API coding agent，无需安装外部 Agent CLI"
+            : saved.providerType === "openai-chat-completions"
+              ? "Rux 内置 OpenAI Chat Completions API coding agent，无需安装外部 Agent CLI"
+              : "Rux 内置 OpenAI Responses API coding agent，无需安装外部 Agent CLI",
           backend: "rux-native",
           providerConnection: { id: saved.id, kind: "rux-native", engine: "rux-native", label: saved.label },
           model: saved.defaultModel,
@@ -6099,10 +6411,43 @@ export function App() {
     }
   };
 
+  const diagnoseNativeCredentials = async () => {
+    const runtime = runtimeRef.current;
+    if (!runtime || nativeProviderBusy) return;
+    setNativeProviderBusy(true);
+    setAuthError("");
+    try {
+      const diagnostics = await runtime.getProviderCredentialDiagnostics();
+      setNativeCredentialDiagnostics(diagnostics);
+      setAuthNotice(diagnostics.detail);
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setNativeProviderBusy(false);
+    }
+  };
+
+  const migrateNativeCredentials = async () => {
+    const runtime = runtimeRef.current;
+    if (!runtime || nativeProviderBusy || !nativeCredentialDiagnostics?.migrationAvailable) return;
+    if (!window.confirm(`使用当前操作系统安全存储重新加密 ${nativeCredentialDiagnostics.connectionCount} 个 Connection 的凭据？\n\n迁移前会保留一份仅含密文的本地备份；不会显示、导出或上传 Secret。`)) return;
+    setNativeProviderBusy(true);
+    setAuthError("");
+    try {
+      const result = await runtime.migrateProviderCredentials();
+      setNativeCredentialDiagnostics(result.diagnostics);
+      setAuthNotice(`已重新封装 ${result.migratedConnections} 个 Connection；加密备份：${result.backupFileName || "未生成"}。`);
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setNativeProviderBusy(false);
+    }
+  };
+
   const loginWithProvider = async (provider = "chatgpt") => {
     const runtime = runtimeRef.current;
     if (!runtime || authLoginProvider || authChecking) return;
-    const providerName = provider === "claude-code" ? "Claude Code" : "Rux";
+    const providerName = provider === "claude-code" ? "Claude Code" : "Codex";
     setAuthLoginProvider(provider);
     setAuthError("");
     setAuthNotice(`${providerName} 的官方浏览器授权进行中；完成后请返回 Rux。`);
@@ -6128,12 +6473,33 @@ export function App() {
   const cancelLoginWithProvider = async (provider = authLoginProvider) => {
     const runtime = runtimeRef.current;
     if (!runtime || !provider) return;
-    const providerName = provider === "claude-code" ? "Claude Code" : "Rux";
+    const providerName = provider === "claude-code" ? "Claude Code" : "Codex";
     setAuthNotice(`正在取消 ${providerName} 登录…`);
     try {
       await runtime.cancelLogin(provider);
     } catch (error) {
       setAuthError(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const logoutWithProvider = async (provider) => {
+    const runtime = runtimeRef.current;
+    if (!runtime || authLoginProvider || authLogoutProvider || authChecking) return;
+    const providerName = provider === "claude-code" ? "Claude Code" : "Codex";
+    if (!window.confirm(`退出 ${providerName} 登录？\n\nRux 将委托官方本机 CLI 删除其持有的认证凭据。已有 Task 和历史记录会保留，但在重新登录前不能继续运行该 Agent。`)) return;
+    setAuthLogoutProvider(provider);
+    setAuthError("");
+    setAuthNotice(`正在通过官方 CLI 退出 ${providerName}…`);
+    try {
+      const result = await runtime.logout(provider);
+      setAuthState((current) => mergeAuthState(current, result));
+      setAuthNotice(`${providerName} 已通过官方 CLI 退出登录；Rux 未直接读取或删除凭据文件。`);
+      if (provider === "chatgpt") setCodexCatalog({ loading: false, models: [], error: "" });
+    } catch (error) {
+      setAuthNotice("");
+      setAuthError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setAuthLogoutProvider(null);
     }
   };
 
@@ -6151,9 +6517,8 @@ export function App() {
       void chooseWorkspace();
       return;
     }
-    setNewTaskAgentId(choice.id);
     setAccountsOpen(false);
-    setNewTaskOpen(true);
+    createBlankTask(choice);
   };
 
   const openSettings = () => {
@@ -6162,7 +6527,22 @@ export function App() {
     setNewTaskOpen(false);
     setAgentsOpen(false);
     setSidebarOpen(false);
+    void runtimeRef.current?.getLocalProductEventSummary().then(setLocalProductEventMetrics).catch(() => undefined);
+    void runtimeRef.current?.getUpdateState().then(setUpdateState).catch(() => undefined);
     if (codexConnected) window.setTimeout(() => void loadCodexModels(), 0);
+  };
+
+  const runUpdateAction = async (action) => {
+    if (updateBusy) return;
+    setUpdateBusy(true);
+    try {
+      const result = await runtimeRef.current?.[action]();
+      if (result && "phase" in result) setUpdateState(result);
+    } catch (error) {
+      setUpdateState((state) => ({ ...state, phase: "error", detail: error instanceof Error ? error.message : String(error) }));
+    } finally {
+      setUpdateBusy(false);
+    }
   };
 
   const updateWorkspaceBranch = (branch) => {
@@ -6256,10 +6636,7 @@ export function App() {
         onSelectTask={selectWorkspaceTask}
         onNewTask={() => {
           if (workspaceState.active.placeholder) void chooseWorkspace();
-          else {
-            setNewTaskAgentId("");
-            setNewTaskOpen(true);
-          }
+          else startEditableConversation();
         }}
         searchQuery={searchQuery}
         onSearch={setSearchQuery}
@@ -6364,13 +6741,16 @@ export function App() {
             onReasoningEffortChange={changeSelectedReasoningEffort}
             onPermissionChange={changeSelectedPermission}
             onOpenAccounts={openAccounts}
-            onStartConversation={startEditableConversation}
+            onChooseContextFiles={chooseContextFiles}
+            onRemoveContextFile={toggleContextFile}
+            contextBusy={contextState.loading}
             interactionLockReason={composerInteractionLockReason}
             focusRef={composerInputRef}
             agentChoices={taskAgentChoices}
             codexModels={codexCatalog.models}
             codexCatalog={codexCatalog}
-            canRun={!composerInteractionLockReason}
+            canRun={!composerInteractionLockReason && !runValidationBusy}
+            canSwitchAgent={!workspaceState.active.placeholder}
           />
         </section>
 
@@ -6429,18 +6809,23 @@ export function App() {
         selectedAgentId={selectedTask.agentProfileId || runtimeAdapterForTask(selectedTask)}
         canCreateTask={!workspaceState.active.placeholder}
         nativeConnections={nativeConnections}
+        nativeDiagnostics={nativeCredentialDiagnostics}
         nativeBusy={nativeProviderBusy}
         checking={authChecking}
         loginProvider={authLoginProvider}
+        logoutProvider={authLogoutProvider}
         error={authError}
         notice={authNotice}
         onClose={closeAccounts}
         onDetect={() => void detectProviders()}
         onLogin={loginWithProvider}
+        onLogout={logoutWithProvider}
         onCancelLogin={cancelLoginWithProvider}
         onSaveNative={saveNativeProvider}
         onTestNative={(id) => void testNativeProvider(id)}
         onDeleteNative={(id) => void deleteNativeProvider(id)}
+        onDiagnoseNative={() => void diagnoseNativeCredentials()}
+        onMigrateNative={() => void migrateNativeCredentials()}
         onUseAgent={useAgentForNewTask}
         onOpenSettings={openSettings}
       />
@@ -6500,6 +6885,14 @@ export function App() {
         connected={codexConnected}
         catalog={codexCatalog}
         settings={codexSettings}
+        localMetrics={localSuccessMetrics}
+        localEventMetrics={localProductEventMetrics}
+        updateState={updateState}
+        updateBusy={updateBusy}
+        onCheckUpdate={() => void runUpdateAction("checkForUpdates")}
+        onDownloadUpdate={() => void runUpdateAction("downloadUpdate")}
+        onInstallUpdate={() => void runUpdateAction("installUpdate")}
+        onConfirmUpdateHealthy={() => void runUpdateAction("confirmUpdateHealthy")}
         onClose={() => setSettingsOpen(false)}
         onReload={() => void loadCodexModels()}
         onSave={saveCodexSettings}

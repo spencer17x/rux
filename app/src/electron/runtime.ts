@@ -114,6 +114,8 @@ function post(message: RuntimeWireMessage): void {
 }
 
 const runGitBaselines = new Map<string, GitRunBaseline>();
+const activeNativeSessionRuns = new Map<string, string>();
+const nativeSessionByRun = new Map<string, string>();
 
 function emitDirect(event: RuntimeEvent): void {
   post({ kind: "event", event });
@@ -124,6 +126,11 @@ function emit(event: RuntimeEvent): void {
     "runId" in event
     && ["run.completed", "run.cancelled", "run.failed"].includes(event.type)
   ) {
+    const nativeSessionId = nativeSessionByRun.get(event.runId);
+    if (nativeSessionId) {
+      activeNativeSessionRuns.delete(nativeSessionId);
+      nativeSessionByRun.delete(event.runId);
+    }
     const baseline = runGitBaselines.get(event.runId);
     runGitBaselines.delete(event.runId);
     if (baseline) {
@@ -655,6 +662,11 @@ async function handleRequest(input: unknown): Promise<void> {
         result = await authManager.login(params.provider);
         break;
       }
+      case "auth.logout": {
+        const params = authLoginParamsSchema.parse(request.params);
+        result = await authManager.logout(params.provider);
+        break;
+      }
       case "auth.cancel": {
         const params = authLoginParamsSchema.parse(request.params);
         await authManager.cancel(params.provider);
@@ -796,7 +808,14 @@ async function handleRequest(input: unknown): Promise<void> {
         if (activeRunIds.has(params.runId)) {
           throw new Error("Run ID is already active or awaiting permission");
         }
+        if (params.sessionId && activeNativeSessionRuns.has(params.sessionId)) {
+          throw Object.assign(new Error("该 Native Session 已有活动 Run；请等待或停止现有 Run，也可刷新后复制为新任务"), { code: "NATIVE_SESSION_WRITE_CONFLICT" });
+        }
         activeRunIds.add(params.runId);
+        if (params.sessionId) {
+          activeNativeSessionRuns.set(params.sessionId, params.runId);
+          nativeSessionByRun.set(params.runId, params.sessionId);
+        }
         try {
           const prepared = await prepareRun(params);
           emit({ type: "run.model-decision", runId: params.runId, decision: prepared.modelDecision });
@@ -815,6 +834,10 @@ async function handleRequest(input: unknown): Promise<void> {
           }
         } catch (error) {
           activeRunIds.delete(params.runId);
+          if (params.sessionId) {
+            activeNativeSessionRuns.delete(params.sessionId);
+            nativeSessionByRun.delete(params.runId);
+          }
           throw error;
         }
         break;

@@ -33,6 +33,7 @@ type CliDefinition = {
   overridePath?: string;
   extraPaths: string[];
   loginArgs: string[];
+  logoutArgs: string[];
   statusArgs: string[];
 };
 
@@ -98,16 +99,16 @@ export function parseCodexAuthStatus(output: string, exitCode: number | null): P
       status: "connected",
       authMethod,
       detail: authMethod === "chatgpt"
-        ? "Rux 已通过 ChatGPT 连接"
+        ? "Codex 已通过 ChatGPT 连接"
         : authMethod === "api-key"
-          ? "Rux 已通过官方 CLI 的 API Key 配置连接"
-          : "Rux 已通过官方 CLI 连接",
+          ? "Codex 已通过官方 CLI 的 API Key 配置连接"
+          : "Codex 已通过官方 CLI 连接",
     };
   }
   if (normalized.includes("not logged") || normalized.includes("not signed") || exitCode === 1) {
-    return { status: "signed-out", detail: "Rux 尚未连接" };
+    return { status: "signed-out", detail: "Codex 尚未连接" };
   }
-  return { status: "error", detail: "无法读取 Rux 连接状态" };
+  return { status: "error", detail: "无法读取 Codex 连接状态" };
 }
 
 function definitions(): CliDefinition[] {
@@ -126,6 +127,7 @@ function definitions(): CliDefinition[] {
         "/usr/local/bin/claude",
       ],
       loginArgs: ["auth", "login"],
+      logoutArgs: ["auth", "logout"],
       statusArgs: ["auth", "status", "--json"],
     },
     {
@@ -141,6 +143,7 @@ function definitions(): CliDefinition[] {
         "/usr/local/bin/codex",
       ],
       loginArgs: ["login"],
+      logoutArgs: ["logout"],
       statusArgs: ["login", "status"],
     },
   ];
@@ -357,6 +360,59 @@ export class AuthManager {
     this.cancelledLogins.add(providerId);
     await ensureChildProcessGroupTerminated(child);
     if (this.activeLogins.get(providerId) === child) this.activeLogins.delete(providerId);
+  }
+
+  async logout(providerId: AuthProviderId): Promise<AuthState> {
+    if (this.disposed) throw new Error("Rux authentication manager is stopped");
+    if (this.activeLogins.has(providerId)) throw new Error("该账户的授权流程仍在进行中，请先取消登录");
+    const definition = definitions().find((item) => item.id === providerId);
+    if (!definition) throw new Error("不支持的退出登录服务");
+    const executable = findExecutable(definition);
+    if (!executable) throw new Error(`未找到 ${definition.cliName} 本机组件，无法退出登录`);
+
+    await new Promise<void>((resolveLogout, rejectLogout) => {
+      const child = spawn(executable, definition.logoutArgs, {
+        cwd: this.workspaceRoot,
+        env: commandEnvironment(),
+        detached: process.platform !== "win32",
+        stdio: ["ignore", "ignore", "ignore"],
+        windowsHide: true,
+      });
+      let timedOut = false;
+      const timeout = setTimeout(() => {
+        timedOut = true;
+        void ensureChildProcessGroupTerminated(child).then(() => rejectLogout(new Error(`${definition.name} 退出登录超时；官方 CLI 已停止`)));
+      }, 30_000);
+      child.once("error", (error) => {
+        clearTimeout(timeout);
+        if (!timedOut) rejectLogout(new Error(`无法启动 ${definition.cliName} 本机组件：${error.message}`));
+      });
+      child.once("close", (code, signal) => {
+        clearTimeout(timeout);
+        if (timedOut) return;
+        if (code === 0) resolveLogout();
+        else {
+          const termination = code === null && signal ? `信号 ${signal}` : `退出码 ${code ?? "unknown"}`;
+          rejectLogout(new Error(`${definition.name} 退出登录失败（官方 CLI ${termination}）`));
+        }
+      });
+    });
+
+    const engine = providerId === "chatgpt" ? "codex" : "claude-code";
+    return {
+      providers: [{
+        id: definition.id,
+        name: definition.name,
+        cliName: definition.cliName,
+        status: "signed-out",
+        installed: true,
+        canLogin: true,
+        executable,
+        providerConnection: officialCliProviderConnection(engine),
+        detail: `${definition.name} 已通过官方 CLI 退出登录`,
+      }],
+      checkedAt: new Date().toISOString(),
+    };
   }
 
   async dispose(): Promise<void> {

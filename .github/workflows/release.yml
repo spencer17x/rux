@@ -1,0 +1,113 @@
+name: Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - run: npm ci
+        working-directory: app
+      - name: Verify signed update feed input
+        shell: bash
+        env:
+          RUX_UPDATE_FEED_URL: ${{ secrets.RUX_UPDATE_FEED_URL }}
+        run: |
+          test -n "$RUX_UPDATE_FEED_URL"
+          node -e 'const u=new URL(process.env.RUX_UPDATE_FEED_URL);if(u.protocol!=="https:"||u.username||u.password||u.search||u.hash)process.exit(1)'
+      - run: npm test
+        working-directory: app
+
+  package:
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            command: npm run dist -- --mac dmg zip --publish never
+          - os: windows-2025
+            command: npm run dist -- --win nsis --publish never
+          - os: ubuntu-24.04
+            command: npm run dist -- --linux AppImage deb --publish never
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - name: Verify macOS signing inputs
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          CSC_LINK: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          CSC_KEY_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY_P8 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          RUX_UPDATE_FEED_URL: ${{ secrets.RUX_UPDATE_FEED_URL }}
+        run: |
+          test -n "$CSC_LINK" && test -n "$CSC_KEY_PASSWORD"
+          test -n "$APPLE_API_KEY" && test -n "$APPLE_API_KEY_ID" && test -n "$APPLE_API_ISSUER"
+      - run: npm ci
+        working-directory: app
+      - name: Package signed and notarized macOS artifacts
+        if: runner.os == 'macOS'
+        working-directory: app
+        shell: bash
+        env:
+          CSC_LINK: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          CSC_KEY_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY_P8 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          RUX_UPDATE_FEED_URL: ${{ secrets.RUX_UPDATE_FEED_URL }}
+        run: npm run dist -- --mac dmg zip --publish never --config.mac.notarize=true --config.publish.provider=generic --config.publish.url="$RUX_UPDATE_FEED_URL"
+      - name: Package Windows or Linux artifacts
+        if: runner.os != 'macOS'
+        working-directory: app
+        shell: bash
+        env:
+          RUX_UPDATE_FEED_URL: ${{ secrets.RUX_UPDATE_FEED_URL }}
+        run: ${{ matrix.command }} --config.publish.provider=generic --config.publish.url="$RUX_UPDATE_FEED_URL"
+      - name: Verify macOS signature and notarization ticket
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          codesign --verify --deep --strict --verbose=2 app/release/mac-arm64/Rux.app
+          spctl --assess --type execute --verbose=2 app/release/mac-arm64/Rux.app
+          xcrun stapler validate app/release/mac-arm64/Rux.app
+      - run: node scripts/release-manifest.mjs release
+        working-directory: app
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rux-${{ runner.os }}-${{ runner.arch }}
+          path: |
+            app/release/Rux-*
+            app/release/release-manifest.json
+            app/release/SHA256SUMS.txt
+            app/release/latest*.yml
+          if-no-files-found: error
+
+  publish-gate:
+    needs: package
+    runs-on: ubuntu-24.04
+    environment: production-release
+    permissions:
+      contents: write
+    steps:
+      - run: echo "Artifacts passed platform packaging. Publishing remains an environment-approved manual step."

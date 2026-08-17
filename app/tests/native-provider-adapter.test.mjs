@@ -12,6 +12,7 @@ test("Rux Native explicit Connection test records only Provider-reported catalog
   globalThis.fetch = async (url, init) => {
     assert.equal(url, "https://provider.example/v1/models");
     assert.equal(init.headers.Authorization, "Bearer test-key");
+    assert.equal(init.headers["OpenAI-Organization"], "org-test");
     return new Response(JSON.stringify({
       data: [{ id: "fast", name: "Fast" }, { id: "quality" }, { id: "fast" }, { nope: "ignored" }],
       capabilities: { per_run_model_selection: true, reported: ["responses", "tool-calls"] },
@@ -20,13 +21,131 @@ test("Rux Native explicit Connection test records only Provider-reported catalog
   t.after(() => { globalThis.fetch = previousFetch; });
   const adapter = new NativeProviderAdapter(workspace, () => undefined);
   const id = "native:rux-native:00000000-0000-4000-8000-000000000001";
-  adapter.sync([{ id, label: "Test", providerType: "openai-responses", baseUrl: "https://provider.example/v1", defaultModel: "fast", apiKey: "test-key" }]);
+  adapter.sync([{ id, label: "Test", providerType: "openai-responses", baseUrl: "https://provider.example/v1", defaultModel: "fast", apiKey: "test-key", customHeaders: [{ name: "OpenAI-Organization", value: "org-test" }] }]);
   const result = await adapter.test(id);
   assert.equal(result.ok, true);
   assert.deepEqual(result.modelCatalog.models, [{ id: "fast", name: "Fast" }, { id: "quality" }]);
   assert.equal(result.capabilities.perRunModelSelection, true);
   assert.deepEqual(result.capabilities.reported, ["responses", "tool-calls"]);
   assert.equal("apiKey" in result, false);
+});
+
+test("Rux Native discovers Anthropic models with the official auth and version headers", async (t) => {
+  const workspace = mkdtempSync(join(tmpdir(), "rux-native-anthropic-catalog-"));
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    assert.equal(url, "https://api.anthropic.example/v1/models");
+    assert.equal(init.headers["x-api-key"], "anthropic-test-key");
+    assert.equal(init.headers["anthropic-version"], "2023-06-01");
+    assert.equal("Authorization" in init.headers, false);
+    return new Response(JSON.stringify({ data: [{ id: "claude-test", display_name: "Claude Test" }] }), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  t.after(() => { globalThis.fetch = previousFetch; });
+  const adapter = new NativeProviderAdapter(workspace, () => undefined);
+  const id = "native:rux-native:00000000-0000-4000-8000-000000000011";
+  adapter.sync([{ id, label: "Anthropic", providerType: "anthropic-messages", baseUrl: "https://api.anthropic.example/v1", defaultModel: "claude-test", apiKey: "anthropic-test-key", customHeaders: [] }]);
+  const result = await adapter.test(id);
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.modelCatalog.models, [{ id: "claude-test", name: "Claude Test" }]);
+  assert.equal(result.capabilities.perRunModelSelection, undefined);
+});
+
+test("Rux Native executes an Anthropic Messages tool loop and streams final text", async (t) => {
+  const workspace = mkdtempSync(join(tmpdir(), "rux-native-anthropic-run-"));
+  const events = [];
+  let requestCount = 0;
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    assert.equal(url, "https://api.anthropic.example/v1/messages");
+    assert.equal(init.headers["x-api-key"], "anthropic-test-key");
+    const body = JSON.parse(init.body);
+    assert.equal(body.stream, true);
+    assert.equal(body.tools[0].input_schema.type, "object");
+    requestCount += 1;
+    if (requestCount === 1) {
+      assert.deepEqual(body.messages, [
+        { role: "user", content: "remember this" },
+        { role: "assistant", content: "remembered" },
+        { role: "user", content: "write it" },
+      ]);
+      return new Response(JSON.stringify({
+        id: "msg-tool",
+        type: "message",
+        role: "assistant",
+        content: [{ type: "tool_use", id: "toolu-1", name: "write_file", input: { path: "anthropic.txt", content: "works" } }],
+        stop_reason: "tool_use",
+        usage: { input_tokens: 8, output_tokens: 4 },
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    assert.equal(body.messages[3].role, "assistant");
+    assert.equal(body.messages[3].content[0].type, "tool_use");
+    assert.deepEqual(body.messages[4], { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu-1", content: "Wrote 5 bytes to anthropic.txt", is_error: false }] });
+    const encoder = new TextEncoder();
+    const chunks = [
+      { type: "message_start", message: { id: "msg-final", type: "message", role: "assistant", content: [], model: "claude-test", usage: { input_tokens: 12, output_tokens: 1 } } },
+      { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+      { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "完成" } },
+      { type: "content_block_stop", index: 0 },
+      { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 2 } },
+      { type: "message_stop" },
+    ].map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+    return new Response(new ReadableStream({ start(controller) { for (const chunk of chunks) controller.enqueue(encoder.encode(chunk)); controller.close(); } }), { status: 200, headers: { "content-type": "text/event-stream" } });
+  };
+  t.after(() => { globalThis.fetch = previousFetch; });
+  const adapter = new NativeProviderAdapter(workspace, (event) => events.push(event));
+  const id = "native:rux-native:00000000-0000-4000-8000-000000000012";
+  adapter.sync([{ id, label: "Anthropic", providerType: "anthropic-messages", baseUrl: "https://api.anthropic.example/v1", defaultModel: "claude-test", apiKey: "anthropic-test-key", customHeaders: [] }]);
+  adapter.start({ runId: "run-anthropic", adapter: "rux-native", prompt: "write it", model: "claude-test", permissionMode: "dontAsk", agentRevisionId: "agent-revision:custom@1", providerConnectionId: id, conversationHistory: [{ role: "user", content: "remember this" }, { role: "assistant", content: "remembered" }] });
+  await new Promise((resolve, reject) => {
+    const interval = setInterval(() => { if (!events.some((event) => event.type === "run.completed")) return; clearTimeout(deadline); clearInterval(interval); resolve(); }, 10);
+    const deadline = setTimeout(() => { clearInterval(interval); reject(new Error(`Anthropic run timed out: ${JSON.stringify(events)}`)); }, 2_000);
+  });
+  assert.equal(readFileSync(join(workspace, "anthropic.txt"), "utf8"), "works");
+  assert.ok(events.some((event) => event.type === "assistant.message.delta" && event.text === "完成"));
+  assert.ok(events.some((event) => event.type === "assistant.message" && event.text === "完成"));
+  assert.ok(events.some((event) => event.type === "run.usage" && event.usage.totalTokens === 14));
+});
+
+test("Rux Native executes an OpenAI Chat Completions tool loop with streaming and usage", async (t) => {
+  const workspace = mkdtempSync(join(tmpdir(), "rux-native-chat-run-"));
+  const events = [];
+  let requestCount = 0;
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    assert.equal(url, "https://chat.example/v1/chat/completions");
+    assert.equal(init.headers.Authorization, "Bearer chat-key");
+    const body = JSON.parse(init.body);
+    assert.equal(body.stream, true);
+    assert.equal(body.tools[0].type, "function");
+    assert.equal(body.tools[0].function.parameters.type, "object");
+    requestCount += 1;
+    if (requestCount === 1) {
+      assert.deepEqual(body.messages.slice(0, 3), [{ role: "user", content: "remember" }, { role: "assistant", content: "remembered" }, { role: "user", content: "write it" }]);
+      return new Response(JSON.stringify({ id: "chat-tool", choices: [{ message: { role: "assistant", content: null, tool_calls: [{ id: "call-chat-1", type: "function", function: { name: "write_file", arguments: JSON.stringify({ path: "chat.txt", content: "works" }) } }] } }], usage: { prompt_tokens: 8, completion_tokens: 4, total_tokens: 12 } }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    assert.equal(body.messages.at(-2).role, "assistant");
+    assert.deepEqual(body.messages.at(-1), { role: "tool", tool_call_id: "call-chat-1", content: "Wrote 5 bytes to chat.txt" });
+    const encoder = new TextEncoder();
+    const chunks = [
+      { id: "chat-final", choices: [{ delta: { role: "assistant", content: "完成" } }] },
+      { id: "chat-final", choices: [], usage: { prompt_tokens: 10, completion_tokens: 2, prompt_tokens_details: { cached_tokens: 3 } } },
+    ].map((event) => `data: ${JSON.stringify(event)}\n\n`).concat("data: [DONE]\n\n");
+    return new Response(new ReadableStream({ start(controller) { for (const chunk of chunks) controller.enqueue(encoder.encode(chunk)); controller.close(); } }), { status: 200, headers: { "content-type": "text/event-stream" } });
+  };
+  t.after(() => { globalThis.fetch = previousFetch; });
+  const adapter = new NativeProviderAdapter(workspace, (event) => events.push(event));
+  const id = "native:rux-native:00000000-0000-4000-8000-000000000013";
+  adapter.sync([{ id, label: "Chat", providerType: "openai-chat-completions", baseUrl: "https://chat.example/v1", defaultModel: "chat-test", apiKey: "chat-key", customHeaders: [] }]);
+  adapter.start({ runId: "run-chat", adapter: "rux-native", prompt: "write it", model: "chat-test", permissionMode: "dontAsk", agentRevisionId: "agent-revision:custom@1", providerConnectionId: id, conversationHistory: [{ role: "user", content: "remember" }, { role: "assistant", content: "remembered" }] });
+  await new Promise((resolve, reject) => {
+    const interval = setInterval(() => { if (!events.some((event) => event.type === "run.completed")) return; clearTimeout(deadline); clearInterval(interval); resolve(); }, 10);
+    const deadline = setTimeout(() => { clearInterval(interval); reject(new Error(`Chat run timed out: ${JSON.stringify(events)}`)); }, 2_000);
+  });
+  assert.equal(readFileSync(join(workspace, "chat.txt"), "utf8"), "works");
+  assert.ok(events.some((event) => event.type === "assistant.message.delta" && event.text === "完成"));
+  assert.ok(events.some((event) => event.type === "assistant.message" && event.text === "完成"));
+  assert.ok(events.some((event) => event.type === "run.usage" && event.usage.totalTokens === 12));
+  assert.ok(events.some((event) => event.type === "run.usage" && event.usage.cachedInputTokens === 3));
 });
 
 test("Rux Native executes a Responses tool loop without an Agent CLI", async (t) => {

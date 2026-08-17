@@ -3565,6 +3565,26 @@ select:focus-visible {
   font-size: 12px;
 }
 
+.codex-shell .composer-add-context {
+  display: grid;
+  min-height: 44px;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  padding: 7px 8px;
+  border-radius: 8px;
+  color: #303234;
+  text-align: left;
+}
+
+.codex-shell .composer-add-context:hover:not(:disabled),
+.codex-shell .composer-add-context:focus-visible { background: #f3f3f4; }
+.codex-shell .composer-add-context:disabled { cursor: not-allowed; opacity: 0.48; }
+.codex-shell .composer-add-context > svg { margin-top: 2px; color: #696c6e; }
+.codex-shell .composer-add-context > span { display: flex; min-width: 0; flex-direction: column; gap: 2px; }
+.codex-shell .composer-add-context strong { font-size: 12px; font-weight: 600; }
+.codex-shell .composer-add-context small { color: #7c7e80; font-size: 10px; line-height: 1.35; }
+
 .codex-shell .composer-options-popover select {
   min-width: 0;
   height: 30px;
@@ -3611,43 +3631,46 @@ select:focus-visible {
   font-size: 10px;
 }
 
-.codex-shell .composer-interaction-lock {
+.codex-shell .composer-context-files {
   display: flex;
-  width: min(var(--reference-content-width), calc(100% - 48px));
-  min-height: 34px;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin: 7px auto 0;
-  padding: 6px 8px 6px 10px;
-  border: 1px solid #e4e1da;
-  border-radius: 10px;
-  color: #6f6b62;
-  background: #faf9f6;
-  font-size: 11px;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 0 9px 8px;
 }
 
-.codex-shell .composer-interaction-lock > span,
-.codex-shell .composer-interaction-lock > button {
+.codex-shell .composer-context-files > span {
   display: inline-flex;
+  max-width: 230px;
+  height: 25px;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
+  padding: 0 4px 0 7px;
+  border: 1px solid #dededf;
+  border-radius: 8px;
+  color: #4d5052;
+  background: #f7f7f8;
+  font-size: 10.5px;
 }
 
-.codex-shell .composer-interaction-lock > button {
-  flex: 0 0 auto;
-  min-height: 25px;
-  padding: 0 7px;
-  border-radius: 7px;
-  color: #4f4c45;
-  background: #eeece7;
-  font-size: 11px;
-  font-weight: 570;
+.codex-shell .composer-context-files > span > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.codex-shell .composer-interaction-lock > button:hover {
-  background: #e6e3dd;
+.codex-shell .composer-context-files button {
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 5px;
+  color: #777a7c;
 }
+
+.codex-shell .composer-context-files button:hover:not(:disabled) { color: #252729; background: #e9e9ea; }
+.codex-shell .composer-context-files button:disabled { cursor: not-allowed; opacity: 0.45; }
 
 .codex-shell .composer-context-row {
   width: min(var(--reference-content-width), calc(100% - 48px));
@@ -6478,8 +6501,23 @@ select:focus-visible {
 .handoff-message-select { display: grid; max-height: 210px; overflow-y: auto; gap: 6px; }
 .handoff-message-select label { display: grid; grid-template-columns: 18px 1fr; gap: 7px; align-items: start; padding: 7px; border-radius: 7px; background: #f8f8f5; }
 .handoff-message-select label span { display: flex; min-width: 0; flex-direction: column; gap: 2px; }
-.handoff-file-select { display: flex; flex-wrap: wrap; gap: 6px 12px; }
-.handoff-file-select label { display: inline-flex; align-items: center; gap: 6px; }
+.handoff-filter-bar { display: grid; grid-template-columns: minmax(0, 1fr) 130px; gap: 8px; }
+.handoff-filter-bar label { display: flex; align-items: center; gap: 6px; padding: 0 9px; border: 1px solid #deded8; border-radius: 8px; background: #fff; }
+.handoff-filter-bar input, .handoff-filter-bar select { width: 100%; min-height: 32px; border: 0; outline: 0; background: transparent; color: #363732; font: inherit; }
+.handoff-filter-bar select { padding: 0 8px; border: 1px solid #deded8; border-radius: 8px; background: #fff; }
+.handoff-selection-actions { display: flex; align-items: center; gap: 8px; }
+.handoff-selection-actions span { margin-right: auto; color: #777a7d; font-size: 9.5px; }
+.handoff-selection-actions button { padding: 3px 7px; border: 0; border-radius: 6px; color: #5d6064; background: #f0f0ed; font-size: 9px; }
+.handoff-empty-filter { padding: 18px; text-align: center; }
+.handoff-file-select { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.handoff-file-select label { display: grid; min-width: 0; grid-template-columns: 18px minmax(0, 1fr); align-items: start; gap: 6px; padding: 7px; border-radius: 7px; background: #f8f8f5; }
+.handoff-file-select label span { display: flex; min-width: 0; flex-direction: column; gap: 2px; }
+.handoff-file-select code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.handoff-diagnostics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; overflow: hidden; border: 1px solid #e3e3de; border-radius: 8px; background: #e3e3de; }
+.handoff-diagnostics > span { display: flex; min-width: 0; flex-direction: column; gap: 3px; padding: 8px 10px; background: #fafaf8; }
+.handoff-diagnostics code, .handoff-diagnostics strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 9.5px; }
+.handoff-incomplete { padding: 9px 10px; border-radius: 8px; background: #fff8e8; color: #66583b; font-size: 9.5px; }
+.handoff-incomplete ul { margin: 6px 0 0; padding-left: 18px; }
 .handoff-note { margin: 0; padding: 8px; border-radius: 7px; color: #765e2d; background: #fff8e8; font-size: 10px; }
 .handoff-preview footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .handoff-preview footer span { display: inline-flex; align-items: center; gap: 5px; color: #72736c; font-size: 9.5px; }
@@ -6548,6 +6586,22 @@ select:focus-visible {
   display: flex;
   align-items: center;
 }
+
+.native-provider-diagnostics {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid #dfdfda;
+  border-radius: 10px;
+  background: #fafaf8;
+}
+
+.native-provider-diagnostics > span:first-child { display: flex; min-width: 0; flex-direction: column; gap: 2px; }
+.native-provider-diagnostics strong { color: #454640; font-size: 12px; }
+.native-provider-diagnostics small { color: #868780; font-size: 10px; line-height: 1.45; overflow-wrap: anywhere; }
+.native-provider-diagnostics small.is-error { color: #a44747; }
 
 .native-provider-section > header {
   justify-content: space-between;
@@ -6621,9 +6675,10 @@ select:focus-visible {
   font-weight: 590;
 }
 
-.native-provider-form input {
+.native-provider-form input,
+.native-provider-form select,
+.native-provider-form textarea {
   width: 100%;
-  height: 31px;
   padding: 0 9px;
   border: 1px solid #d8e0dc;
   border-radius: 7px;
@@ -6631,6 +6686,34 @@ select:focus-visible {
   background: #fff;
   font-size: 10.5px;
 }
+
+.native-provider-form input,
+.native-provider-form select { height: 31px; }
+
+.native-provider-form textarea {
+  min-height: 62px;
+  padding-block: 7px;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.native-provider-form .native-provider-custom-headers { grid-column: 1 / -1; }
+
+.native-provider-form .native-provider-clear-headers {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #66736d;
+  font-size: 10px;
+}
+
+.native-provider-form .native-provider-clear-headers input {
+  width: 14px;
+  height: 14px;
+}
+
+.native-provider-form .native-provider-clear-headers span { margin: 0; }
 
 .native-provider-form .primary-button {
   grid-column: 2;
@@ -7262,6 +7345,67 @@ select:focus-visible {
   color: #7f8286;
   font-size: 10.5px;
   line-height: 1.45;
+}
+
+.rux-local-metrics-card {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.rux-local-metrics-card > div:not(.rux-local-metrics-privacy) {
+  display: flex;
+  min-height: 72px;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  padding: 14px 16px;
+}
+
+.rux-local-metrics-card > div:not(.rux-local-metrics-privacy) + div:not(.rux-local-metrics-privacy) {
+  border-left: 1px solid #ededee;
+}
+
+.rux-local-metrics-card > div > strong {
+  font-size: 18px;
+}
+
+.rux-local-metrics-card > p {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 10px 16px;
+  border-top: 1px solid #ededee;
+  color: #6f7378;
+  font-size: 11px;
+}
+
+.rux-local-metrics-privacy {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 13px 16px;
+  border-top: 1px solid #ededee;
+  background: #fafbfa;
+}
+
+.rux-local-event-funnel { display: flex; flex-direction: column; gap: 4px; padding: 10px 0; border-top: 1px solid #e2e2dd; }
+.rux-local-event-funnel > strong { color: #4c4d48; font-size: 11px; }
+.rux-local-event-funnel > p { margin: 0; color: #747670; font-size: 10px; line-height: 1.45; }
+
+.rux-local-metrics-privacy > span {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+@media (max-width: 700px) {
+  .rux-local-metrics-card {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .rux-local-metrics-card > div:not(.rux-local-metrics-privacy) {
+    border-bottom: 1px solid #ededee;
+  }
 }
 
 .rux-permission-card i {
@@ -9702,11 +9846,14 @@ select:focus-visible {
 }
 
 /* Agent controls stay visible in the primary composer. */
-.codex-shell .composer-agent-select {
+.codex-shell .composer-agent-button {
+  display: inline-flex;
   width: auto;
   max-width: 122px;
   height: 28px;
   min-width: 0;
+  align-items: center;
+  gap: 4px;
   padding: 0 7px;
   border: 0;
   border-radius: 8px;
@@ -9718,16 +9865,25 @@ select:focus-visible {
   text-overflow: ellipsis;
 }
 
-.codex-shell .composer-agent-select:hover:not(:disabled),
-.codex-shell .composer-agent-select:focus-visible {
+.codex-shell .composer-agent-button > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.codex-shell .composer-agent-button > svg { flex: 0 0 auto; color: #77797b; }
+
+.codex-shell .composer-agent-button:hover:not(:disabled),
+.codex-shell .composer-agent-button:focus-visible,
+.codex-shell .composer-agent-button.is-active {
   background: #e9e9ea;
 }
 
-.codex-shell .composer-agent-select:focus-visible {
+.codex-shell .composer-agent-button:focus-visible {
   box-shadow: 0 0 0 2px rgb(77 119 255 / 0.22);
 }
 
-.codex-shell .composer-agent-select:disabled {
+.codex-shell .composer-agent-button:disabled {
   cursor: not-allowed;
   opacity: 0.55;
 }
@@ -9852,7 +10008,7 @@ select:focus-visible {
     justify-self: start;
   }
 
-  .codex-shell .composer-agent-select {
+  .codex-shell .composer-agent-button {
     max-width: 92px;
   }
 
@@ -10240,4 +10396,152 @@ select:focus-visible {
   .accounts-dialog { width: 100%; }
   .accounts-dialog .account-provider-actions { min-width: 0; }
   .account-agent-action-row { justify-content: flex-start; }
+}
+
+/* ChatGPT Codex 26.810.52044 composer and approval interaction anchors. */
+.codex-shell .composer-agent-menu {
+  position: absolute;
+  z-index: 83;
+  bottom: 43px;
+  left: 42px;
+  display: grid;
+  width: min(326px, calc(100vw - 48px));
+  gap: 3px;
+  padding: 7px;
+  border: 1px solid #dedede;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 10px 30px rgb(0 0 0 / 0.14);
+}
+
+.codex-shell .composer-agent-menu-heading,
+.codex-shell .composer-agent-menu-history {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px 7px;
+}
+
+.codex-shell .composer-agent-menu-heading strong { color: #252525; font-size: 12px; font-weight: 620; }
+.codex-shell .composer-agent-menu-heading small,
+.codex-shell .composer-agent-menu-history small { color: #777; font-size: 10.5px; line-height: 1.35; }
+.codex-shell .composer-agent-menu-history { margin-bottom: 2px; border-radius: 8px; background: #f7f7f7; }
+.codex-shell .composer-agent-menu-history > span { color: #343434; font-size: 12px; font-weight: 590; }
+
+.codex-shell .composer-agent-menu > button {
+  display: grid;
+  min-height: 46px;
+  grid-template-columns: minmax(0, 1fr) 16px;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  border-radius: 8px;
+  color: #262626;
+  text-align: left;
+}
+
+.codex-shell .composer-agent-menu > button:hover:not(:disabled),
+.codex-shell .composer-agent-menu > button:focus-visible { background: #f3f3f3; }
+.codex-shell .composer-agent-menu > button:disabled { cursor: not-allowed; opacity: 0.5; }
+.codex-shell .composer-agent-menu > button > span:first-child { display: flex; min-width: 0; flex-direction: column; gap: 2px; }
+.codex-shell .composer-agent-menu > button strong { overflow: hidden; font-size: 12px; font-weight: 590; text-overflow: ellipsis; white-space: nowrap; }
+.codex-shell .composer-agent-menu > button small { overflow: hidden; color: #777; font-size: 10.5px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.codex-shell .composer-agent-menu > button > svg { color: #717171; }
+.codex-shell .composer-agent-menu > .composer-agent-manage {
+  min-height: 36px;
+  grid-template-columns: 16px minmax(0, 1fr);
+  margin-top: 3px;
+  border-top: 1px solid #ececec;
+  border-radius: 0 0 8px 8px;
+  color: #4b4b4b;
+}
+.codex-shell .composer-agent-menu > .composer-agent-manage > span { display: block; font-size: 11.5px; font-weight: 570; }
+
+.codex-shell .composer-permission-popover {
+  position: absolute;
+  z-index: 82;
+  bottom: 43px;
+  left: 146px;
+  display: grid;
+  width: min(332px, calc(100vw - 48px));
+  gap: 3px;
+  padding: 7px;
+  border: 1px solid #dedede;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 10px 30px rgb(0 0 0 / 0.14);
+}
+
+.codex-shell .composer-permission-popover > strong {
+  padding: 6px 8px 7px;
+  color: #252525;
+  font-size: 12px;
+  font-weight: 620;
+}
+
+.codex-shell .composer-permission-popover > button {
+  display: grid;
+  min-height: 48px;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  padding: 7px 8px;
+  border-radius: 8px;
+  color: #262626;
+  text-align: left;
+}
+
+.codex-shell .composer-permission-popover > button:hover,
+.codex-shell .composer-permission-popover > button:focus-visible {
+  background: #f3f3f3;
+}
+
+.codex-shell .composer-permission-check {
+  display: inline-flex;
+  height: 18px;
+  align-items: center;
+  justify-content: center;
+  color: #202020;
+}
+
+.codex-shell .composer-permission-popover > button > span:last-child {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.codex-shell .composer-permission-popover b {
+  font-size: 12px;
+  font-weight: 590;
+}
+
+.codex-shell .composer-permission-popover small {
+  color: #777;
+  font-size: 10.5px;
+  line-height: 1.35;
+}
+
+.codex-shell .permission-request-card {
+  border-color: #dedede;
+  background: #fff;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.05);
+}
+
+.codex-shell .permission-request-card > header > span {
+  color: #6b6b6b;
+  background: #f1f1f1;
+}
+
+.codex-shell .permission-request-card > header strong { color: #292929; }
+.codex-shell .permission-request-card > header small,
+.codex-shell .permission-request-card dt,
+.codex-shell .permission-request-card dd small,
+.codex-shell .permission-request-card > p { color: #777; }
+.codex-shell .permission-request-card dd { color: #3f3f3f; }
+
+@media (max-width: 720px) {
+  .codex-shell .composer-permission-popover { left: 8px; }
+  .codex-shell .composer-agent-menu { left: 8px; }
 }

@@ -25,6 +25,8 @@ const MAX_COMMAND_ARG_CHARS = 20_000;
 
 type JsonRecord = Record<string, unknown>;
 type ResponseOutput = JsonRecord & { type?: string; id?: string; call_id?: string; name?: string; arguments?: string; content?: unknown[] };
+type AnthropicContent = JsonRecord & { type?: string; id?: string; name?: string; input?: JsonRecord; text?: string };
+type ChatToolCall = JsonRecord & { id?: string; function?: { name?: string; arguments?: string } };
 export type NativeRunStartParams = RunStartParams & { allowedToolIds?: string[] };
 
 type NativeCommandResult = {
@@ -47,6 +49,16 @@ function safeError(error: unknown): string {
 
 function endpoint(baseUrl: string, path: string): string {
   return `${baseUrl.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
+}
+
+function providerHeaders(connection: NativeProviderRuntimeCredential, base: Record<string, string>): Record<string, string> {
+  return {
+    ...(connection.providerType === "anthropic-messages"
+      ? { "x-api-key": connection.apiKey, "anthropic-version": "2023-06-01" }
+      : { Authorization: `Bearer ${connection.apiKey}` }),
+    ...base,
+    ...Object.fromEntries((connection.customHeaders ?? []).map((header) => [header.name, header.value])),
+  };
 }
 
 function reportedStringList(value: unknown): string[] {
@@ -154,15 +166,24 @@ function macSandboxProfile(workspaceRoot: string, sandboxTemp: string, toolchain
 
 function usageFromResponse(response: JsonRecord) {
   const usage = isRecord(response.usage) ? response.usage : {};
-  const inputDetails = isRecord(usage.input_tokens_details) ? usage.input_tokens_details : {};
-  const outputDetails = isRecord(usage.output_tokens_details) ? usage.output_tokens_details : {};
-  const inputTokens = typeof usage.input_tokens === "number" ? usage.input_tokens : undefined;
-  const cachedInputTokens = typeof inputDetails.cached_tokens === "number" ? inputDetails.cached_tokens : undefined;
-  const outputTokens = typeof usage.output_tokens === "number" ? usage.output_tokens : undefined;
+  const inputDetails = isRecord(usage.input_tokens_details) ? usage.input_tokens_details : isRecord(usage.prompt_tokens_details) ? usage.prompt_tokens_details : {};
+  const outputDetails = isRecord(usage.output_tokens_details) ? usage.output_tokens_details : isRecord(usage.completion_tokens_details) ? usage.completion_tokens_details : {};
+  const baseInputTokens = typeof usage.input_tokens === "number" ? usage.input_tokens : typeof usage.prompt_tokens === "number" ? usage.prompt_tokens : undefined;
+  const cacheCreationInputTokens = typeof usage.cache_creation_input_tokens === "number" ? usage.cache_creation_input_tokens : undefined;
+  const inputTokens = baseInputTokens === undefined && cacheCreationInputTokens === undefined
+    ? undefined
+    : (baseInputTokens ?? 0) + (cacheCreationInputTokens ?? 0);
+  const cachedInputTokens = typeof inputDetails.cached_tokens === "number"
+    ? inputDetails.cached_tokens
+    : typeof usage.cache_read_input_tokens === "number" ? usage.cache_read_input_tokens : undefined;
+  const outputTokens = typeof usage.output_tokens === "number" ? usage.output_tokens : typeof usage.completion_tokens === "number" ? usage.completion_tokens : undefined;
   const reasoningOutputTokens = typeof outputDetails.reasoning_tokens === "number" ? outputDetails.reasoning_tokens : undefined;
+  const cachedTokensAreIncludedInInput = typeof usage.prompt_tokens === "number";
   const totalTokens = typeof usage.total_tokens === "number"
     ? usage.total_tokens
-    : inputTokens !== undefined && outputTokens !== undefined ? inputTokens + outputTokens : undefined;
+    : inputTokens !== undefined && outputTokens !== undefined
+      ? inputTokens + (cachedTokensAreIncludedInInput ? 0 : (cachedInputTokens ?? 0)) + outputTokens
+      : undefined;
   if ([inputTokens, cachedInputTokens, outputTokens, reasoningOutputTokens, totalTokens].every((value) => value === undefined)) return undefined;
   return {
     source: "provider" as const,
@@ -208,7 +229,7 @@ export class NativeProviderAdapter {
       id: "rux-native",
       name: "Rux Native",
       available: this.connections.size > 0,
-      version: "responses-v1",
+      version: "native-v3",
       detail: this.connections.size > 0
         ? `${this.connections.size} 个原生 Provider Connection，无需安装 Agent CLI`
         : "添加一个原生 Provider Connection 后即可使用，无需安装 Agent CLI",
@@ -228,7 +249,8 @@ export class NativeProviderAdapter {
     const testedAt = new Date().toISOString();
     try {
       const response = await fetch(endpoint(connection.baseUrl, "models"), {
-        headers: { Authorization: `Bearer ${connection.apiKey}`, Accept: "application/json" },
+        headers: providerHeaders(connection, { Accept: "application/json" }),
+        redirect: "error",
         signal: AbortSignal.timeout(15_000),
       });
       if (!response.ok) throw new Error(`Provider returned HTTP ${response.status}`);
@@ -237,7 +259,8 @@ export class NativeProviderAdapter {
       const catalogEntries = payload.data.filter(isRecord).flatMap((item) => {
         const modelId = typeof item.id === "string" ? item.id.trim() : "";
         if (!modelId || modelId.length > 160) return [];
-        const name = typeof item.name === "string" && item.name.trim() ? item.name.trim().slice(0, 160) : undefined;
+        const rawName = typeof item.name === "string" ? item.name : typeof item.display_name === "string" ? item.display_name : "";
+        const name = rawName.trim() ? rawName.trim().slice(0, 160) : undefined;
         return [[modelId, { id: modelId, ...(name ? { name } : {}) }] as const];
       });
       const catalogById = new Map<string, { id: string; name?: string }>();
@@ -311,6 +334,14 @@ export class NativeProviderAdapter {
     });
 
     try {
+      if (connection.providerType === "anthropic-messages") {
+        await this.executeAnthropic(params, connection, controller, startedAt, model);
+        return;
+      }
+      if (connection.providerType === "openai-chat-completions") {
+        await this.executeChatCompletions(params, connection, controller, startedAt, model);
+        return;
+      }
       let previousResponseId = params.sessionId;
       let input: unknown = [{ role: "user", content: params.prompt }];
       let turns = 0;
@@ -327,11 +358,11 @@ export class NativeProviderAdapter {
         if (previousResponseId) body.previous_response_id = previousResponseId;
         const response = await fetch(endpoint(connection.baseUrl, "responses"), {
           method: "POST",
-          headers: {
-            Authorization: `Bearer ${connection.apiKey}`,
+          redirect: "error",
+          headers: providerHeaders(connection, {
             "Content-Type": "application/json",
             Accept: "text/event-stream, application/json",
-          },
+          }),
           body: JSON.stringify(body),
           signal: controller.signal,
         });
@@ -365,6 +396,227 @@ export class NativeProviderAdapter {
       if (controller.signal.aborted) return;
       this.emit({ type: "run.failed", runId: params.runId, error: safeError(error), ...(params.sessionId ? { resumeSessionId: params.sessionId } : {}) });
     }
+  }
+
+  private async executeChatCompletions(
+    params: NativeRunStartParams,
+    connection: NativeProviderRuntimeCredential,
+    controller: AbortController,
+    startedAt: number,
+    model: string,
+  ): Promise<void> {
+    const messages: JsonRecord[] = [
+      ...(params.conversationHistory ?? []).map((message) => ({ role: message.role, content: message.content })),
+      { role: "user", content: params.prompt },
+    ];
+    let turns = 0;
+    while (turns < MAX_TOOL_TURNS) {
+      turns += 1;
+      const response = await fetch(endpoint(connection.baseUrl, "chat/completions"), {
+        method: "POST",
+        redirect: "error",
+        headers: providerHeaders(connection, { "Content-Type": "application/json", Accept: "text/event-stream, application/json" }),
+        body: JSON.stringify({ model, messages, tools: this.chatTools(params.permissionMode, params.allowedToolIds), parallel_tool_calls: false, stream: true, stream_options: { include_usage: true } }),
+        signal: controller.signal,
+      });
+      if (!response.ok) throw new Error(`Provider returned HTTP ${response.status}`);
+      const completion = await this.readChatCompletion(response, params.runId, turns, controller.signal);
+      const usage = usageFromResponse(completion);
+      if (usage) this.emit({ type: "run.usage", runId: params.runId, usage });
+      const message = isRecord(completion.message) ? completion.message : {};
+      const text = typeof message.content === "string" ? message.content.trim() : "";
+      if (text) this.emit({ type: "assistant.message", runId: params.runId, text });
+      const calls = Array.isArray(message.tool_calls) ? message.tool_calls.filter(isRecord) as ChatToolCall[] : [];
+      if (!calls.length) {
+        this.emit({ type: "run.completed", runId: params.runId, durationMs: Date.now() - startedAt, turns });
+        return;
+      }
+      messages.push({ role: "assistant", content: text || null, tool_calls: calls });
+      for (const call of calls) {
+        if (!call.id || !call.function?.name) throw new Error("Chat Completions tool call is missing id or function name");
+        const parsed = call.function.arguments ? JSON.parse(call.function.arguments) as unknown : {};
+        if (!isRecord(parsed)) throw new Error("Chat Completions tool arguments must be a JSON object");
+        const output = await this.runTool(params, call.id, call.function.name, parsed, controller.signal);
+        messages.push({ role: "tool", tool_call_id: call.id, content: output });
+      }
+    }
+    throw new Error(`Rux Native stopped after ${MAX_TOOL_TURNS} tool turns`);
+  }
+
+  private chatTools(permissionMode: RunStartParams["permissionMode"], configuredToolIds?: string[]): JsonRecord[] {
+    return this.tools(permissionMode, configuredToolIds).map(({ name, description, parameters, strict }) => ({ type: "function", function: { name, description, parameters, strict } }));
+  }
+
+  private async readChatCompletion(response: Response, runId: string, turn: number, signal: AbortSignal): Promise<JsonRecord> {
+    const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+    if (!contentType.includes("text/event-stream")) {
+      const payload = await response.json() as unknown;
+      if (!isRecord(payload) || !Array.isArray(payload.choices) || !isRecord(payload.choices[0]) || !isRecord(payload.choices[0].message)) throw new Error("Provider Chat Completions response is malformed");
+      return { ...payload, message: payload.choices[0].message };
+    }
+    if (!response.body) throw new Error("Provider returned an empty event stream");
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    const calls = new Map<number, ChatToolCall>();
+    let content = "";
+    let usage: JsonRecord | undefined;
+    let id: string | undefined;
+    let buffer = "";
+    const consume = (block: string) => {
+      const data = block.split(/\r?\n/).filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trimStart()).join("\n");
+      if (!data || data === "[DONE]") return;
+      const parsed = JSON.parse(data) as unknown;
+      if (!isRecord(parsed)) throw new Error("Provider returned malformed Chat Completions stream data");
+      if (isRecord(parsed.error)) throw new Error(typeof parsed.error.message === "string" ? parsed.error.message : "Chat Completions stream failed");
+      if (typeof parsed.id === "string") id = parsed.id;
+      if (isRecord(parsed.usage)) usage = parsed.usage;
+      const choice = Array.isArray(parsed.choices) && isRecord(parsed.choices[0]) ? parsed.choices[0] : undefined;
+      const delta = choice && isRecord(choice.delta) ? choice.delta : undefined;
+      if (!delta) return;
+      if (typeof delta.content === "string") {
+        content += delta.content;
+        this.emit({ type: "assistant.message.delta", runId, threadId: runId, turnId: `native-turn-${turn}`, itemId: `chat-message-${turn}`, text: delta.content });
+      }
+      if (Array.isArray(delta.tool_calls)) for (const raw of delta.tool_calls) {
+        if (!isRecord(raw) || typeof raw.index !== "number") continue;
+        const existing = calls.get(raw.index) ?? {};
+        const fn = isRecord(raw.function) ? raw.function : {};
+        calls.set(raw.index, { ...existing, ...(typeof raw.id === "string" ? { id: raw.id } : {}), function: { ...(existing.function ?? {}), ...(typeof fn.name === "string" ? { name: fn.name } : {}), arguments: `${existing.function?.arguments ?? ""}${typeof fn.arguments === "string" ? fn.arguments : ""}` } });
+      }
+    };
+    while (true) {
+      if (signal.aborted) throw new DOMException("Run cancelled", "AbortError");
+      const { done, value } = await reader.read();
+      buffer += decoder.decode(value, { stream: !done });
+      const blocks = buffer.split(/\r?\n\r?\n/);
+      buffer = blocks.pop() ?? "";
+      for (const block of blocks) consume(block);
+      if (done) break;
+    }
+    if (buffer.trim()) consume(buffer);
+    if (!content && !calls.size) throw new Error("Chat Completions stream ended without message content");
+    return { ...(id ? { id } : {}), ...(usage ? { usage } : {}), message: { role: "assistant", content, tool_calls: [...calls.entries()].sort(([left], [right]) => left - right).map(([, call]) => call) } };
+  }
+
+  private async executeAnthropic(
+    params: NativeRunStartParams,
+    connection: NativeProviderRuntimeCredential,
+    controller: AbortController,
+    startedAt: number,
+    model: string,
+  ): Promise<void> {
+    const messages: JsonRecord[] = [
+      ...(params.conversationHistory ?? []).map((message) => ({ role: message.role, content: message.content })),
+      { role: "user", content: params.prompt },
+    ];
+    let turns = 0;
+    while (turns < MAX_TOOL_TURNS) {
+      turns += 1;
+      const response = await fetch(endpoint(connection.baseUrl, "messages"), {
+        method: "POST",
+        redirect: "error",
+        headers: providerHeaders(connection, { "Content-Type": "application/json", Accept: "text/event-stream, application/json" }),
+        body: JSON.stringify({
+          model,
+          max_tokens: 16_384,
+          messages,
+          tools: this.anthropicTools(params.permissionMode, params.allowedToolIds),
+          stream: true,
+        }),
+        signal: controller.signal,
+      });
+      if (!response.ok) throw new Error(`Provider returned HTTP ${response.status}`);
+      const message = await this.readAnthropicMessage(response, params.runId, turns, controller.signal);
+      const usage = usageFromResponse(message);
+      if (usage) this.emit({ type: "run.usage", runId: params.runId, usage });
+      const content = Array.isArray(message.content) ? message.content.filter(isRecord) as AnthropicContent[] : [];
+      const text = content.filter((block) => block.type === "text" && typeof block.text === "string").map((block) => block.text).join("\n").trim();
+      if (text) this.emit({ type: "assistant.message", runId: params.runId, text });
+      const calls = content.filter((block) => block.type === "tool_use" && block.id && block.name);
+      if (!calls.length) {
+        this.emit({ type: "run.completed", runId: params.runId, durationMs: Date.now() - startedAt, turns });
+        return;
+      }
+      messages.push({ role: "assistant", content });
+      const results: JsonRecord[] = [];
+      for (const call of calls) {
+        const output = await this.runTool(params, String(call.id), String(call.name), isRecord(call.input) ? call.input : {}, controller.signal);
+        results.push({ type: "tool_result", tool_use_id: call.id, content: output, is_error: output.startsWith("Tool error:") });
+      }
+      messages.push({ role: "user", content: results });
+    }
+    throw new Error(`Rux Native stopped after ${MAX_TOOL_TURNS} tool turns`);
+  }
+
+  private anthropicTools(permissionMode: RunStartParams["permissionMode"], configuredToolIds?: string[]): JsonRecord[] {
+    return this.tools(permissionMode, configuredToolIds).map(({ name, description, parameters }) => ({ name, description, input_schema: parameters }));
+  }
+
+  private async readAnthropicMessage(response: Response, runId: string, turn: number, signal: AbortSignal): Promise<JsonRecord> {
+    const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+    if (!contentType.includes("text/event-stream")) return await response.json() as JsonRecord;
+    if (!response.body) throw new Error("Provider returned an empty event stream");
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    const blocks = new Map<number, AnthropicContent>();
+    const partialJson = new Map<number, string>();
+    let message: JsonRecord = {};
+    let buffer = "";
+    const consume = (chunk: string) => {
+      const data = chunk.split(/\r?\n/).filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trimStart()).join("\n");
+      if (!data) return;
+      let event: JsonRecord;
+      try {
+        const parsed = JSON.parse(data) as unknown;
+        if (!isRecord(parsed)) return;
+        event = parsed;
+      } catch {
+        throw new Error("Provider returned malformed Anthropic stream data");
+      }
+      if (event.type === "error") {
+        const error = isRecord(event.error) ? event.error : undefined;
+        throw new Error(error && typeof error.message === "string" ? error.message : "Anthropic stream failed");
+      }
+      if (event.type === "message_start" && isRecord(event.message)) message = { ...event.message };
+      else if (event.type === "content_block_start" && typeof event.index === "number" && isRecord(event.content_block)) {
+        blocks.set(event.index, { ...event.content_block } as AnthropicContent);
+        if (event.content_block.type === "tool_use") partialJson.set(event.index, "");
+      } else if (event.type === "content_block_delta" && typeof event.index === "number" && isRecord(event.delta)) {
+        const block = blocks.get(event.index) ?? {};
+        if (event.delta.type === "text_delta" && typeof event.delta.text === "string") {
+          block.type = "text";
+          block.text = `${block.text ?? ""}${event.delta.text}`;
+          this.emit({ type: "assistant.message.delta", runId, threadId: runId, turnId: `native-turn-${turn}`, itemId: `anthropic-content-${event.index}`, text: event.delta.text });
+        } else if (event.delta.type === "input_json_delta" && typeof event.delta.partial_json === "string") {
+          partialJson.set(event.index, `${partialJson.get(event.index) ?? ""}${event.delta.partial_json}`);
+        }
+        blocks.set(event.index, block);
+      } else if (event.type === "content_block_stop" && typeof event.index === "number" && partialJson.has(event.index)) {
+        const block = blocks.get(event.index);
+        const serialized = partialJson.get(event.index) ?? "";
+        if (block) {
+          const parsed = serialized ? JSON.parse(serialized) as unknown : {};
+          if (!isRecord(parsed)) throw new Error("Anthropic tool input must be a JSON object");
+          block.input = parsed;
+        }
+      } else if (event.type === "message_delta") {
+        if (isRecord(event.delta)) message = { ...message, ...event.delta };
+        if (isRecord(event.usage)) message.usage = { ...(isRecord(message.usage) ? message.usage : {}), ...event.usage };
+      }
+    };
+    while (true) {
+      if (signal.aborted) throw new DOMException("Run cancelled", "AbortError");
+      const { done, value } = await reader.read();
+      buffer += decoder.decode(value, { stream: !done });
+      const chunks = buffer.split(/\r?\n\r?\n/);
+      buffer = chunks.pop() ?? "";
+      for (const chunk of chunks) consume(chunk);
+      if (done) break;
+    }
+    if (buffer.trim()) consume(buffer);
+    message.content = [...blocks.entries()].sort(([left], [right]) => left - right).map(([, block]) => block);
+    if (!Array.isArray(message.content) || !message.content.length) throw new Error("Anthropic stream ended without message content");
+    return message;
   }
 
   private async readResponsePayload(

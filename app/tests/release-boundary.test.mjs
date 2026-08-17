@@ -113,6 +113,36 @@ test("electron-builder keeps required Node mode while hardening packaged executi
   }
 });
 
+test("release workflow fails closed on signing inputs and keeps publishing approval-gated", async () => {
+  const workflowSource = await readFile(path.join(root, "../.github/workflows/release.yml"), "utf8");
+  const releaseContract = await readFile(path.join(root, "../docs/release-playbook.md"), "utf8");
+  const manifestScript = await readFile(path.join(root, "scripts/release-manifest.mjs"), "utf8");
+  assert.match(workflowSource, /test -n "\$CSC_LINK"/);
+  assert.match(workflowSource, /xcrun stapler validate/);
+  assert.match(workflowSource, /environment: production-release/);
+  assert.doesNotMatch(workflowSource, /--publish always/);
+  assert.match(releaseContract, /Signed release builds embed a non-secret HTTPS Feed URL/);
+  assert.match(releaseContract, /Never promise downgrade/);
+  assert.match(manifestScript, /sha256/);
+});
+
+test("signed application updates are Main-owned, explicit, staged, and exact-version rollback only", async () => {
+  const manager = await readFile(path.join(root, "src/electron/update-manager.ts"), "utf8");
+  const main = await readFile(path.join(root, "src/electron/main.ts"), "utf8");
+  const preload = await readFile(path.join(root, "src/electron/preload.ts"), "utf8");
+  const renderer = await readFile(path.join(root, "src/App.jsx"), "utf8");
+  const workflow = await readFile(path.join(root, "../.github/workflows/release.yml"), "utf8");
+  assert.match(manager, /autoDownload = false/);
+  assert.match(manager, /autoInstallOnAppQuit = false/);
+  assert.match(manager, /allowDowngrade = true/);
+  assert.match(manager, /result\?\.updateInfo\?\.version !== rollbackVersion/);
+  assert.match(main, /立即重启并安装已校验的更新/);
+  assert.match(preload, /installUpdate/);
+  assert.match(renderer, /SHA-512 与平台代码签名校验/);
+  assert.match(workflow, /RUX_UPDATE_FEED_URL/);
+  assert.match(workflow, /latest\*\.yml/);
+});
+
 test("Main accepts IPC only from the trusted main frame and ignores packaged dev URLs", async () => {
   const source = await readFile(path.join(root, "src/electron/main.ts"), "utf8");
   assert.match(source, /event\.sender !== window\.webContents/);
@@ -175,7 +205,7 @@ test("clean startup waits for explicit project and account actions", async () =>
   const hydrateEnd = rendererSource.indexOf("void hydrate()", hydrateStart);
   const hydrateSource = rendererSource.slice(hydrateStart, hydrateEnd);
   assert.equal(hydrateSource.includes("runtime.authStatus()"), false);
-  assert.match(hydrateSource, /window\.rux \? Promise\.resolve\(\{ adapters: fallbackAdapters \}\) : runtime\.listAgents\(\)/);
+  assert.match(hydrateSource, /window\.rux \? Promise\.resolve\(\{ adapters: cachedAgentDetection\?\.adapters \|\| fallbackAdapters \}\) : runtime\.listAgents\(\)/);
   const openAccountsStart = rendererSource.indexOf("const openAccounts = () =>");
   const openAccountsEnd = rendererSource.indexOf("const detectProviders = async", openAccountsStart);
   assert.doesNotMatch(rendererSource.slice(openAccountsStart, openAccountsEnd), /authStatus|listAgents|login\(/);
@@ -206,15 +236,17 @@ test("clean startup waits for explicit project and account actions", async () =>
   assert.match(rendererSource, /https:\/\/developers\.openai\.com\/codex\/cli\//);
   assert.match(rendererSource, /https:\/\/docs\.anthropic\.com\/en\/docs\/claude-code\/getting-started/);
   assert.doesNotMatch(accountsSource, /一键同步|onSync|登录 Codex|Codex 设置/);
-  assert.match(rendererSource, /if \(value === "codex"\) return "Rux"/);
+  assert.match(rendererSource, /if \(value === "codex"\) return "Codex"/);
   assert.match(rendererSource, /aria-label="Rux 推理强度"/);
   assert.match(rendererSource, /这是仅查看的导入会话，原会话的模型、权限和消息不会在这里修改/);
-  assert.match(rendererSource, /开始新对话/);
-  assert.match(rendererSource, /const startEditableConversation = \(\) =>/);
+  assert.match(rendererSource, /const createBlankTask = \(choice, workspace = workspaceState\.active, sourceTask = selectedTask, initialDraft = ""\) =>/);
+  assert.match(rendererSource, /else startEditableConversation\(\);/);
+  assert.doesNotMatch(rendererSource, /composer-interaction-lock/);
   assert.match(rendererSource, /title: "新对话"/);
   assert.match(rendererSource, /messages: \[\],\s+plan: \[\],\s+activity: \[\],\s+runs: \[\]/);
   assert.match(rendererSource, /placeholder=\{interactionLockReason \? "当前会话不可编辑" : "随心输入"\}/);
-  assert.match(rendererSource, /aria-label="添加内容与运行设置"[^>]+disabled=\{!canRun \|\| isActive\}/);
+  assert.match(rendererSource, /aria-label="添加文件和更多"[^>]+disabled=\{!canRun \|\| isActive\}/);
+  assert.match(rendererSource, /role="menu" aria-label="如何批准 Rux 操作"/);
   assert.match(rendererSource, /className=\{`permission-chip[^>]+disabled=\{!canRun \|\| isActive\}/);
   assert.match(rendererSource, />Rux 设置</);
   assert.match(rendererSource, /ruxAdapterLabel\(message\.adapter\)/);
@@ -223,6 +255,11 @@ test("clean startup waits for explicit project and account actions", async () =>
   assert.match(rendererSource, /ruxAdapterLabel\(inspectedRun\.agentSnapshot\.backend\)/);
   assert.match(rendererSource, /ruxModelLabel\(model\.displayName \|\| model\.model\)/);
   assert.match(rendererSource, /showcaseMode \? \{\} : readUiPreferences\(\)/);
+  assert.match(rendererSource, /agentDetectionCacheKey = "rux\.agent-detection\.v1"/);
+  assert.match(rendererSource, /sanitizeAgentDetectionCache/);
+  assert.match(rendererSource, /不会后台自动刷新；发送前会重新校验/);
+  assert.match(rendererSource, /const validateCliAgentForRun = async/);
+  assert.match(rendererSource, /runtime\.listAgents\(\{ refresh: true \}\)/);
   assert.match(rendererSource, /if \(showcaseMode\) return;/);
   assert.match(rendererSource, /setTaskActionError\("Web 预览不会读取本机目录；请在 Rux 桌面应用中打开项目。"\)/);
   assert.match(rendererSource, /工作区未提交 \{files\.length\} 个文件/);
@@ -231,6 +268,35 @@ test("clean startup waits for explicit project and account actions", async () =>
   assert.match(rendererSource, /reconcileEngineDefaultModelDecision\(nextRun\.modelDecision, event\.model\)/);
 
   assert.match(webRuntimeSource, /showcasePreview \? changedFiles : \[\]/);
+});
+
+test("welcome Workspace snapshots are acknowledged without entering the authorized Task Store", async () => {
+  const mainSource = await readFile(path.join(root, "src/electron/main.ts"), "utf8");
+  const protocolSource = await readFile(path.join(root, "src/shared/protocol.ts"), "utf8");
+  assert.match(mainSource, /parsed\.workspaceId === welcomeWorkspaceId/);
+  assert.match(mainSource, /persisted: false/);
+  assert.match(mainSource, /persisted: true/);
+  assert.match(protocolSource, /interface TaskStateSaveResult[\s\S]*persisted: boolean/);
+});
+
+test("composer file context uses a native workspace-bounded picker", async () => {
+  const protocolSource = await readFile(path.join(root, "src/shared/protocol.ts"), "utf8");
+  const preloadSource = await readFile(path.join(root, "src/electron/preload.ts"), "utf8");
+  const mainSource = await readFile(path.join(root, "src/electron/main.ts"), "utf8");
+  const rendererSource = await readFile(path.join(root, "src/App.jsx"), "utf8");
+
+  assert.match(protocolSource, /workspaceChooseFiles: "rux:workspace:choose-files"/);
+  assert.match(protocolSource, /chooseContextFiles\(\): Promise<string\[\]>/);
+  assert.match(preloadSource, /chooseContextFiles\(\): Promise<string\[\]>/);
+  assert.match(preloadSource, /IPC_CHANNELS\.workspaceChooseFiles/);
+  assert.match(mainSource, /properties: \["openFile", "multiSelections"\]/);
+  assert.match(mainSource, /requireAuthorizedWorkspaceId\(workspace\.id\)/);
+  assert.match(mainSource, /const canonicalPath = realpathSync\(selectedPath\)/);
+  assert.match(mainSource, /所选文件必须位于当前授权 Workspace 内/);
+  assert.match(rendererSource, />添加项目文件</);
+  assert.match(rendererSource, /window\.rux\.chooseContextFiles\(\)/);
+  assert.match(rendererSource, /runtime\.contextSnapshot\(requested\)/);
+  assert.match(rendererSource, /aria-label=\{`移除文件 Context：\$\{path\}`\}/);
 });
 
 test("Session Connectors use supported provider interfaces without credential or transcript parsing", async () => {
@@ -266,8 +332,8 @@ test("external Session discovery is explicit, Workspace-filtered, and cannot exp
   assert.match(runtimeClientSource, /api\.migrateSessionAttribution\(params\)/);
   assert.match(rendererSource, /迁移到 \{item\.attribution\.workspaceName\}/);
   assert.match(mainSource, /RUX_AUTHORIZED_WORKSPACES: JSON\.stringify\(authorizedWorkspaces\)/);
-  assert.match(mainSource, /\["runtime\.shutdown", "session\.list", "session\.attribution\.migrate", "session\.read", "session\.resume\.check"\]/);
-  assert.match(protocolSource, /"runtime\.shutdown" \| "session\.list" \| "session\.attribution\.migrate" \| "session\.read" \| "session\.resume\.check"/);
+  assert.match(mainSource, /\["runtime\.shutdown", "session\.list", "session\.import", "session\.refresh", "session\.rebuild", "session\.revision\.list", "session\.revision\.restore", "session\.attribution\.migrate", "session\.read", "session\.resume\.check", "handoff\.preview", "handoff\.commit", "local\.data\.summary", "local\.data\.preview", "local\.data\.execute", "local\.data\.export"\]/);
+  assert.match(protocolSource, /"runtime\.shutdown" \| "session\.list" \| "session\.import" \| "session\.refresh" \| "session\.rebuild" \| "session\.revision\.list" \| "session\.revision\.restore" \| "session\.attribution\.migrate" \| "session\.read" \| "session\.resume\.check" \| "handoff\.preview" \| "handoff\.commit" \| "handoff\.summary\.generate" \| "local\.data\.summary" \| "local\.data\.preview" \| "local\.data\.execute" \| "local\.data\.export"/);
   assert.match(mainSource, /migrateImportedSessionWorkspace/);
 });
 
@@ -313,6 +379,17 @@ test("Context Handoff previews local facts and creates a target Task only after 
   assert.doesNotMatch(rendererSource, /runtimeRef\.current\.startRun[^\n]*handoff/i);
 });
 
+test("large Context Handoff selection is searchable, bounded, and diagnostically reviewable", async () => {
+  const renderer = await readFile(path.join(root, "src/App.jsx"), "utf8");
+  assert.match(renderer, /筛选最多 500 条消息/);
+  assert.match(renderer, /全选当前结果/);
+  assert.match(renderer, /最近 20 条/);
+  assert.match(renderer, /aria-label="交接诊断"/);
+  assert.match(renderer, /事实指纹/);
+  assert.match(renderer, /selectedTask\.messages\.slice\(-500\)/);
+  assert.match(renderer, /messages\.slice\(-20\)\.map/);
+});
+
 test("local data cleanup and export are impact-previewed, confirmation-gated, and Main-owned", async () => {
   const rendererSource = await readFile(path.join(root, "src/App.jsx"), "utf8");
   const mainSource = await readFile(path.join(root, "src/electron/main.ts"), "utf8");
@@ -340,7 +417,11 @@ test("local data cleanup and export are impact-previewed, confirmation-gated, an
 test("renderer keeps Agent setup actionable and resumes the selected task session", async () => {
   const rendererSource = await readFile(path.join(root, "src/App.jsx"), "utf8");
 
-  assert.match(rendererSource, /className="composer-agent-select" aria-label="选择 Agent"/);
+  assert.match(rendererSource, /className=\{`composer-agent-button/);
+  assert.match(rendererSource, /role="menu" aria-label="切换 Agent"/);
+  assert.match(rendererSource, /切换后将在当前项目中创建新任务/);
+  assert.match(rendererSource, /createBlankTask\(choice, workspaceState\.active, selectedTask, existingDraft\)/);
+  assert.match(rendererSource, /canSwitchAgent=\{!workspaceState\.active\.placeholder\}/);
   assert.match(rendererSource, /已折叠 \{message\.unsupportedContent\.total\} 个导入事件/);
   assert.match(rendererSource, /composer-connect-button/);
   assert.match(rendererSource, /className="composer-agent-warning"/);
@@ -358,6 +439,18 @@ test("renderer keeps Agent setup actionable and resumes the selected task sessio
   assert.doesNotMatch(rendererSource, /selectedTask\.messages\[0\]\?\.text \|\| selectedTask\.title/);
 });
 
+test("official CLI logout is explicit, confirmation-gated, and never deletes credentials directly", async () => {
+  const renderer = await readFile(path.join(root, "src/App.jsx"), "utf8");
+  const authManager = await readFile(path.join(root, "src/electron/auth-manager.ts"), "utf8");
+  const runtime = await readFile(path.join(root, "src/electron/runtime.ts"), "utf8");
+  assert.match(renderer, /window\.confirm\(`退出 \$\{providerName\} 登录/);
+  assert.match(renderer, /runtime\.logout\(provider\)/);
+  assert.match(runtime, /case "auth\.logout"/);
+  assert.match(authManager, /logoutArgs: \["logout"\]/);
+  assert.match(authManager, /logoutArgs: \["auth", "logout"\]/);
+  assert.doesNotMatch(authManager, /unlinkSync|rmSync|keytar|Keychain/);
+});
+
 test("Rux Native tool authority is pinned by the immutable Agent Revision", async () => {
   const renderer = await readFile(path.join(root, "src/App.jsx"), "utf8");
   const runtime = await readFile(path.join(root, "src/electron/runtime.ts"), "utf8");
@@ -369,6 +462,51 @@ test("Rux Native tool authority is pinned by the immutable Agent Revision", asyn
   assert.match(runtime, /allowedToolIds: \[\.\.\.revision\.toolIds\]/);
   assert.match(adapter, /params\.allowedToolIds && !params\.allowedToolIds\.includes\(name\)/);
   assert.match(adapter, /permissionMode !== "plan" && process\.platform === "darwin"/);
+});
+
+test("Rux Native Anthropic protocol uses managed auth headers and Rux-owned conversation history", async () => {
+  const renderer = await readFile(path.join(root, "src/App.jsx"), "utf8");
+  const adapter = await readFile(path.join(root, "src/electron/native-provider-adapter.ts"), "utf8");
+  const protocol = await readFile(path.join(root, "src/shared/protocol.ts"), "utf8");
+  assert.match(renderer, /<option value="anthropic-messages">Anthropic Messages<\/option>/);
+  assert.match(renderer, /conversationHistory: conversationHistoryForRun\(taskSnapshot, prompt\)/);
+  assert.match(adapter, /"x-api-key": connection\.apiKey, "anthropic-version": "2023-06-01"/);
+  assert.match(adapter, /tool_result/);
+  assert.equal((adapter.match(/redirect: "error"/g) ?? []).length, 4);
+  assert.match(renderer, /<option value="openai-chat-completions">OpenAI Chat Completions<\/option>/);
+  assert.match(protocol, /"authorization", "x-api-key", "anthropic-version"/);
+  assert.match(protocol, /Base URL must not contain a query or fragment/);
+});
+
+test("Provider support, network, and migration contracts stay explicit and fail closed", async () => {
+  const contract = await readFile(path.join(root, "../docs/provider-adapter-support-and-security.md"), "utf8");
+  const store = await readFile(path.join(root, "src/electron/native-provider-store.ts"), "utf8");
+  assert.match(contract, /Rux Native — Anthropic Messages/);
+  assert.match(contract, /Provider redirects fail/);
+  assert.match(contract, /future-version refusal tests/);
+  assert.match(store, /Unsupported Native Provider store version/);
+});
+
+test("Rux Native OAuth remains provider-registration gated", async () => {
+  const contract = await readFile(path.join(root, "../docs/rux-native-oauth-contract.md"), "utf8");
+  const renderer = await readFile(path.join(root, "src/App.jsx"), "utf8");
+  assert.match(contract, /Authorization Code \+ PKCE S256/);
+  assert.match(contract, /Provider 官方桌面 OAuth 合同与 RUX Client 注册/);
+  assert.match(contract, /Renderer.*不得出现明文 Token/s);
+  assert.doesNotMatch(renderer, /Rux Native OAuth 登录/);
+});
+
+test("local success metrics are explainable and have no telemetry transport", async () => {
+  const renderer = await readFile(path.join(root, "src/App.jsx"), "utf8");
+  const metrics = await readFile(path.join(root, "src/local-success-metrics.js"), "utf8");
+  assert.match(renderer, /本机成功指标/);
+  assert.match(renderer, /没有遥测或上传通道/);
+  assert.match(metrics, /computeLocalSuccessMetrics/);
+  assert.doesNotMatch(metrics, /fetch\(|XMLHttpRequest|sendBeacon|WebSocket/);
+  const eventStore = await readFile(path.join(root, "src/electron/local-product-event-store.ts"), "utf8");
+  assert.match(eventStore, /main-local-only/);
+  assert.doesNotMatch(eventStore, /fetch\(|XMLHttpRequest|sendBeacon|WebSocket/);
+  assert.doesNotMatch(eventStore, /prompt|messageContent|workspacePath|apiKey/);
 });
 
 test("Rux Native Connection mutations require a fresh non-secret impact preview", async () => {
@@ -383,6 +521,18 @@ test("Rux Native Connection mutations require a fresh non-secret impact preview"
   assert.match(preload, /previewProviderConnectionImpact/);
   assert.match(renderer, /留空保留当前 Key；填写则替换/);
   assert.match(renderer, /固定到该 Connection 的 Task/);
+});
+
+test("Provider credential diagnostics and migration stay Main-owned and secret-free", async () => {
+  const main = await readFile(path.join(root, "src/electron/main.ts"), "utf8");
+  const store = await readFile(path.join(root, "src/electron/native-provider-store.ts"), "utf8");
+  const renderer = await readFile(path.join(root, "src/App.jsx"), "utf8");
+  assert.match(main, /providerCredentialDiagnostics/);
+  assert.match(main, /providerCredentialMigrate/);
+  assert.match(store, /migrateCredentials/);
+  assert.match(store, /\.backup-/);
+  assert.match(renderer, /仅在你点击后检查当前 OS 安全存储与密文可解密性/);
+  assert.match(renderer, /重新封装凭据/);
 });
 
 test("renderer keeps Tasks pinned to immutable Agent Revisions and branches upgrades", async () => {
@@ -416,6 +566,19 @@ test("renderer makes Native Session resume failure recoverable without silent fa
   assert.match(renderer, /Connection<\/dt>/);
   assert.match(runtime, /resumeSessionId: normalized\.options\.sessionId/);
   assert.match(runtime, /modelMode: normalized\.options\.modelMode/);
+});
+
+test("Native Session writers are serialized and external-writer risk has refresh and branch exits", async () => {
+  const main = await readFile(path.join(root, "src/electron/main.ts"), "utf8");
+  const runtime = await readFile(path.join(root, "src/electron/runtime.ts"), "utf8");
+  const host = await readFile(path.join(root, "src/electron/stdio-runtime.ts"), "utf8");
+  const renderer = await readFile(path.join(root, "src/App.jsx"), "utf8");
+  assert.match(main, /requestSingleInstanceLock/);
+  assert.match(runtime, /NATIVE_SESSION_WRITE_CONFLICT/);
+  assert.match(host, /NATIVE_SESSION_WRITE_CONFLICT/);
+  assert.match(renderer, /原生会话仍可能被其他客户端写入/);
+  assert.match(renderer, /刷新原生会话/);
+  assert.match(renderer, /复制为新任务/);
 });
 
 test("renderer exposes truthful model source, manual verification, and catalog-removal states", async () => {

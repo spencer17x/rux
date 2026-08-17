@@ -34,6 +34,11 @@ import {
   type NativeProviderConnectionDeleteParams,
   type NativeProviderConnectionTestParams,
   type NativeProviderConnectionTestResult,
+  type NativeProviderCredentialDiagnostics,
+  type NativeProviderCredentialMigrationParams,
+  type NativeProviderCredentialMigrationResult,
+  type LocalProductEventSummary,
+  type UpdateState,
   type RuntimeRequestMap,
   type RuxDesktopApi,
   type TaskStateSaveResult,
@@ -57,6 +62,10 @@ const api: RuxDesktopApi = {
 
   chooseWorkspace(): Promise<WorkspaceState | null> {
     return ipcRenderer.invoke(IPC_CHANNELS.workspaceChoose) as Promise<WorkspaceState | null>;
+  },
+
+  chooseContextFiles(): Promise<string[]> {
+    return ipcRenderer.invoke(IPC_CHANNELS.workspaceChooseFiles) as Promise<string[]>;
   },
 
   activateWorkspace(path: string): Promise<WorkspaceState> {
@@ -149,6 +158,38 @@ const api: RuxDesktopApi = {
 
   testProviderConnection(params: NativeProviderConnectionTestParams): Promise<NativeProviderConnectionTestResult> {
     return ipcRenderer.invoke(IPC_CHANNELS.providerConnectionTest, params) as Promise<NativeProviderConnectionTestResult>;
+  },
+
+  getProviderCredentialDiagnostics(): Promise<NativeProviderCredentialDiagnostics> {
+    return ipcRenderer.invoke(IPC_CHANNELS.providerCredentialDiagnostics) as Promise<NativeProviderCredentialDiagnostics>;
+  },
+
+  migrateProviderCredentials(params: NativeProviderCredentialMigrationParams): Promise<NativeProviderCredentialMigrationResult> {
+    return ipcRenderer.invoke(IPC_CHANNELS.providerCredentialMigrate, params) as Promise<NativeProviderCredentialMigrationResult>;
+  },
+
+  getLocalProductEventSummary(): Promise<LocalProductEventSummary> {
+    return ipcRenderer.invoke(IPC_CHANNELS.localProductEventSummary) as Promise<LocalProductEventSummary>;
+  },
+
+  getUpdateState(): Promise<UpdateState> {
+    return ipcRenderer.invoke(IPC_CHANNELS.updateState) as Promise<UpdateState>;
+  },
+
+  checkForUpdates(): Promise<UpdateState> {
+    return ipcRenderer.invoke(IPC_CHANNELS.updateCheck) as Promise<UpdateState>;
+  },
+
+  downloadUpdate(): Promise<UpdateState> {
+    return ipcRenderer.invoke(IPC_CHANNELS.updateDownload) as Promise<UpdateState>;
+  },
+
+  installUpdate(): Promise<{ accepted: boolean }> {
+    return ipcRenderer.invoke(IPC_CHANNELS.updateInstall) as Promise<{ accepted: boolean }>;
+  },
+
+  confirmUpdateHealthy(): Promise<UpdateState> {
+    return ipcRenderer.invoke(IPC_CHANNELS.updateConfirmHealthy) as Promise<UpdateState>;
   },
 
   request<M extends RendererRuntimeMethod>(

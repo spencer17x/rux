@@ -200,6 +200,13 @@ pub struct TaskRunSettings {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RunReviewSource {
+    pub baseline: Value,
+    pub patch: Value,
+    pub expected_snapshot_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HydratedTask {
     pub id: String,
     pub title: String,
@@ -218,6 +225,9 @@ pub struct HydratedTask {
     pub run_count: usize,
     pub evidence: Vec<EvidenceItem>,
     pub pending_permission: Option<PendingPermission>,
+    pub handoff_message_ids: Vec<String>,
+    pub handoff_file_paths: Vec<String>,
+    pub run_review_sources: Vec<(String, RunReviewSource)>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -317,6 +327,41 @@ impl TaskPersistence {
         self.active_task
             .as_ref()
             .and_then(|task| string(task, "id"))
+    }
+
+    #[must_use]
+    pub fn active_handoff_sources(&self) -> (Vec<String>, Vec<String>) {
+        let Some(task) = self.active_task.as_ref() else {
+            return (Vec::new(), Vec::new());
+        };
+        let messages = task
+            .get("messages")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|message| {
+                message
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .map(ToOwned::to_owned)
+            })
+            .collect();
+        let files = task
+            .get("runs")
+            .and_then(Value::as_array)
+            .and_then(|runs| runs.last())
+            .and_then(|run| run.get("gitPatch"))
+            .and_then(|patch| patch.get("files"))
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|file| {
+                file.get("path")
+                    .and_then(Value::as_str)
+                    .map(ToOwned::to_owned)
+            })
+            .collect();
+        (messages, files)
     }
 
     #[must_use]
@@ -522,6 +567,18 @@ impl TaskPersistence {
                 ))
             })
             .collect();
+        let handoff_message_ids = task
+            .get("messages")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|message| {
+                message
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .map(ToOwned::to_owned)
+            })
+            .collect();
         let runs = task
             .get("runs")
             .and_then(Value::as_array)
@@ -531,6 +588,35 @@ impl TaskPersistence {
             .iter()
             .filter_map(Value::as_object)
             .max_by_key(|run| string(run, "updatedAt").unwrap_or_default().to_owned());
+        let handoff_file_paths = latest_run
+            .and_then(|run| run.get("gitPatch"))
+            .and_then(|patch| patch.get("files"))
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|file| {
+                file.get("path")
+                    .and_then(Value::as_str)
+                    .map(ToOwned::to_owned)
+            })
+            .collect();
+        let run_review_sources = runs
+            .iter()
+            .filter_map(|run| {
+                let run_id = run.get("id")?.as_str()?.to_owned();
+                let baseline = run.get("gitBaseline")?.clone();
+                let patch = run.get("gitPatch")?.clone();
+                let expected_snapshot_id = patch.get("snapshotId")?.as_str()?.to_owned();
+                Some((
+                    run_id,
+                    RunReviewSource {
+                        baseline,
+                        patch,
+                        expected_snapshot_id,
+                    },
+                ))
+            })
+            .collect();
         let adapter = latest_run
             .and_then(|run| string(run, "adapter"))
             .or_else(|| string(task, "adapter"))
@@ -609,6 +695,9 @@ impl TaskPersistence {
             run_count: runs.len(),
             evidence: evidence_items(&runs),
             pending_permission: pending_permission(&runs),
+            handoff_message_ids,
+            handoff_file_paths,
+            run_review_sources,
         }))
     }
 
@@ -1375,6 +1464,10 @@ mod tests {
         assert_eq!(hydrated.session_id, None);
         assert_eq!(hydrated.run_count, 1);
         assert_eq!(hydrated.evidence.len(), 2);
+        assert_eq!(hydrated.handoff_message_ids.len(), 2);
+        assert_eq!(hydrated.handoff_file_paths, ["src/main.rs"]);
+        assert_eq!(hydrated.run_review_sources.len(), 1);
+        assert_eq!(hydrated.run_review_sources[0].0, "run-1");
         assert!(matches!(
             &hydrated.evidence[0],
             EvidenceItem::RunOwnedPatch { files, .. } if files[0].path == "src/main.rs"

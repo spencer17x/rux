@@ -13,8 +13,12 @@ files:
 extraResources:
   - from: out/runtime-host
     to: runtime-host
-  - from: ../tui/target/release/rux-tui
-    to: bin/rux-tui
+  - from: out/bin
+    to: bin
+    filter:
+      - rux-tui*
+  - from: out/update-config.json
+    to: update-config.json
 
 asar: true
 asarUnpack:

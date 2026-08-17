@@ -223,6 +223,7 @@ fn parse_args() -> Result<Option<LaunchConfiguration>> {
                 );
                 return Ok(None);
             }
+            "-V" | "--version" => return Ok(version_output()),
             unknown => bail!("unknown argument: {unknown}"),
         }
     }
@@ -235,6 +236,15 @@ fn parse_args() -> Result<Option<LaunchConfiguration>> {
         permission_mode,
         profile_id,
     }))
+}
+
+fn version_output() -> Option<LaunchConfiguration> {
+    println!(
+        "rux-tui {} · protocol v{}",
+        env!("CARGO_PKG_VERSION"),
+        rux_tui::protocol::PROTOCOL_VERSION
+    );
+    None
 }
 
 fn finalized_mode(

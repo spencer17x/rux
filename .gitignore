@@ -5,3 +5,4 @@ app/.vite/
 app/dist/
 app/out/
 app/release/
+app/release-*/
