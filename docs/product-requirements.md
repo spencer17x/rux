@@ -153,7 +153,7 @@ flowchart LR
 
 ### 5.9 外部历史采用“会话接入”而非实时双向同步
 
-实现状态（2026-08-17）：当前 Runtime protocol 为 v16。v4–v8 依次提供 Session Connector、隔离摘要、Rux Native、Auto/Token 与 Workspace invalidation；v9 增加显式 Workspace 归属迁移，v10 增加 Rux Native 模型目录与 Provider 明示能力合同，v11 增加 Main/Runtime-only 的加密 Custom Headers，v12 增加确认门控的官方 CLI logout 委托，v13 增加 Anthropic Messages 与无原生 Session API 的有界同 Task 对话历史，v14 增加 Main-owned Provider 凭据诊断与确认门控的原子重新封装，v15 增加 OpenAI Chat Completions Streaming、工具循环、Token 与同 Task 历史，v16 增加 TUI 可用的会话导入/刷新/版本、Handoff、本地数据、Git 分支与 Run-owned Changes 审查合同。Codex 使用 App Server Thread List/Read，Claude Code 使用官方 Agent SDK 的 `list_sessions`、`get_session_info`、`get_session_messages`；两端支持分页、取消、超时、大小限制和敏感错误清洗。
+实现状态（2026-08-17）：当前 Runtime protocol 为 v17。v4–v16 依次提供 Session Connector、隔离摘要、Rux Native、Auto/Token、Workspace invalidation、归属迁移、Provider 目录、加密 Headers、CLI logout、Anthropic/Chat transports、凭据诊断与 TUI 管理合同；v17 增加确认门控、结构化 argv、仓库根限定的 Git worktree 创建。Codex 使用 App Server Thread List/Read，Claude Code 使用官方 Agent SDK 会话接口；两端支持分页、取消、超时、大小限制和敏感错误清洗。
 
 实现状态（2026-08-13）：P1-E1 已开放显式的“导入 Agent 会话”元数据发现入口。打开入口不会访问 Provider；点击查找后，Runtime 才按规范化真实路径和最具体已授权 Workspace 归属结果返回当前项目、待归属、需要授权和迁移建议。属于其他项目的会话被隐藏，迁移建议不会静默改变旧归属。
 

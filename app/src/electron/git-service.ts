@@ -42,6 +42,9 @@ export type GitChangesErrorCode =
   | "REPOSITORY_ROOT_REQUIRED"
   | "BRANCH_NOT_FOUND"
   | "BRANCH_SWITCH_FAILED"
+  | "WORKTREE_TARGET_EXISTS"
+  | "WORKTREE_BRANCH_IN_USE"
+  | "WORKTREE_CREATE_FAILED"
   | "DETACHED_HEAD"
   | "NO_STAGED_CHANGES"
   | "INVALID_COMMIT_MESSAGE"
@@ -775,6 +778,54 @@ export class GitChangesService {
     return this.serializeMutation(() => this.switchBranchUnlocked(input));
   }
 
+  async createWorktree(input: { path: string; branch: string; confirmed: true }): Promise<{ path: string; branch: string; headId: string; createdBranch: boolean }> {
+    return this.serializeMutation(() => this.createWorktreeUnlocked(input));
+  }
+
+  private async createWorktreeUnlocked(input: { path: string; branch: string; confirmed: true }): Promise<{ path: string; branch: string; headId: string; createdBranch: boolean }> {
+    if (input.confirmed !== true) throw new GitChangesError("CONFIRMATION_REQUIRED", "Creating a worktree requires explicit confirmation");
+    const repositoryRoot = await this.assertRepositoryRootWorkspace();
+    if (!isAbsolute(input.path)) throw new GitChangesError("INVALID_PATH", "Worktree target must be an absolute path selected by the user");
+    const requestedTarget = resolve(input.path);
+    if (requestedTarget === dirname(requestedTarget)) throw new GitChangesError("INVALID_PATH", "Filesystem root cannot be used as a worktree target");
+    if (existsSync(requestedTarget)) throw new GitChangesError("WORKTREE_TARGET_EXISTS", "Worktree target already exists");
+    const targetParent = dirname(requestedTarget);
+    if (!existsSync(targetParent) || !statSync(targetParent).isDirectory()) throw new GitChangesError("INVALID_PATH", "Worktree target parent directory does not exist");
+    const canonicalParent = realpathSync(targetParent);
+    const targetName = requestedTarget.slice(targetParent.length + (targetParent.endsWith(sep) ? 0 : 1));
+    if (!targetName || targetName.includes(sep) || targetName === "." || targetName === "..") throw new GitChangesError("INVALID_PATH", "Worktree target name is invalid");
+    const target = join(canonicalParent, targetName);
+    const commonDirRaw = (await this.runGit(["rev-parse", "--git-common-dir"])).trim();
+    const commonDir = realpathSync(resolve(repositoryRoot, commonDirRaw));
+    const commonRelative = relative(commonDir, target);
+    if (commonRelative === "" || (!isAbsolute(commonRelative) && commonRelative !== ".." && !commonRelative.startsWith(`..${sep}`))) throw new GitChangesError("INVALID_PATH", "Worktree target cannot be inside Git metadata");
+
+    const branch = input.branch.trim();
+    const branchCheck = await this.runGitResult(["check-ref-format", "--branch", branch], { acceptedExitCodes: [0, 1, 128] });
+    if (branchCheck.exitCode !== 0) throw new GitChangesError("INVALID_PATH", "Git branch name is invalid");
+    const worktreeList = await this.runGit(["worktree", "list", "--porcelain"]);
+    if (worktreeList.split(/\n\s*\n/).some((record) => record.split("\n").includes(`branch refs/heads/${branch}`))) {
+      throw new GitChangesError("WORKTREE_BRANCH_IN_USE", `Branch ${branch} is already checked out by another worktree`);
+    }
+    const branchResult = await this.runGitResult(["show-ref", "--verify", "--quiet", `refs/heads/${branch}`], { acceptedExitCodes: [0, 1, 128] });
+    const createdBranch = branchResult.exitCode !== 0;
+    const args = createdBranch
+      ? ["worktree", "add", "--no-track", "-b", branch, "--", target, "HEAD"]
+      : ["worktree", "add", "--no-track", "--", target, branch];
+    try {
+      await this.runGit(args, { environment: nonInteractiveGitEnvironment(), mutating: true, timeoutMs: 120_000 });
+    } catch {
+      throw new GitChangesError("WORKTREE_CREATE_FAILED", `Git could not create worktree ${target}; inspect repository hooks and branch state`);
+    }
+    const createdList = await this.runGit(["worktree", "list", "--porcelain"]);
+    if (!createdList.split(/\n\s*\n/).some((record) => record.split("\n").includes(`worktree ${target}`))) {
+      throw new GitChangesError("WORKTREE_CREATE_FAILED", "Git did not report the newly created worktree");
+    }
+    const headId = (await this.runGit(["rev-parse", "--verify", `refs/heads/${branch}`])).trim();
+    if (!isGitObjectId(headId)) throw new GitChangesError("WORKTREE_CREATE_FAILED", "Git did not report the new worktree HEAD");
+    return { path: realpathSync(target), branch, headId, createdBranch };
+  }
+
   private async switchBranchUnlocked(input: { branch: string }): Promise<GitBranchesListResult> {
     await this.assertRepositoryRootWorkspace();
     const branch = input.branch.trim();
@@ -1151,6 +1202,27 @@ export class GitChangesService {
         deletions: files.reduce((sum, file) => sum + file.deletions, 0),
         binaryFiles: files.filter((file) => file.isBinary).length,
       },
+    };
+  }
+
+  unchangedRunPatch(baseline: GitRunBaseline): GitRunPatch {
+    if (baseline.workspaceRoot !== this.workspaceRoot || !isGitObjectId(baseline.treeId) || !isSha256(baseline.indexSnapshotId)) {
+      throw new GitChangesError("GIT_FAILED", "Run baseline is invalid for an unchanged patch");
+    }
+    const files: GitRunPatch["files"] = [];
+    return {
+      id: randomUUID(),
+      runId: baseline.runId,
+      baselineId: baseline.id,
+      workspaceRoot: this.workspaceRoot,
+      generatedAt: new Date().toISOString(),
+      beforeTreeId: baseline.treeId,
+      afterTreeId: baseline.treeId,
+      beforeIndexSnapshotId: baseline.indexSnapshotId,
+      afterIndexSnapshotId: baseline.indexSnapshotId,
+      snapshotId: runPatchSnapshotId(baseline, baseline.treeId, baseline.indexSnapshotId, files),
+      files,
+      totals: { files: 0, additions: 0, deletions: 0, binaryFiles: 0 },
     };
   }
 
@@ -1641,7 +1713,7 @@ export class GitChangesService {
     }
   }
 
-  private async assertRepositoryRootWorkspace(): Promise<void> {
+  private async assertRepositoryRootWorkspace(): Promise<string> {
     const repositoryRoot = await this.ensureRepository();
     if (repositoryRoot !== this.workspaceRoot) {
       throw new GitChangesError(
@@ -1649,6 +1721,7 @@ export class GitChangesService {
         "Branch switching, commit, and push require the authorized Workspace to be the Git repository root",
       );
     }
+    return repositoryRoot;
   }
 
   private repositoryPathToWorkspace(path: string, repositoryRoot: string): string {

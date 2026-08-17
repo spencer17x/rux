@@ -1,6 +1,6 @@
 # Rux Desktop Architecture
 
-> Runtime protocol: v16
+> Runtime protocol: v17
 > Agent Profile Store: v2  
 > Task Store: SQLite schema v5 / Workspace snapshot v2
 > Updated: 2026-08-17
@@ -10,8 +10,8 @@
 ```mermaid
 flowchart LR
   UI["Sandboxed Renderer"] -->|"typed Preload IPC"| Main["Electron Main"]
-  Main -->|"validated protocol v16"| Runtime["Utility Process Runtime"]
-  TUI["Rust TUI"] -->|"JSONL protocol v16"| Host["stdio Runtime Host"]
+  Main -->|"validated protocol v17"| Runtime["Utility Process Runtime"]
+  TUI["Rust TUI"] -->|"JSONL protocol v17"| Host["stdio Runtime Host"]
   Runtime --> CLI["Official Codex / Claude Code CLI"]
   Host --> CLI
   Main --> Tasks["Main-owned Task SQLite v2"]
@@ -23,7 +23,7 @@ flowchart LR
 - Renderer has no Node integration and receives no filesystem, process, PTY, or credential capability. It can submit only protocol-validated, non-secret object references.
 - Main owns the native window, Workspace authorization, IPC routing, and Desktop Task Store access. A read-only Agent Revision resolver validates Task references without exposing the Profile Store to Renderer.
 - Utility Process Runtime owns official CLI adapters, authentication delegation, PTY, Git, Context, permissions, and Agent execution.
-- The standalone Runtime Host implements the same v16 protocol for the Rust TUI. Unused fields remain ordinary JSON fields so the TUI can evolve independently.
+- The standalone Runtime Host implements the same v17 protocol for the Rust TUI. Unused fields remain ordinary JSON fields so the TUI can evolve independently.
 
 Application updates stay in Main. A build-time, non-secret `update-config.json` enables only an HTTPS generic Feed in signed release builds. Renderer can read sanitized state and request check/download/install, but cannot set a Feed URL or bypass the native install confirmation. `electron-updater` applies staged rollout eligibility and verifies update metadata, SHA-512 and platform signatures. Main persists a version-only health checkpoint; two launches of an expected version without reaching the health window switch to the exact previous-version rollback Feed with downgrade enabled only for that version.
 
@@ -149,9 +149,31 @@ Before save/load, Task Store validation rejects:
 
 ## Current implementation truth
 
+### Logical Project, WorkingCopy and Board
+
+Main inspects authorized roots with bounded Git commands and derives a stable logical `projectId` from the canonical Git common dir and a `workingCopyId` from the canonical worktree root. Non-Git directories degrade to one Project/WorkingCopy. Renderer groups only already-authorized Workspace summaries; it never gains file authority from matching Git metadata. `git worktree list --porcelain` is invoked only from the visible Working Copies surface. Paths outside current roots remain metadata-only until a confirmation-gated Main action revalidates their real path and Project identity, activates that Workspace, and restarts the Runtime boundary.
+
+`project-boards.json` is a Main-owned, mode-0600, atomic, future-version-fail-closed store. A Board is keyed by logical Project and its Task cards are deterministically synchronized from every authorized Workspace in that Project. Requirement cards and transitions are separate records. Automatic transitions may move untouched Task cards from todo to in-progress and from todo/in-progress to review; manual movement disables later automation and no rule moves a card to done. Disabling a Board hides the Project entry and stops new Task-card creation while preserving all stored data.
+
+### Improvement assets and controlled evolution
+
+`improvements.json` is another Main-owned atomic fail-closed store. Explicit local analysis reads persisted Task/Run facts from authorized Workspaces only, redacts credential-like content, and deduplicates evidence fingerprints. Candidates remain separate from immutable assets. Publish/reject/snooze/rollback are trusted-renderer, user-confirmed mutations. Publish rejects credential-like content and instructions that weaken approval, sandbox or Workspace boundaries; it records the exact evidence count and deterministic checks. Skill/Workflow assets without an executable isolated evaluation are visibly `unknown`, not passed.
+
+Published assets use a normalized Rux-managed format with immutable versions. A newer version supersedes the prior active version; rollback reactivates the preceding version. New ordinary Tasks pin snapshots of the then-active user/project assets, and Runs prepend those fixed snapshots as visibly labelled Rux-approved context. Existing Tasks do not change after publication, supersession or rollback. Adoption and completed/failed/stopped Run counts are recomputed from persisted Task facts during explicit analysis. Executable evaluation, background budgets and Agent-instruction Revision publication remain unimplemented.
+
+Asset export is two-phase and Main-owned. Codex Skill and Workflow assets render to the official `SKILL.md` directory contract documented at https://learn.chatgpt.com/docs/build-skills and target an authorized repository's `.agents/skills` or the current user's `~/.agents/skills`. Rux-format export uses a native directory picker. Preview records the complete bounded file diff, before/after SHA-256, exact path and expiry; confirmation rechecks the active immutable asset, target hash and every existing path component, rejecting traversal or symlinks before atomic write. Project rules and Engines without a verified format remain explicitly unsupported rather than receiving guessed files.
+
+Agent-instruction candidates bind a custom Profile and its immutable proposal-time Revision in Main. Publish first validates content and target freshness, then appends a new Agent Revision; an interrupted cross-store update is idempotently recognized by matching the exact instructions and later Revision. Rollback is also append-only and refuses to overwrite unrelated later edits. Renderer refreshes Profile metadata after the decision, so only new Tasks and new Handoff targets resolve the new latest Revision.
+
+Improvement evaluation is a separate protocol-v17 Runtime operation hidden from ordinary Renderer Runtime calls. Each user-defined representative or holdout case runs twice—baseline and candidate—in a new ephemeral Codex Thread or a Claude invocation with tools and Session persistence disabled. Tool activity or permission requests fail the evaluation. A deterministic substring grader requires every Candidate case and every Holdout to pass without regressing below Baseline. Main reserves daily and Project Token/optional USD budgets before launch, records actual Engine-reported or unreported usage, model, latency and outputs separately from Task Runs, and prevents the latest failed evaluation from publishing. Background review reuses previously confirmed cases at most once per candidate/day and runs only after explicit evaluator/budget configuration plus idle/AC/pause checks.
+
+### Message-only Run Git finalization
+
+Runtime tracks whether a Run emitted a file/command activity or explicit Workspace invalidation. Message-only Runs produce an immutable zero-file patch directly from their pre-Run baseline, so the terminal event is no longer delayed by a redundant full after-tree capture. Mutation-capable Runs still execute the authoritative tree/index comparison before terminal delivery.
+
 - Claude Code and Codex Runs use real local adapters; Rux Demo remains development/Web-preview only.
 - Codex App Server keeps ordinary JSON-RPC calls on a 30-second bound, while cold `thread/start` and `thread/resume` receive a bounded 120-second initialization window because official Workspace instruction, Skill, Plugin and MCP initialization can exceed 30 seconds. A timeout remains an explicit failed Run and never silently creates another Thread.
-- Protocol v16, Agent Profile Store v2, Task Store v5, Desktop Runtime, stdio Runtime, Renderer fallback, and Rust TUI share the Revision/Connection, Session Connector, attribution migration, isolated Handoff-summary, Auto Policy, Model Decision, Token Usage and Workspace invalidation contract. v10 added Rux Native Provider-reported model catalogs and explicit session model-switch capability; v11 added encrypted custom Provider Headers whose values remain Main/Runtime-only; v12 added confirmation-gated official CLI logout delegation; v13 adds Anthropic Messages transport and bounded same-Task conversation history for stateless Provider APIs; v14 adds Main-owned Provider credential diagnostics and confirmed atomic rewrapping; v15 adds OpenAI Chat Completions streaming/tool/history transport; v16 adds confirmation-gated TUI Session import/refresh/revision, Handoff, local-data export/lifecycle, Git branch mutation, and Run-owned Changes review contracts.
+- Protocol v17, Agent Profile Store v2, Task Store v5, Desktop Runtime, stdio Runtime, Renderer fallback, and Rust TUI share the Revision/Connection, Session Connector, attribution migration, isolated Handoff-summary, Auto Policy, Model Decision, Token Usage and Workspace invalidation contract. v10–v16 added Provider catalogs, encrypted Headers, CLI logout, Anthropic/Chat transports, credential diagnostics and TUI management parity; v17 adds confirmation-gated structured Git worktree creation. Desktop Main revalidates Project identity and performs Workspace authorization only after Runtime completes the Git mutation.
 - `账户与登录` is an explicit Agent/Provider surface for Rux Native, Codex, and Claude Code. Opening the app or panel performs no CLI inspection. Rux Native metadata loads locally without network access; only explicit test/Run actions contact its Provider. CLI credentials remain CLI-owned.
 - Rux Native OAuth is intentionally registration-gated. `rux-native-oauth-contract.md` fixes Authorization Code + PKCE, Provider-owned endpoint metadata, Main/Runtime-only Token custody, strict redirect/origin validation, revocation and migration requirements. No Provider OAuth control is exposed until an official native-app contract and RUX Client registration exist.
 - Main owns a bounded, fail-closed `local-product-events.json` store for cross-launch funnel evidence. It records only allowlisted event kinds, timestamps, counts, Engine/mode and one-way subject hashes for CLI detection, Run outcomes, restart recovery, Session import/deduplication/continuation, Handoff branching and recovery attempts. Renderer receives aggregate counts only; no event upload transport exists.

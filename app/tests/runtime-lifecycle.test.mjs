@@ -52,6 +52,8 @@ test("long mutating requests use fail-closed Runtime timeout policy", async () =
     "git.branch.switch",
     "git.commit",
     "git.push",
+    "git.worktree.create",
+    "improvement.evaluation.run",
   ]) {
     const policy = runtimeRequestPolicy(method);
     assert.equal(policy.timeoutAction, "stop-runtime");

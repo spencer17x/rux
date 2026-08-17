@@ -12,6 +12,10 @@ Keep the bottom Composer in the task layout rather than covering the transcript 
 
 Keep sidebar task history compact and single-line. The default showcase task should open in a credible completed state rather than looking permanently busy; running, stopped, and waiting states should appear only when the task lifecycle actually calls for them. Preserve sidebar, review, and draft preferences across launches without automatically reopening a terminal session.
 
+Treat navigation Project and execution WorkingCopy as separate concepts. Already authorized roots with the same canonical Git common dir share one Project heading and Board, while each Task continues to show and use its fixed Workspace/worktree and branch for Changes, Context, Terminal, Run and Native Session operations. `看板` and `工作副本` are labelled Project rows; discovering external worktrees is explicit and metadata-only, and authorization remains confirmation-gated.
+
+Keep Board state, Run state and Improvement state visibly distinct. Board automation may advance an untouched Task card only to `进行中` or `待验收`; only the user moves work to `已完成`. Improvement candidates must show evidence, benefit, risk, scope, evaluation truth and approval actions. Publishing creates an immutable Rux-managed asset version for new Tasks only, never rewrites an existing Task or silently expands permissions.
+
 Keep the Projects rail visually flat and quiet like Codex Desktop: project headings and task rows use compact single-line rhythm, the selected task uses one soft neutral fill without an accent stripe, nesting guides stay subtle, and the footer—not a dot or badge in every heading—communicates the current Workspace. Expansion chevrons may appear on hover/focus so the resting list remains uncluttered.
 
 A Workspace starter Task keeps its placeholder title only before the first message. On first send, derive a compact single-line title from the normalized user prompt so persisted and resumed task history never continues to look like an unused “start new task” row.

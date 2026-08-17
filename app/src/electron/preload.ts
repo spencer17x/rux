@@ -46,6 +46,24 @@ import {
   type WorkspaceOpenResult,
   type WorkspaceOpenTarget,
   type WorkspaceTaskState,
+  type BoardLoadParams,
+  type BoardMutationParams,
+  type BoardSnapshot,
+  type ProjectWorkingCopiesParams,
+  type ProjectWorkingCopyAuthorizeParams,
+  type ProjectWorkingCopy,
+  type ProjectWorkingCopyCreateParams,
+  type ImprovementSummaryParams,
+  type ImprovementAnalyzeParams,
+  type ImprovementDecideParams,
+  type ImprovementSummary,
+  type ImprovementSettingsUpdateParams,
+  type ImprovementProposeParams,
+  type ImprovementExportPreviewParams,
+  type ImprovementExportPreview,
+  type ImprovementExportCommitParams,
+  type ImprovementExportResult,
+  type ImprovementEvaluateParams,
 } from "../shared/protocol";
 
 let requestSequence = 0;
@@ -86,6 +104,59 @@ const api: RuxDesktopApi = {
       .then(() => ipcRenderer.invoke(IPC_CHANNELS.taskStateSave, state) as Promise<TaskStateSaveResult>);
     taskStateSaveQueue = save;
     return save;
+  },
+
+  loadBoard(params: BoardLoadParams): Promise<BoardSnapshot> {
+    return ipcRenderer.invoke(IPC_CHANNELS.boardLoad, params) as Promise<BoardSnapshot>;
+  },
+
+  mutateBoard(params: BoardMutationParams): Promise<BoardSnapshot> {
+    return ipcRenderer.invoke(IPC_CHANNELS.boardMutate, params) as Promise<BoardSnapshot>;
+  },
+
+  listProjectWorkingCopies(params: ProjectWorkingCopiesParams): Promise<ProjectWorkingCopy[]> {
+    return ipcRenderer.invoke(IPC_CHANNELS.projectWorkingCopiesList, params) as Promise<ProjectWorkingCopy[]>;
+  },
+
+  authorizeProjectWorkingCopy(params: ProjectWorkingCopyAuthorizeParams): Promise<WorkspaceState> {
+    return ipcRenderer.invoke(IPC_CHANNELS.projectWorkingCopyAuthorize, params) as Promise<WorkspaceState>;
+  },
+
+  createProjectWorkingCopy(params: ProjectWorkingCopyCreateParams): Promise<WorkspaceState> {
+    return ipcRenderer.invoke(IPC_CHANNELS.projectWorkingCopyCreate, params) as Promise<WorkspaceState>;
+  },
+
+
+  getImprovementSummary(params: ImprovementSummaryParams = {}): Promise<ImprovementSummary> {
+    return ipcRenderer.invoke(IPC_CHANNELS.improvementSummary, params) as Promise<ImprovementSummary>;
+  },
+
+  analyzeImprovements(params: ImprovementAnalyzeParams): Promise<ImprovementSummary> {
+    return ipcRenderer.invoke(IPC_CHANNELS.improvementAnalyze, params) as Promise<ImprovementSummary>;
+  },
+
+  decideImprovement(params: ImprovementDecideParams): Promise<ImprovementSummary> {
+    return ipcRenderer.invoke(IPC_CHANNELS.improvementDecide, params) as Promise<ImprovementSummary>;
+  },
+
+  updateImprovementSettings(params: ImprovementSettingsUpdateParams): Promise<ImprovementSummary> {
+    return ipcRenderer.invoke(IPC_CHANNELS.improvementSettingsUpdate, params) as Promise<ImprovementSummary>;
+  },
+
+  proposeImprovement(params: ImprovementProposeParams): Promise<ImprovementSummary> {
+    return ipcRenderer.invoke(IPC_CHANNELS.improvementPropose, params) as Promise<ImprovementSummary>;
+  },
+
+  previewImprovementExport(params: ImprovementExportPreviewParams): Promise<ImprovementExportPreview | null> {
+    return ipcRenderer.invoke(IPC_CHANNELS.improvementExportPreview, params) as Promise<ImprovementExportPreview | null>;
+  },
+
+  commitImprovementExport(params: ImprovementExportCommitParams): Promise<ImprovementExportResult> {
+    return ipcRenderer.invoke(IPC_CHANNELS.improvementExportCommit, params) as Promise<ImprovementExportResult>;
+  },
+
+  evaluateImprovement(params: ImprovementEvaluateParams): Promise<ImprovementSummary> {
+    return ipcRenderer.invoke(IPC_CHANNELS.improvementEvaluate, params) as Promise<ImprovementSummary>;
   },
 
   importSession(params: SessionImportParams): Promise<SessionImportResult> {

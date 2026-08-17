@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, rename, rm, symlink, unlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
 import { GitChangesError, GitChangesService } from "../src/electron/git-service.ts";
@@ -317,6 +317,10 @@ test("attributes only changes made after a Run baseline without touching the rea
     assert.equal(baseline.ignoredFilesExcluded, true);
     assert.equal(await git(root, "status", "--porcelain=v2"), statusBeforeBaseline);
     assert.equal(await git(root, "diff", "--cached", "--binary"), stagedBeforeBaseline);
+    const unchangedPatch = service.unchangedRunPatch(baseline);
+    assert.equal(unchangedPatch.beforeTreeId, unchangedPatch.afterTreeId);
+    assert.equal(unchangedPatch.beforeIndexSnapshotId, unchangedPatch.afterIndexSnapshotId);
+    assert.deepEqual(unchangedPatch.files, []);
 
     await writeFile(join(root, "tracked.txt"), "one\ntwo\nuser before run\nagent delta\n", "utf8");
     await writeFile(join(root, "agent-new.txt"), "agent one\nagent two\n", "utf8");
@@ -722,6 +726,27 @@ test("removes an Agent-created symlink without following it outside the workspac
   } finally {
     await rm(root, { recursive: true, force: true });
     await rm(outsideRoot, { recursive: true, force: true });
+  }
+});
+
+test("creates a confirmed worktree with a structured Git command and rejects occupied targets or branches", async () => {
+  const root = await createRepository({ withCommit: true });
+  const target = join(dirname(root), `${basename(root)}-worktree`);
+  const secondTarget = join(dirname(root), `${basename(root)}-worktree-2`);
+  try {
+    const service = new GitChangesService(root);
+    const created = await service.createWorktree({ path: target, branch: "codex/worktree-test", confirmed: true });
+    assert.equal(created.path, await realpath(target));
+    assert.equal(created.branch, "codex/worktree-test");
+    assert.equal(created.createdBranch, true);
+    assert.match(created.headId, /^[a-f0-9]{40,64}$/);
+    assert.equal((await git(target, "branch", "--show-current")).trim(), "codex/worktree-test");
+    await rejectsWithCode(service.createWorktree({ path: secondTarget, branch: "codex/worktree-test", confirmed: true }), "WORKTREE_BRANCH_IN_USE");
+    await rejectsWithCode(service.createWorktree({ path: target, branch: "another-branch", confirmed: true }), "WORKTREE_TARGET_EXISTS");
+  } finally {
+    try { await git(root, "worktree", "remove", "--force", target); } catch { await rm(target, { recursive: true, force: true }); }
+    await rm(secondTarget, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true });
   }
 });
 

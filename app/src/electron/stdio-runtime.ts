@@ -31,6 +31,8 @@ import {
   gitChangeSelectionSchema,
   gitBranchesListResultSchema,
   gitBranchSwitchParamsSchema,
+  gitWorktreeCreateParamsSchema,
+  gitWorktreeCreateResultSchema,
   gitCommitParamsSchema,
   gitCommitResultSchema,
   gitCompareParamsSchema,
@@ -89,6 +91,7 @@ import { createContextSnapshot, contextSnapshotPrompt } from "./context-snapshot
 import { RunPermissionGate, type PendingPermissionRun } from "./permission-gate.ts";
 import { awaitAllCleanup } from "./child-process-lifecycle.ts";
 import { generateIsolatedHandoffSummary } from "./handoff-summary.ts";
+import { runIsolatedImprovementEvaluation } from "./improvement-evaluation.ts";
 import { selectAutoModel } from "../auto-model-routing.ts";
 
 const startedAt = new Date().toISOString();
@@ -123,6 +126,7 @@ function write(message: RuntimeWireMessage): void {
 }
 
 const runGitBaselines = new Map<string, GitRunBaseline>();
+const runsWithPossibleWorkspaceChanges = new Set<string>();
 const activeRequests = new Set<Promise<void>>();
 const pendingRunFinalizers = new Set<Promise<void>>();
 const activeRunIds = new Set<string>();
@@ -146,6 +150,9 @@ function emitDirect(event: RuntimeEvent): void {
 }
 
 function emit(event: RuntimeEvent): void {
+  if ("runId" in event && (event.type === "run.workspace-changed" || ((event.type === "activity.started" || event.type === "activity.completed") && ["edit", "command"].includes(event.activity.kind)))) {
+    runsWithPossibleWorkspaceChanges.add(event.runId);
+  }
   if (
     "runId" in event
     && ["run.completed", "run.cancelled", "run.failed"].includes(event.type)
@@ -157,13 +164,14 @@ function emit(event: RuntimeEvent): void {
     }
     const baseline = runGitBaselines.get(event.runId);
     runGitBaselines.delete(event.runId);
+    const mayHaveWorkspaceChanges = runsWithPossibleWorkspaceChanges.delete(event.runId);
     if (baseline) {
       if (shuttingDown) {
         activeRunIds.delete(event.runId);
         emitDirect(event);
         return;
       }
-      const finalizer = gitChanges.compareRunChanges(baseline).then((patch) => {
+      const finalizer = Promise.resolve(mayHaveWorkspaceChanges ? gitChanges.compareRunChanges(baseline) : gitChanges.unchangedRunPatch(baseline)).then((patch) => {
         emitDirect({ type: "run.git-patch", runId: event.runId, patch });
       }).catch((error) => {
         emitDirect({
@@ -656,6 +664,9 @@ async function handleRequest(input: unknown): Promise<void> {
         result = generated;
         break;
       }
+      case "improvement.evaluation.run":
+        result = await runIsolatedImprovementEvaluation(workspaceRoot, request.params, (revisionId) => profiles.getRevision(revisionId));
+        break;
       case "handoff.preview": {
         const params = handoffPreviewParamsSchema.parse(request.params);
         const source = taskStore.load(workspaceId).tasks.find((task) => task.id === params.sourceTaskId);
@@ -818,6 +829,11 @@ async function handleRequest(input: unknown): Promise<void> {
       case "git.branch.switch": {
         const params = gitBranchSwitchParamsSchema.parse(request.params);
         result = gitBranchesListResultSchema.parse(await enqueueGitMutation(() => gitChanges.switchBranch(params)));
+        break;
+      }
+      case "git.worktree.create": {
+        const params = gitWorktreeCreateParamsSchema.parse(request.params);
+        result = gitWorktreeCreateResultSchema.parse(await enqueueGitMutation(() => gitChanges.createWorktree(params)));
         break;
       }
       case "git.commit": {

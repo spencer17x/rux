@@ -17,7 +17,7 @@
 - [x] Task 历史、草稿、侧栏和审查偏好跨启动保留；Terminal Session 不自动恢复。
 - [x] Composer 可通过原生选择器添加 Workspace 内文件，显示并移除 Context。
 - [x] Main/Runtime 对文件进行 realpath、组件边界、符号链接、大小和 Secret 校验。
-- [ ] TODO：取得 ChatGPT Codex 26.810.52044 相同状态、相同尺寸的官方截图，完成像素级视觉对比和最后一轮视觉修正。
+- [x] 使用用户提供的 ChatGPT Codex 26.810.52044 权限状态参考图完成同状态真实打包验证与 1433×812 同尺寸并排对照；修复 Inspector 挤压 736px 主 rail 的最后一项结构偏差，证据保存在 `design-audit/final-local-goals/`。
 
 ## Goal 2：Agent 与 Provider 连接管理（P0）
 
@@ -115,7 +115,7 @@
 - [x] Engine 未明确支持同 Session 按 Run 换模时，阻止试探性切换并提供固定模型/新 Task 路径。
 - [x] 明确不兼容时只按策略在白名单内回退；认证、网络、配额错误不触发永久失效。
 - [x] Transcript 和 Run 面板展示实际模型、分类原因、回退证据及输入/缓存输入/输出/推理/总 Token。
-- [ ] TODO：若未来改用模型型 Router，单独记录 Router 的模型、Token、费用和来源，不能混入业务 Run 用量。
+- [ ] TODO（条件未触发）：当前仍使用无额外 Token 的确定性 Router；只有未来改用模型型 Router 时，才必须单独记录 Router 模型、Token、费用和来源，不能混入业务 Run 用量。
 
 ## Goal 10：Rux Native Provider 编码闭环（P2-E1）
 
@@ -132,8 +132,8 @@
 - [x] 支持 Anthropic Messages 原生协议、官方鉴权/版本头、模型目录、Streaming、Tool Use、Token Usage，以及无原生 Session API 的有界同 Task 对话历史。
 - [x] Rux Native 已覆盖 OpenAI Responses、OpenAI Chat Completions 与 Anthropic Messages 三种原生协议，共享显式模型目录/Provider 报告能力协商、流式输出、工具循环、Token、历史边界和网络安全合同；新增协议必须有官方合同和同等级测试，不做猜测式兼容。
 - [x] 已完成 Rux Native 原生 OAuth 合规设计合同，覆盖 Provider 注册门槛、Authorization Code + PKCE、端点约束、Main/Runtime Token 保管、撤销、迁移和安全验收；当前不伪造任何 Provider 登录能力。
-- [ ] TODO：取得 Provider 官方桌面 OAuth 合同与 RUX Client 注册后，实现对应 Provider Adapter 并完成真实授权、刷新、撤销和打包验收；不得复用或复制 CLI/个人订阅凭据。
-- [ ] TODO：补齐 Windows/Linux 等价命令沙箱与真实打包验收。
+- [ ] TODO（外部阻塞）：取得 Provider 官方桌面 OAuth 合同与 RUX Client 注册后，实现对应 Provider Adapter 并完成真实授权、刷新、撤销和打包验收；不得复用或复制 CLI/个人订阅凭据。
+- [ ] TODO（目标平台阻塞）：在 Windows/Linux 目标机实现并验证等价命令沙箱；当前非 macOS 平台继续安全省略命令工具，不降级为未隔离 Shell。
 - [x] 提供 Main-owned 平台凭据库诊断和确认门控的安全重新封装：只返回后端、计数和失败标签，预检全部密文后原子写入，并保留仅含密文的本地备份；Renderer 不接触 Secret。
 
 ## Goal 11：共享 Runtime 协议与 TUI（跨阶段）
@@ -161,13 +161,31 @@
 - [x] Web、Desktop、Runtime Host 和 TUI 构建通过。
 - [x] macOS arm64 未签名应用可打包，并已完成真实桌面点击路径验收。
 - [x] 已保存 Codex 风格对齐和真实运行的设计/验收证据。
-- [ ] TODO：配置 Apple Developer ID 签名。
+- [ ] TODO（凭据阻塞）：提供真实 Apple Developer ID 签名身份；仓库配置和 fail-closed 门禁已完成，当前机器没有有效 identity。
 - [x] 已实现 fail-closed 跨平台 Release Workflow：完整测试后构建 DMG/ZIP、NSIS、AppImage/DEB，macOS 强制检查签名输入、codesign、Gatekeeper 与 stapled notarization，产出 SHA-256/JSON Manifest，并经 `production-release` 人工环境门控；同时提供迁移、事故和回滚 Playbook。
-- [ ] TODO：注入真实 Apple Developer ID 与 App Store Connect 凭据，跑通并保存 macOS 签名、公证和恢复演练证据。
+- [ ] TODO（凭据阻塞）：注入真实 Apple Developer ID 与 App Store Connect 凭据，跑通并保存 macOS 签名、公证和恢复演练证据。
 - [x] 已配置版本化安装包目标、跨平台 TUI 资源准备、Release Manifest、`CHANGELOG.md` Release Notes 模板和明确的手动升级/回滚合同；未签名产物不标记为正式发布。
 - [x] 已实现 Main-owned 签名应用更新状态机：正式包从构建期 HTTPS Feed 配置读取更新，electron-updater 执行 SHA-512、平台签名和分阶段资格校验；下载与安装均由用户显式触发，安装前再次原生确认。新版本连续两次未达到健康检查点时，只接受回滚 Feed 精确指向上一健康版本的已签名包并自动恢复。无 Feed 或未签名 QA 包 fail closed，不发起更新请求。
-- [ ] TODO：完成 Windows/Linux 桌面包、凭据库、终端和安全边界验收。
-- [ ] TODO：在取得官方同状态参考图后关闭像素级视觉验收阻塞项。
+- [ ] TODO（目标平台阻塞）：在 Windows/Linux 目标机完成桌面包、凭据库、终端和安全边界验收；本机无法把交叉构建当作目标机安全证明。
+- [x] 已取得并保存官方版本同状态参考图，完成同尺寸视觉门禁；OS 限制下的真实包截图与精确 Browser viewport 证据配对记录，未从截图推断完整无障碍合规。
+
+## Goal 14：项目看板、经验沉淀与受控演进（K1/L1/L2/E1）
+
+- [x] 使用规范化 Git common-dir 与 WorkingCopy 身份聚合已授权目录；Task 保留具体执行根和分支。
+- [x] 显式发现 Git worktree 元数据，授权根外工作副本必须确认后才加入 Project。
+- [x] Main-owned Board Store 提供四个系统列、唯一 Task 卡片、需求卡片、Task 关联、拖拽/键盘移动、运行徽标与功能开关。
+- [x] Board 自动规则只推进到进行中或待验收；手工移动后不会被自动规则覆盖，绝不自动完成。
+- [x] Main-owned Improvement Store 从明确反馈和失败后恢复提取脱敏证据，去重生成可审查候选。
+- [x] 改进中心支持项目规则、Skill、Workflow 的显式候选、证据/收益/风险审查、编辑后批准、拒绝、稍后处理和回滚。
+- [x] 发布执行 Secret、权限、作用域和证据门禁，生成 Rux-managed 不可变资产版本；新 Task 固定 active 资产，既有 Task 不被改写。
+- [x] 从持久化 Task/Run 事实记录资产采用与完成/失败/停止计数；缺少可执行隔离评测时明确标记 unknown。
+- [x] 支持自定义看板列名称、增加自定义列和键盘可操作的列排序，同时保持稳定 stateId。
+- [x] 删除 Task/Workspace 前显示 Board Task 卡片与需求关联影响；执行后保留需求卡片并清理失效关联。
+- [x] 支持由 Rux 创建 worktree：Desktop 与 TUI 均使用两阶段确认，Runtime protocol v17 仅在仓库根使用结构化 Git argv 创建；现有目录、已占用分支、Git 元数据路径和未授权 Project 身份均 fail closed。
+- [x] 支持资产导出预览与确认：Codex Skill/Workflow 按官方 `SKILL.md` 合同发布到 Project 或用户 `.agents/skills`，Rux 格式可导出到用户选择目录；完整文件 Diff、目标哈希、过期预览、symlink/越界检查和不支持类型降级均 fail closed。
+- [x] 实现隔离 A/B 评测与保留集：Baseline/Candidate 各自使用无工具、无持久 Session 的临时 Codex/Claude 调用，按用户期望文本确定性评分；Candidate 不得回归且 Holdout 必须通过，失败阻止发布，同模型自评仅作 advisory。
+- [x] 实现后台演进预算与策略：独立评测 Agent、每日/项目 Token、单次 Token/费用预留、每日费用上限、空闲/接电策略和立即暂停；默认开启但在 Agent、用例与预算齐备前不调用 Provider，用量、延迟、模型和未报告费用与普通 Run 分开保存。
+- [x] Agent 指令候选固定提议时 Profile/Revision；确认发布追加新 Agent Revision，既有 Task 不变，新 Task/Handoff 使用刷新后的最新 Revision；候选过期时拒绝覆盖，回滚也通过追加恢复 Revision 完成。
 
 ## 汇总
 

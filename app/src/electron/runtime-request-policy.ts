@@ -20,6 +20,7 @@ const MUTATING_METHODS = new Set<RuntimeMethod>([
   "agent.profile.delete",
   "session.cancel",
   "handoff.summary.generate",
+  "improvement.evaluation.run",
   "run.start",
   "run.cancel",
   "permission.decide",
@@ -28,6 +29,7 @@ const MUTATING_METHODS = new Set<RuntimeMethod>([
   "changes.restore",
   "changes.accept",
   "git.branch.switch",
+  "git.worktree.create",
   "git.commit",
   "git.push",
   "task.state.save",
@@ -36,7 +38,9 @@ const MUTATING_METHODS = new Set<RuntimeMethod>([
 export function runtimeRequestPolicy(method: RuntimeMethod): RuntimeRequestPolicy {
   const timeoutMs = method === "auth.login"
     ? 10 * 60_000 + 5_000
-    : ["handoff.summary.generate", "run.start", "permission.decide", "run.changes.restore", "git.branch.switch", "git.commit", "git.push"].includes(method)
+    : method === "improvement.evaluation.run"
+      ? 25 * 60_000
+    : ["handoff.summary.generate", "run.start", "permission.decide", "run.changes.restore", "git.branch.switch", "git.worktree.create", "git.commit", "git.push"].includes(method)
       ? 3 * 60_000
       : method.startsWith("changes.")
           || method === "git.branches.list"

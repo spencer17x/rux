@@ -510,6 +510,14 @@ const COMMANDS: &[CommandSpec] = &[
         description: "Switch to an existing local Git branch",
     },
     CommandSpec {
+        name: "worktree",
+        description: "Preview creating a Git worktree: <absolute-path> <branch>",
+    },
+    CommandSpec {
+        name: "worktree-confirm",
+        description: "Confirm the exact pending worktree path and branch",
+    },
+    CommandSpec {
         name: "compare",
         description: "Compare a branch to the current branch",
     },
@@ -595,6 +603,7 @@ pub struct App {
     pending_logout: Option<String>,
     pending_profile_delete: Option<String>,
     pending_push: bool,
+    pending_worktree: Option<(String, String)>,
     handoff_message_ids: Vec<String>,
     handoff_file_paths: Vec<String>,
     handoff_target_request: Option<String>,
@@ -659,6 +668,7 @@ impl App {
             pending_logout: None,
             pending_profile_delete: None,
             pending_push: false,
+            pending_worktree: None,
             handoff_message_ids: Vec::new(),
             handoff_file_paths: Vec::new(),
             handoff_target_request: None,
@@ -978,7 +988,7 @@ impl App {
         self.screen = Screen::Task;
         match command {
             "help" => self.entries.push(TranscriptEntry::System(
-                "Commands: /new /tasks /agent /profile /providers /login /logout /models /sessions /session-preview /session-import /handoff /data /changes /diff /context /accept /restore /branches /switch /compare /commit /push /evidence /status /quit · Ctrl+T tasks · Ctrl+E evidence · @ files".into(),
+                "Commands: /new /tasks /agent /profile /providers /login /logout /models /sessions /session-preview /session-import /handoff /data /changes /diff /context /accept /restore /branches /switch /worktree /compare /commit /push /evidence /status /quit · Ctrl+T tasks · Ctrl+E evidence · @ files".into(),
             )),
             "new" => {
                 self.entries.clear();
@@ -1039,6 +1049,8 @@ impl App {
             "run-restore-confirm" => return self.request_run_restore_confirm(arguments),
             "branches" => return self.request_branches(),
             "switch" => return self.request_branch_switch(arguments),
+            "worktree" => self.preview_worktree_create(arguments),
+            "worktree-confirm" => return self.confirm_worktree_create(arguments),
             "compare" => return self.request_branch_compare(arguments),
             "commit" => return self.request_commit(arguments),
             "push" => self.preview_push(),
@@ -1477,6 +1489,52 @@ impl App {
         vec![Effect::SendRuntime(
             self.request("git.branch.switch", json!({ "branch": branch })),
         )]
+    }
+
+    fn parse_worktree_arguments(arguments: &str) -> Option<(String, String)> {
+        let (path, branch) = arguments.trim().rsplit_once(' ')?;
+        let path = path.trim();
+        let branch = branch.trim();
+        (!path.is_empty() && !branch.is_empty()).then(|| (path.into(), branch.into()))
+    }
+
+    fn preview_worktree_create(&mut self, arguments: &str) {
+        let Some((path, branch)) = Self::parse_worktree_arguments(arguments) else {
+            self.entries.push(TranscriptEntry::Error(
+                "Usage: /worktree <absolute-path> <local-branch>".into(),
+            ));
+            return;
+        };
+        if !Path::new(&path).is_absolute() {
+            self.entries.push(TranscriptEntry::Error(
+                "Worktree target must be an absolute path".into(),
+            ));
+            return;
+        }
+        self.pending_worktree = Some((path.clone(), branch.clone()));
+        self.entries.push(TranscriptEntry::System(format!(
+            "Worktree creation preview: Git will create {path} on local branch {branch}. The target must not exist; an occupied branch, Git metadata path, active Run, or Terminal mutation lock fails closed. Type /worktree-confirm {path} {branch}"
+        )));
+    }
+
+    fn confirm_worktree_create(&mut self, arguments: &str) -> Vec<Effect> {
+        let Some((path, branch)) = Self::parse_worktree_arguments(arguments) else {
+            self.entries.push(TranscriptEntry::Error(
+                "Usage: /worktree-confirm <absolute-path> <local-branch>".into(),
+            ));
+            return Vec::new();
+        };
+        if self.pending_worktree.as_ref() != Some(&(path.clone(), branch.clone())) {
+            self.entries.push(TranscriptEntry::Error(
+                "Worktree confirmation must exactly match the previewed path and branch".into(),
+            ));
+            return Vec::new();
+        }
+        self.pending_worktree = None;
+        vec![Effect::SendRuntime(self.request(
+            "git.worktree.create",
+            json!({ "path": path, "branch": branch, "confirmed": true }),
+        ))]
     }
 
     fn request_branch_compare(&mut self, base: &str) -> Vec<Effect> {
@@ -2608,6 +2666,17 @@ impl App {
             Some("run.changes.previewRestore") => self.apply_run_restore_preview_response(result),
             Some("run.changes.restore") => self.apply_run_restore_response(result),
             Some("git.branches.list" | "git.branch.switch") => self.apply_branches_response(result),
+            Some("git.worktree.create") => {
+                let path = result
+                    .and_then(|value| value.get("path"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("worktree");
+                let branch = result
+                    .and_then(|value| value.get("branch"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("branch");
+                self.entries.push(TranscriptEntry::System(format!("Created Git worktree {path} · {branch}. Restart or point the TUI at that working copy to run there.")));
+            }
             Some("git.compare") => self.apply_compare_response(result),
             Some("git.commit") => self.apply_commit_response(result),
             Some("git.push") => self.apply_push_response(result),
@@ -4464,6 +4533,20 @@ mod tests {
         type_text(&mut app, "/push-confirm");
         let effects = app.update(Action::Submit);
         assert!(effects.iter().any(|effect| matches!(effect, Effect::SendRuntime(request) if request.method == "git.push" && request.params["confirmed"] == true)));
+
+        type_text(&mut app, "/worktree /tmp/rux-new codex/worktree-test");
+        assert!(app.update(Action::Submit).is_empty());
+        type_text(
+            &mut app,
+            "/worktree-confirm /tmp/rux-other codex/worktree-test",
+        );
+        assert!(app.update(Action::Submit).is_empty());
+        type_text(
+            &mut app,
+            "/worktree-confirm /tmp/rux-new codex/worktree-test",
+        );
+        let effects = app.update(Action::Submit);
+        assert!(effects.iter().any(|effect| matches!(effect, Effect::SendRuntime(request) if request.method == "git.worktree.create" && request.params["confirmed"] == true && request.params["path"] == "/tmp/rux-new")));
 
         app.run_review_sources.insert(
             "run-1".into(),

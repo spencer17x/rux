@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const RUX_PROTOCOL_VERSION = 16 as const;
+export const RUX_PROTOCOL_VERSION = 17 as const;
 
 export const IPC_CHANNELS = {
   request: "rux:runtime:request",
@@ -13,6 +13,19 @@ export const IPC_CHANNELS = {
   workspaceOpen: "rux:workspace:open",
   taskStateLoad: "rux:task-state:load",
   taskStateSave: "rux:task-state:save",
+  boardLoad: "rux:board:load",
+  boardMutate: "rux:board:mutate",
+  projectWorkingCopiesList: "rux:project:working-copies-list",
+  projectWorkingCopyAuthorize: "rux:project:working-copy-authorize",
+  projectWorkingCopyCreate: "rux:project:working-copy-create",
+  improvementSummary: "rux:improvement:summary",
+  improvementAnalyze: "rux:improvement:analyze",
+  improvementDecide: "rux:improvement:decide",
+  improvementSettingsUpdate: "rux:improvement:settings-update",
+  improvementPropose: "rux:improvement:propose",
+  improvementExportPreview: "rux:improvement:export-preview",
+  improvementExportCommit: "rux:improvement:export-commit",
+  improvementEvaluate: "rux:improvement:evaluate",
   sessionImport: "rux:session:import",
   sessionAttributionMigrate: "rux:session:attribution-migrate",
   sessionRefresh: "rux:session:refresh",
@@ -73,6 +86,7 @@ export const runtimeMethods = [
   "provider.connection.sync",
   "provider.connection.test",
   "handoff.summary.generate",
+  "improvement.evaluation.run",
   "handoff.preview",
   "handoff.commit",
   "local.data.summary",
@@ -92,6 +106,7 @@ export const runtimeMethods = [
   "changes.restore",
   "changes.accept",
   "git.branches.list",
+  "git.worktree.create",
   "git.branch.switch",
   "git.commit",
   "git.push",
@@ -104,7 +119,7 @@ export const runtimeMethods = [
 export type RuntimeMethod = (typeof runtimeMethods)[number];
 export type RendererRuntimeMethod = Exclude<
   RuntimeMethod,
-  "runtime.shutdown" | "session.list" | "session.import" | "session.refresh" | "session.rebuild" | "session.revision.list" | "session.revision.restore" | "session.attribution.migrate" | "session.read" | "session.resume.check" | "handoff.preview" | "handoff.commit" | "handoff.summary.generate" | "local.data.summary" | "local.data.preview" | "local.data.execute" | "local.data.export" | "provider.connection.sync" | "provider.connection.test"
+  "runtime.shutdown" | "session.list" | "session.import" | "session.refresh" | "session.rebuild" | "session.revision.list" | "session.revision.restore" | "session.attribution.migrate" | "session.read" | "session.resume.check" | "handoff.preview" | "handoff.commit" | "handoff.summary.generate" | "improvement.evaluation.run" | "local.data.summary" | "local.data.preview" | "local.data.execute" | "local.data.export" | "provider.connection.sync" | "provider.connection.test" | "git.worktree.create"
 >;
 
 export interface RuntimeStatus {
@@ -1109,6 +1124,19 @@ export interface GitBranchSwitchParams {
   branch: string;
 }
 
+export interface GitWorktreeCreateParams {
+  path: string;
+  branch: string;
+  confirmed: true;
+}
+
+export interface GitWorktreeCreateResult {
+  path: string;
+  branch: string;
+  headId: string;
+  createdBranch: boolean;
+}
+
 export interface GitCommitParams {
   message: string;
 }
@@ -1348,12 +1376,219 @@ export interface WorkspaceSummary {
   branch: string;
   lastOpenedAt: string;
   placeholder?: boolean;
+  projectId?: string;
+  projectName?: string;
+  workingCopyId?: string;
+  workingCopyName?: string;
+  workingCopyKind?: "main" | "worktree" | "directory";
+  repositoryRoot?: string;
+  gitCommonDir?: string;
 }
 
 export interface WorkspaceState {
   active: WorkspaceSummary;
   recent: WorkspaceSummary[];
 }
+
+export const boardSemanticRoles = ["todo", "in-progress", "review", "done", "custom"] as const;
+export type BoardSemanticRole = (typeof boardSemanticRoles)[number];
+export const boardItemTypes = ["requirement", "task"] as const;
+export type BoardItemType = (typeof boardItemTypes)[number];
+export const boardPriorities = ["low", "medium", "high", "urgent"] as const;
+export type BoardPriority = (typeof boardPriorities)[number];
+
+export interface BoardStateColumn {
+  id: string;
+  name: string;
+  order: number;
+  semanticRole: BoardSemanticRole;
+}
+
+export interface BoardWorkItem {
+  id: string;
+  projectId: string;
+  workspaceId?: string;
+  type: BoardItemType;
+  title: string;
+  description: string;
+  stateId: string;
+  priority: BoardPriority;
+  labels: string[];
+  acceptanceCriteria: string[];
+  linkedTaskId?: string;
+  linkedTaskIds: string[];
+  automationMode: "automatic" | "manual";
+  agent?: string;
+  model?: string;
+  branch?: string;
+  taskStatus?: PersistedTaskStatus;
+  latestRunStatus?: PersistedRunStatus;
+  pendingApprovals?: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BoardTransition {
+  id: string;
+  workItemId: string;
+  fromStateId?: string;
+  toStateId: string;
+  source: "user" | "run-rule";
+  runId?: string;
+  createdAt: string;
+}
+
+export interface BoardSnapshot {
+  version: 1;
+  projectId: string;
+  revision: number;
+  enabled: boolean;
+  states: BoardStateColumn[];
+  items: BoardWorkItem[];
+  transitions: BoardTransition[];
+  updatedAt: string;
+}
+
+export type BoardMutation =
+  | { action: "set-enabled"; enabled: boolean }
+  | { action: "create-requirement"; title: string; description?: string; priority?: BoardPriority; labels?: string[]; acceptanceCriteria?: string[]; linkedTaskIds?: string[] }
+  | { action: "update-requirement"; itemId: string; title?: string; description?: string; priority?: BoardPriority; labels?: string[]; acceptanceCriteria?: string[]; linkedTaskIds?: string[] }
+  | { action: "move-item"; itemId: string; stateId: string }
+  | { action: "delete-requirement"; itemId: string }
+  | { action: "create-state"; name: string }
+  | { action: "rename-state"; stateId: string; name: string }
+  | { action: "reorder-states"; stateIds: string[] };
+
+export interface BoardLoadParams { projectId: string }
+export interface BoardMutationParams { projectId: string; expectedRevision: number; mutation: BoardMutation }
+
+export interface ProjectWorkingCopy {
+  id: string;
+  projectId: string;
+  path: string;
+  name: string;
+  kind: "main" | "worktree";
+  branch?: string;
+  headOid?: string;
+  availability: "available" | "missing" | "invalid";
+  authorizationState: "authorized" | "pending";
+}
+export interface ProjectWorkingCopiesParams { projectId: string }
+export interface ProjectWorkingCopyAuthorizeParams { projectId: string; path: string; confirmed: true }
+export interface ProjectWorkingCopyCreateParams { projectId: string; path: string; branch: string; confirmed: true }
+
+export const improvementCandidateTypes = ["project-rule", "skill", "workflow", "agent-instruction"] as const;
+export const improvementCandidateStatuses = ["pending", "snoozed", "rejected", "published", "rolled-back"] as const;
+export type ImprovementCandidateType = (typeof improvementCandidateTypes)[number];
+export type ImprovementCandidateStatus = (typeof improvementCandidateStatuses)[number];
+export interface ImprovementEvidence {
+  id: string;
+  kind: "explicit-feedback" | "recovery-pattern" | "repeated-pattern";
+  projectId: string;
+  taskId: string;
+  runId?: string;
+  preview: string;
+  fingerprint: string;
+  occurredAt: string;
+}
+export interface ImprovementCandidate {
+  id: string;
+  revision: number;
+  type: ImprovementCandidateType;
+  status: ImprovementCandidateStatus;
+  scope: "project" | "user" | "agent";
+  projectId?: string;
+  agentRevisionId?: string;
+  agentProfileId?: string;
+  name: string;
+  content: string;
+  rationale: string;
+  expectedBenefit: string;
+  risk: string;
+  proposer: { kind: "deterministic" | "user" | "model"; source: string; model?: string; tokenUsage?: number };
+  evidenceIds: string[];
+  createdAt: string;
+  decidedAt?: string;
+  rejectionReason?: string;
+  publishedAssetId?: string;
+  publishedAgentRevisionId?: string;
+  rollbackAgentRevisionId?: string;
+  evaluation?: { status: "passed" | "failed" | "unknown"; checks: string[]; evidenceCount: number; evaluatedAt: string };
+}
+export interface ImprovementAsset {
+  id: string;
+  candidateId: string;
+  type: ImprovementCandidateType;
+  scope: "project" | "user" | "agent";
+  projectId?: string;
+  agentRevisionId?: string;
+  agentProfileId?: string;
+  version: number;
+  name: string;
+  content: string;
+  status: "active" | "rolled-back" | "superseded";
+  createdAt: string;
+  rolledBackAt?: string;
+  supersededAt?: string;
+  formatVersion: 1;
+  storage: "rux-managed";
+  evaluation: { status: "passed" | "unknown"; checks: string[]; evidenceCount: number; evaluatedAt: string };
+}
+export interface ImprovementAdoption { assetId: string; taskId: string; projectId: string; adoptedAt: string; completedRunCount: number; failedRunCount: number; stoppedRunCount: number; lastObservedAt: string }
+export interface ImprovementSettings {
+  evidenceCollection: boolean;
+  candidateGeneration: boolean;
+  controlledEvolution: boolean;
+  backgroundModelReview: boolean;
+  paused: boolean;
+  dailyTokenLimit: number;
+  perProjectTokenLimit: number;
+  evaluationTokenReservation: number;
+  evaluationCostReservationUsd: number;
+  dailyCostUsdLimit?: number;
+  onlyWhenIdle: boolean;
+  onlyOnAcPower: boolean;
+  evaluatorAgentId?: string;
+}
+export interface ImprovementEvaluationCase { id: string; name: string; input: string; expectedIncludes: string; holdout: boolean }
+export interface ImprovementEvaluationOutcome { caseId: string; variant: "baseline" | "candidate"; passed: boolean; outputPreview: string; durationMs: number; tokens?: number }
+export interface ImprovementEvaluationRecord { id: string; candidateId: string; projectId: string; status: "passed" | "failed" | "unknown"; evaluatorAgentId: string; evaluatorAgentRevisionId: string; evaluatorAdapter: "codex" | "claude-code"; model?: string; cases: ImprovementEvaluationCase[]; outcomes: ImprovementEvaluationOutcome[]; baselinePassed: number; candidatePassed: number; holdoutPassed: boolean; totalTokens?: number; tokenSource: "engine" | "unreported"; costUsd?: number; costSource: "engine" | "unreported"; createdAt: string }
+export interface ImprovementBudgetUsage { date: string; projectId: string; reservedTokens: number; reportedTokens: number; reservedCostUsd: number; evaluations: number; reportedCostUsd?: number }
+export interface ImprovementSummary {
+  settings: ImprovementSettings;
+  evidence: ImprovementEvidence[];
+  candidates: ImprovementCandidate[];
+  assets: ImprovementAsset[];
+  adoptions: ImprovementAdoption[];
+  evaluations: ImprovementEvaluationRecord[];
+  budgetUsage: ImprovementBudgetUsage[];
+  pendingCount: number;
+  updatedAt: string;
+}
+export interface ImprovementSummaryParams { projectId?: string }
+export interface ImprovementAnalyzeParams { projectId: string }
+export interface ImprovementDecideParams { candidateId: string; action: "publish" | "reject" | "snooze" | "rollback"; confirmed: true; editedContent?: string; reason?: string }
+export interface ImprovementSettingsUpdateParams { patch: Partial<Omit<ImprovementSettings, "evaluatorAgentId" | "dailyCostUsdLimit">> & { evaluatorAgentId?: string | null; dailyCostUsdLimit?: number | null } }
+export interface ImprovementProposeParams { projectId: string; type: "project-rule" | "skill" | "workflow" | "agent-instruction"; scope: "project" | "user" | "agent"; agentProfileId?: string; name: string; content: string; expectedBenefit?: string; risk?: string }
+export const improvementExportTargets = ["project-codex", "user-codex", "custom-rux"] as const;
+export type ImprovementExportTarget = (typeof improvementExportTargets)[number];
+export interface ImprovementExportPreviewParams { assetId: string; target: ImprovementExportTarget; projectId?: string }
+export interface ImprovementExportPreview {
+  id: string;
+  assetId: string;
+  target: ImprovementExportTarget;
+  engine: "codex" | "rux";
+  filePath: string;
+  exists: boolean;
+  beforeHash?: string;
+  afterHash: string;
+  diff: string;
+  expiresAt: string;
+}
+export interface ImprovementExportCommitParams { previewId: string; confirmed: true }
+export interface ImprovementExportResult { assetId: string; target: ImprovementExportTarget; filePath: string; bytes: number; exportedAt: string }
+export interface ImprovementEvaluateParams { candidateId: string; evaluatorAgentId: string; cases: ImprovementEvaluationCase[] }
+export interface ImprovementEvaluationRuntimeParams { operationId: string; candidateId: string; projectId: string; candidateContent: string; adapter: "codex" | "claude-code"; evaluatorAgentId: string; evaluatorAgentRevisionId: string; profileId?: string; model?: string; reasoningEffort?: string; evaluatorInstructions?: string; cases: ImprovementEvaluationCase[] }
 
 export const persistedTaskStatuses = ["waiting", "blocked", "running", "completed", "failed", "interrupted", "stopped"] as const;
 export type PersistedTaskStatus = (typeof persistedTaskStatuses)[number];
@@ -1533,6 +1768,8 @@ export interface PersistedTask {
   importedSession?: ImportedSessionBinding;
   handoffSource?: HandoffRelation;
   handoffTargets?: HandoffRelation[];
+  boardSource?: { projectId: string; requirementItemId: string; createdAt: string };
+  improvementAssets?: Array<{ id: string; type: ImprovementCandidateType; name: string; content: string; version: number }>;
 }
 
 export interface HandoffPreviewParams {
@@ -1722,6 +1959,7 @@ export interface RuntimeRequestMap {
     params: HandoffSummaryRuntimeParams;
     result: HandoffSummaryGenerateResult;
   };
+  "improvement.evaluation.run": { params: ImprovementEvaluationRuntimeParams; result: ImprovementEvaluationRecord };
   "handoff.preview": { params: HandoffPreviewParams; result: HandoffPreviewResult };
   "handoff.commit": { params: HandoffCommitParams; result: HandoffCommitResult };
   "local.data.summary": { params: Record<string, never>; result: LocalDataSummary };
@@ -1779,6 +2017,10 @@ export interface RuntimeRequestMap {
   "git.branches.list": {
     params: Record<string, never>;
     result: GitBranchesListResult;
+  };
+  "git.worktree.create": {
+    params: GitWorktreeCreateParams;
+    result: GitWorktreeCreateResult;
   };
   "git.branch.switch": {
     params: GitBranchSwitchParams;
@@ -2046,6 +2288,19 @@ export interface RuxDesktopApi {
   openWorkspaceLocation(target?: WorkspaceOpenTarget): Promise<WorkspaceOpenResult>;
   loadTaskState(workspaceId?: string): Promise<WorkspaceTaskState>;
   saveTaskState(state: WorkspaceTaskState): Promise<TaskStateSaveResult>;
+  loadBoard(params: BoardLoadParams): Promise<BoardSnapshot>;
+  mutateBoard(params: BoardMutationParams): Promise<BoardSnapshot>;
+  listProjectWorkingCopies(params: ProjectWorkingCopiesParams): Promise<ProjectWorkingCopy[]>;
+  authorizeProjectWorkingCopy(params: ProjectWorkingCopyAuthorizeParams): Promise<WorkspaceState>;
+  createProjectWorkingCopy(params: ProjectWorkingCopyCreateParams): Promise<WorkspaceState>;
+  getImprovementSummary(params?: ImprovementSummaryParams): Promise<ImprovementSummary>;
+  analyzeImprovements(params: ImprovementAnalyzeParams): Promise<ImprovementSummary>;
+  decideImprovement(params: ImprovementDecideParams): Promise<ImprovementSummary>;
+  updateImprovementSettings(params: ImprovementSettingsUpdateParams): Promise<ImprovementSummary>;
+  proposeImprovement(params: ImprovementProposeParams): Promise<ImprovementSummary>;
+  previewImprovementExport(params: ImprovementExportPreviewParams): Promise<ImprovementExportPreview | null>;
+  commitImprovementExport(params: ImprovementExportCommitParams): Promise<ImprovementExportResult>;
+  evaluateImprovement(params: ImprovementEvaluateParams): Promise<ImprovementSummary>;
   importSession(params: SessionImportParams): Promise<SessionImportResult>;
   migrateSessionAttribution(params: SessionAttributionMigrateParams): Promise<SessionAttributionMigrateResult>;
   refreshSession(params: SessionRefreshParams): Promise<SessionRefreshResult>;
@@ -2788,6 +3043,19 @@ export const gitBranchSwitchParamsSchema = z.object({
   branch: gitBranchNameSchema,
 }).strict();
 
+export const gitWorktreeCreateParamsSchema = z.object({
+  path: z.string().trim().min(1).max(4_096),
+  branch: gitBranchNameSchema,
+  confirmed: z.literal(true),
+}).strict();
+
+export const gitWorktreeCreateResultSchema = z.object({
+  path: z.string().min(1).max(4_096),
+  branch: gitBranchNameSchema,
+  headId: gitObjectIdSchema,
+  createdBranch: z.boolean(),
+}).strict();
+
 export const gitCommitParamsSchema = z.object({
   message: z.string().trim().min(1).max(10_000),
 }).strict();
@@ -3356,6 +3624,8 @@ export const persistedTaskSchema = z.object({
   importedSession: importedSessionBindingSchema.optional(),
   handoffSource: handoffRelationSchema.optional(),
   handoffTargets: z.array(handoffRelationSchema).max(2_000).default([]),
+  boardSource: z.object({ projectId: persistedWorkspaceIdSchema, requirementItemId: z.string().min(1).max(240), createdAt: persistedIsoDateSchema }).strict().optional(),
+  improvementAssets: z.array(z.object({ id: z.string().min(1).max(240), type: z.enum(improvementCandidateTypes), name: z.string().min(1).max(120), content: z.string().min(1).max(100_000), version: z.number().int().min(1) }).strict()).max(64).default([]),
 }).strict().superRefine((task, context) => {
   if (task.providerConnection.engine !== task.adapter) {
     context.addIssue({ code: "custom", path: ["providerConnection", "engine"], message: "Task Connection Engine must match its adapter" });
@@ -3631,6 +3901,116 @@ export const workspaceTaskStateSchema = z.object({
     });
   });
 });
+
+export const boardStateColumnSchema = z.object({
+  id: z.string().min(1).max(120),
+  name: z.string().trim().min(1).max(80),
+  order: z.number().int().min(0).max(1_000),
+  semanticRole: z.enum(boardSemanticRoles),
+}).strict();
+
+export const boardWorkItemSchema = z.object({
+  id: z.string().min(1).max(240),
+  projectId: persistedWorkspaceIdSchema,
+  workspaceId: persistedWorkspaceIdSchema.optional(),
+  type: z.enum(boardItemTypes),
+  title: z.string().trim().min(1).max(10_000),
+  description: z.string().max(100_000),
+  stateId: z.string().min(1).max(120),
+  priority: z.enum(boardPriorities),
+  labels: z.array(z.string().trim().min(1).max(80)).max(64),
+  acceptanceCriteria: z.array(z.string().trim().min(1).max(4_000)).max(200),
+  linkedTaskId: z.string().min(1).max(240).optional(),
+  linkedTaskIds: z.array(z.string().min(1).max(240)).max(2_000),
+  automationMode: z.enum(["automatic", "manual"]),
+  agent: z.string().min(1).max(240).optional(),
+  model: z.string().min(1).max(240).optional(),
+  branch: z.string().max(1_000).optional(),
+  taskStatus: z.enum(persistedTaskStatuses).optional(),
+  latestRunStatus: z.enum(persistedRunStatuses).optional(),
+  pendingApprovals: z.number().int().min(0).max(10_000).optional(),
+  createdAt: persistedIsoDateSchema,
+  updatedAt: persistedIsoDateSchema,
+}).strict().superRefine((item, context) => {
+  if (item.type === "task" && (!item.linkedTaskId || item.linkedTaskIds.length !== 1 || item.linkedTaskIds[0] !== item.linkedTaskId)) {
+    context.addIssue({ code: "custom", path: ["linkedTaskId"], message: "Task board items must bind exactly one matching Task" });
+  }
+  if (item.type === "task" && !item.workspaceId) {
+    context.addIssue({ code: "custom", path: ["workspaceId"], message: "Task board items must retain their WorkingCopy Workspace" });
+  }
+  if (item.type === "requirement" && item.linkedTaskId) {
+    context.addIssue({ code: "custom", path: ["linkedTaskId"], message: "Requirement items use linkedTaskIds only" });
+  }
+});
+
+export const boardTransitionSchema = z.object({
+  id: z.string().min(1).max(240),
+  workItemId: z.string().min(1).max(240),
+  fromStateId: z.string().min(1).max(120).optional(),
+  toStateId: z.string().min(1).max(120),
+  source: z.enum(["user", "run-rule"]),
+  runId: z.string().min(1).max(240).optional(),
+  createdAt: persistedIsoDateSchema,
+}).strict();
+
+export const boardSnapshotSchema = z.object({
+  version: z.literal(1),
+  projectId: persistedWorkspaceIdSchema,
+  revision: z.number().int().min(0),
+  enabled: z.boolean(),
+  states: z.array(boardStateColumnSchema).min(4).max(64),
+  items: z.array(boardWorkItemSchema).max(20_000),
+  transitions: z.array(boardTransitionSchema).max(100_000),
+  updatedAt: persistedIsoDateSchema,
+}).strict().superRefine((board, context) => {
+  const stateIds = new Set(board.states.map((state) => state.id));
+  const itemIds = new Set<string>();
+  const taskIds = new Set<string>();
+  board.items.forEach((item, index) => {
+    if (item.projectId !== board.projectId) context.addIssue({ code: "custom", path: ["items", index, "projectId"], message: "Board item Project must match Board" });
+    if (!stateIds.has(item.stateId)) context.addIssue({ code: "custom", path: ["items", index, "stateId"], message: "Board item state is missing" });
+    if (itemIds.has(item.id)) context.addIssue({ code: "custom", path: ["items", index, "id"], message: "Board item id must be unique" });
+    itemIds.add(item.id);
+    if (item.linkedTaskId) {
+      if (taskIds.has(item.linkedTaskId)) context.addIssue({ code: "custom", path: ["items", index, "linkedTaskId"], message: "A Task may have only one Task card" });
+      taskIds.add(item.linkedTaskId);
+    }
+  });
+});
+
+const boardLabelListSchema = z.array(z.string().trim().min(1).max(80)).max(64);
+const boardCriteriaListSchema = z.array(z.string().trim().min(1).max(4_000)).max(200);
+const boardTaskIdListSchema = z.array(z.string().min(1).max(240)).max(2_000);
+export const boardMutationSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("set-enabled"), enabled: z.boolean() }).strict(),
+  z.object({ action: z.literal("create-requirement"), title: z.string().trim().min(1).max(10_000), description: z.string().max(100_000).optional(), priority: z.enum(boardPriorities).optional(), labels: boardLabelListSchema.optional(), acceptanceCriteria: boardCriteriaListSchema.optional(), linkedTaskIds: boardTaskIdListSchema.optional() }).strict(),
+  z.object({ action: z.literal("update-requirement"), itemId: z.string().min(1).max(240), title: z.string().trim().min(1).max(10_000).optional(), description: z.string().max(100_000).optional(), priority: z.enum(boardPriorities).optional(), labels: boardLabelListSchema.optional(), acceptanceCriteria: boardCriteriaListSchema.optional(), linkedTaskIds: boardTaskIdListSchema.optional() }).strict(),
+  z.object({ action: z.literal("move-item"), itemId: z.string().min(1).max(240), stateId: z.string().min(1).max(120) }).strict(),
+  z.object({ action: z.literal("delete-requirement"), itemId: z.string().min(1).max(240) }).strict(),
+  z.object({ action: z.literal("create-state"), name: z.string().trim().min(1).max(80) }).strict(),
+  z.object({ action: z.literal("rename-state"), stateId: z.string().min(1).max(120), name: z.string().trim().min(1).max(80) }).strict(),
+  z.object({ action: z.literal("reorder-states"), stateIds: z.array(z.string().min(1).max(120)).min(4).max(64) }).strict(),
+]);
+export const boardLoadParamsSchema = z.object({ projectId: persistedWorkspaceIdSchema }).strict();
+export const boardMutationParamsSchema = z.object({ projectId: persistedWorkspaceIdSchema, expectedRevision: z.number().int().min(0), mutation: boardMutationSchema }).strict();
+export const projectWorkingCopiesParamsSchema = z.object({ projectId: persistedWorkspaceIdSchema }).strict();
+export const projectWorkingCopyAuthorizeParamsSchema = z.object({ projectId: persistedWorkspaceIdSchema, path: z.string().min(1).max(4_096), confirmed: z.literal(true) }).strict();
+export const projectWorkingCopyCreateParamsSchema = gitWorktreeCreateParamsSchema.extend({ projectId: persistedWorkspaceIdSchema }).strict();
+export const improvementSummaryParamsSchema = z.object({ projectId: persistedWorkspaceIdSchema.optional() }).strict();
+export const improvementAnalyzeParamsSchema = z.object({ projectId: persistedWorkspaceIdSchema }).strict();
+export const improvementDecideParamsSchema = z.object({ candidateId: z.string().min(1).max(240), action: z.enum(["publish", "reject", "snooze", "rollback"]), confirmed: z.literal(true), editedContent: z.string().max(100_000).optional(), reason: z.string().max(4_000).optional() }).strict();
+export const improvementSettingsUpdateParamsSchema = z.object({ patch: z.object({ evidenceCollection: z.boolean().optional(), candidateGeneration: z.boolean().optional(), controlledEvolution: z.boolean().optional(), backgroundModelReview: z.boolean().optional(), paused: z.boolean().optional(), dailyTokenLimit: z.number().int().min(0).max(100_000_000).optional(), perProjectTokenLimit: z.number().int().min(0).max(100_000_000).optional(), evaluationTokenReservation: z.number().int().min(1_000).max(1_000_000).optional(), evaluationCostReservationUsd: z.number().min(0).max(1_000_000).optional(), dailyCostUsdLimit: z.number().min(0).max(1_000_000).nullable().optional(), onlyWhenIdle: z.boolean().optional(), onlyOnAcPower: z.boolean().optional(), evaluatorAgentId: z.string().min(1).max(120).nullable().optional() }).strict() }).strict();
+export const improvementProposeParamsSchema = z.object({ projectId: persistedWorkspaceIdSchema, type: z.enum(improvementCandidateTypes), scope: z.enum(["project", "user", "agent"]), agentProfileId: z.string().min(1).max(120).optional(), name: z.string().trim().min(1).max(120), content: z.string().trim().min(1).max(100_000), expectedBenefit: z.string().max(4_000).optional(), risk: z.string().max(4_000).optional() }).strict().superRefine((value, context) => {
+  if (value.type === "agent-instruction" && (value.scope !== "agent" || !value.agentProfileId)) context.addIssue({ code: "custom", path: ["agentProfileId"], message: "Agent instruction candidates require an Agent scope and Profile" });
+  if (value.type !== "agent-instruction" && value.scope === "agent") context.addIssue({ code: "custom", path: ["scope"], message: "Only Agent instruction candidates use Agent scope" });
+});
+export const improvementExportPreviewParamsSchema = z.object({ assetId: z.string().min(1).max(240), target: z.enum(improvementExportTargets), projectId: persistedWorkspaceIdSchema.optional() }).strict();
+export const improvementExportCommitParamsSchema = z.object({ previewId: z.string().min(1).max(240), confirmed: z.literal(true) }).strict();
+export const improvementEvaluationCaseSchema = z.object({ id: z.string().min(1).max(120), name: z.string().trim().min(1).max(120), input: z.string().min(1).max(20_000), expectedIncludes: z.string().min(1).max(2_000), holdout: z.boolean() }).strict();
+export const improvementEvaluateParamsSchema = z.object({ candidateId: z.string().min(1).max(240), evaluatorAgentId: z.string().min(1).max(120), cases: z.array(improvementEvaluationCaseSchema).min(1).max(10) }).strict().superRefine((value, context) => { if (!value.cases.some((item) => item.holdout)) context.addIssue({ code: "custom", path: ["cases"], message: "At least one holdout case is required" }); });
+export const improvementEvaluationRuntimeParamsSchema = z.object({ operationId: z.string().min(1).max(240), candidateId: z.string().min(1).max(240), projectId: persistedWorkspaceIdSchema, candidateContent: z.string().min(1).max(100_000), adapter: z.enum(["codex", "claude-code"]), evaluatorAgentId: z.string().min(1).max(120), evaluatorAgentRevisionId: z.string().min(1).max(240), profileId: z.string().min(1).max(120).optional(), model: z.string().min(1).max(240).optional(), reasoningEffort: reasoningEffortSchema.optional(), evaluatorInstructions: z.string().max(20_000).optional(), cases: z.array(improvementEvaluationCaseSchema).min(1).max(10) }).strict();
+export const improvementEvaluationOutcomeSchema = z.object({ caseId: z.string().min(1).max(120), variant: z.enum(["baseline", "candidate"]), passed: z.boolean(), outputPreview: z.string().max(2_000), durationMs: z.number().int().nonnegative(), tokens: z.number().int().nonnegative().optional() }).strict();
+export const improvementEvaluationRecordSchema = z.object({ id: z.string().min(1).max(240), candidateId: z.string().min(1).max(240), projectId: persistedWorkspaceIdSchema, status: z.enum(["passed", "failed", "unknown"]), evaluatorAgentId: z.string().min(1).max(120), evaluatorAgentRevisionId: z.string().min(1).max(240), evaluatorAdapter: z.enum(["codex", "claude-code"]), model: z.string().max(240).optional(), cases: z.array(improvementEvaluationCaseSchema).min(1).max(10), outcomes: z.array(improvementEvaluationOutcomeSchema).min(2).max(20), baselinePassed: z.number().int().nonnegative(), candidatePassed: z.number().int().nonnegative(), holdoutPassed: z.boolean(), totalTokens: z.number().int().nonnegative().optional(), tokenSource: z.enum(["engine", "unreported"]), costUsd: z.number().nonnegative().optional(), costSource: z.enum(["engine", "unreported"]), createdAt: z.iso.datetime({ offset: true }) }).strict();
 
 export const taskStateLoadParamsSchema = z.object({
   workspaceId: persistedWorkspaceIdSchema.optional(),

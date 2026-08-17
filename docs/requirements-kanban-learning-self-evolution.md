@@ -1,10 +1,14 @@
 # RUX 看板、经验沉淀与受控自进化需求讨论稿
 
 > 版本：v0.2  
-> 状态：需求讨论，未进入开发基线  
+> 状态：K1/L1/L2/E1 初始本机闭环已进入实现；高级项继续按阶段推进
 > 更新日期：2026-08-15  
 > 关联产品基线：[产品需求文档](product-requirements.md)  
 > 目标：在不削弱 Workspace 授权、Agent Revision、Native Session 和人工审批边界的前提下，让 RUX 能组织工作、积累经验并持续改进。
+
+实现状态（2026-08-17）：已落地 Main-owned Project Board 与 Improvement Store 初始闭环。Git common-dir/WorkingCopy 身份用于聚合已授权 Workspace；外部 worktree 仅在显式操作时发现，并需确认授权。Board 自动创建唯一 Task 卡片，支持需求卡片、Task 关联、拖拽和键盘移动、运行徽标、功能开关与不可变迁移记录；自动规则最多推进到“待验收”。改进中心可从明确反馈和失败后恢复事实生成去重候选，也可手动创建项目规则、Skill 或 Workflow 候选；发布前必须确认并通过 Secret、权限、作用域和证据门禁，发布物使用 Rux-managed 统一格式和不可变版本，新 Task 固定当时 active 资产，采用/Run 结果从持久化事实监测，回滚不会改写既有 Task。
+
+E1 初始闭环已实现：隔离 A/B 评测为每个代表/保留样本分别运行 Baseline 与 Candidate，Codex 使用 ephemeral Thread，Claude 禁用工具和 Session 持久化；确定性 grader 要求 Candidate 不回归且 Holdout 全部通过，失败会阻止发布，同模型自评只保留为 advisory。后台评测仅在用户配置独立 Agent、历史用例和 Token/费用预算后运行，并强制空闲/接电/暂停策略。缺少评测或 Engine 不报告 Token/费用时仍明确标记 `unknown`/`未报告`。Codex Skill/Workflow 已按官方 `SKILL.md` 与 `.agents/skills` 合同支持 Project/用户导出；其他 Engine 未有已验证合同的格式继续明确降级为 Rux-managed 或 Rux 文件导出。Agent 指令候选固定来源 Revision，发布和回滚均追加不可变 Revision，过期候选不会覆盖后续人工编辑。E2 多候选搜索、跨任务迁移和团队市场仍需重新评审，不属于当前承诺。
 
 ## 1. 背景与结论摘要
 
@@ -521,4 +525,4 @@ Renderer 只能传稳定 ID、编辑内容和经过预览的 fingerprint。Main 
 9. 项目级 worktree 授权是一次性覆盖后续同仓库新 worktree，还是每个外部路径都需确认；建议 RUX 创建的 worktree 自动关联，外部创建的 worktree 一键确认后关联。
 10. 一个 Project 是否允许同时保持多个 Utility Process Runtime；建议首期只激活当前 Task 的 worktree Runtime，但保留按 `workingCopyId` 扩展并行 Runtime 的协议空间。
 
-在以上决策确认前，本文件是讨论稿，不应被描述为已实现功能或既定交付承诺。
+本文推荐决策已用于初始本机实现；上方“仍未完成”及 E2 项仍是规划，不能因入口或数据结构存在而描述为完成。

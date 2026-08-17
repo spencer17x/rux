@@ -828,7 +828,7 @@ function StatusIcon({ status, size = 14 }) {
   return <Circle size={size} className="status-waiting" aria-label="待开始" />;
 }
 
-function TaskItem({ task, active, onSelect, onRename, onTogglePin, onArchive, canArchive = true, disabled = false }) {
+function TaskItem({ task, active, onSelect, onRename, onTogglePin, onArchive, workspaceLabel = "", canArchive = true, disabled = false }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [title, setTitle] = useState(task.title);
@@ -895,6 +895,7 @@ function TaskItem({ task, active, onSelect, onRename, onTogglePin, onArchive, ca
         <span className="task-copy">
           <span className="task-title-row">
             <span className="task-title">{task.title}</span>
+            {workspaceLabel ? <small className="task-worktree-label">{workspaceLabel}</small> : null}
             {["running", "blocked", "failed", "interrupted"].includes(task.status) ? <StatusIcon status={task.status} size={12} /> : null}
           </span>
           <span className="task-meta">
@@ -937,6 +938,11 @@ function Sidebar({
   expandedProjectIds,
   onToggleProject,
   onCreateTaskInWorkspace,
+  onOpenBoard,
+  boardEnabledByWorkspace,
+  onOpenWorkingCopies,
+  onOpenImprovements,
+  improvementPendingCount,
   onCollapse,
   onOpenAccounts,
   onOpenSettings,
@@ -968,6 +974,16 @@ function Sidebar({
   const archivedTasks = matchingTasks.filter((task) => task.archived);
   const activeWorkspace = workspaceState.active;
   const pinnedTasks = visibleTasks.filter((task) => task.pinned);
+  const navigationProjects = [...workspaceState.recent.filter((workspace) => !workspace.placeholder).reduce((projects, workspace) => {
+    const projectId = workspace.projectId || workspace.id;
+    const existing = projects.get(projectId);
+    if (existing) existing.workspaces.push(workspace);
+    else projects.set(projectId, { id: projectId, name: workspace.projectName || workspace.name, workspaces: [workspace] });
+    return projects;
+  }, new Map()).values()].map((project) => ({
+    ...project,
+    primary: project.workspaces.find((workspace) => workspace.id === activeWorkspace.id) || project.workspaces[0],
+  }));
 
   useEffect(() => {
     if (!accountMenuOpen && !notificationsOpen) return undefined;
@@ -1105,6 +1121,11 @@ function Sidebar({
           <AtSign size={18} />
           <span>Agents</span>
         </button>
+        <button type="button" onClick={onOpenImprovements}>
+          <Sparkles size={18} />
+          <span>改进中心</span>
+          {improvementPendingCount ? <small className="nav-count-badge">{improvementPendingCount}</small> : null}
+        </button>
         <button type="button" onClick={onOpenSessionDiscovery} disabled={activeWorkspace.placeholder} title={activeWorkspace.placeholder ? "请先打开项目" : undefined}>
           <History size={18} />
           <span>导入 Agent 会话</span>
@@ -1154,6 +1175,7 @@ function Sidebar({
                 onRename={(title) => onRenameTask(task.id, title)}
                 onTogglePin={() => onTogglePinTask(task.id)}
                 onArchive={() => onArchiveTask(task.id, true)}
+                workspaceLabel={workspace ? `${workspace.name} · ${task.branch}` : task.branch}
                 canArchive={tasks.filter((item) => item.workspaceId === task.workspaceId && !item.archived).length > 1}
                 disabled={workspaceBusy && workspace?.id !== activeWorkspace.id}
               />
@@ -1165,25 +1187,27 @@ function Sidebar({
         <section className="project-section">
           <div className="sidebar-section-label">项目</div>
           <div className="workspace-list">
-            {workspaceState.recent.filter((workspace) => !workspace.placeholder).map((workspace) => {
-              const projectTasks = visibleTasks.filter((task) => task.workspaceId === workspace.id && !task.pinned);
-              const projectOpen = Boolean(searchQuery) || expandedProjectIds.includes(workspace.id);
-              const isCurrent = workspace.id === activeWorkspace.id;
+            {navigationProjects.map((project) => {
+              const workspaceIds = new Set(project.workspaces.map((workspace) => workspace.id));
+              const projectTasks = visibleTasks.filter((task) => workspaceIds.has(task.workspaceId) && !task.pinned);
+              const projectOpen = Boolean(searchQuery) || expandedProjectIds.includes(project.id);
+              const isCurrent = workspaceIds.has(activeWorkspace.id);
+              const workspace = project.primary;
               if (searchQuery && !projectTasks.length) return null;
 
               return (
-                <div className={`workspace-project ${isCurrent ? "is-current" : ""}`} key={workspace.id}>
+                <div className={`workspace-project ${isCurrent ? "is-current" : ""}`} key={project.id}>
                   <div className="project-header-row">
                     <button
                       className="project-heading"
                       type="button"
-                      onClick={() => onToggleProject(workspace.id)}
-                      title={workspace.path}
+                      onClick={() => onToggleProject(project.id)}
+                      title={project.workspaces.map((item) => item.path).join("\n")}
                       aria-expanded={projectOpen}
-                      aria-label={`${projectOpen ? "收起" : "展开"}项目 ${workspace.name}`}
+                      aria-label={`${projectOpen ? "收起" : "展开"}项目 ${project.name}`}
                     >
                       <Folder size={16} />
-                      <span className="project-name">{workspace.name}</span>
+                      <span className="project-name">{project.name}</span>
                       {isCurrent ? <span className="project-current-dot" aria-label="当前项目" title="当前项目" /> : null}
                       <span className="project-branch">{workspace.branch}</span>
                       {projectOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
@@ -1193,8 +1217,8 @@ function Sidebar({
                       className="project-new-task-button"
                       onClick={() => onCreateTaskInWorkspace(workspace.path)}
                       disabled={workspaceBusy}
-                      aria-label={`在项目 ${workspace.name} 中新建对话`}
-                      title={`在 ${workspace.name} 中新建对话`}
+                      aria-label={`在项目 ${project.name} 中新建对话`}
+                      title={`在 ${project.name} 中新建对话`}
                     >
                       <Plus size={14} />
                     </button>
@@ -1202,19 +1226,40 @@ function Sidebar({
 
                   {projectOpen ? (
                     <div className="task-list project-task-list">
-                      {projectTasks.map((task) => (
-                        <TaskItem
+                      {!searchQuery && boardEnabledByWorkspace[project.id] !== false ? (
+                        <button
+                          type="button"
+                          className="project-board-entry"
+                          onClick={() => onOpenBoard(workspace.path)}
+                          disabled={workspaceBusy}
+                          aria-label={`打开项目 ${project.name} 的看板`}
+                        >
+                          <LayoutList size={14} />
+                          <span>看板</span>
+                        </button>
+                      ) : null}
+                      {!searchQuery && project.workspaces.some((item) => item.gitCommonDir) ? (
+                        <button type="button" className="project-board-entry" onClick={() => onOpenWorkingCopies(project.id)} disabled={workspaceBusy} aria-label={`管理项目 ${project.name} 的工作副本`}>
+                          <FolderGit2 size={14} />
+                          <span>工作副本</span>
+                          <small>{project.workspaces.length}</small>
+                        </button>
+                      ) : null}
+                      {projectTasks.map((task) => {
+                        const taskWorkspace = project.workspaces.find((item) => item.id === task.workspaceId) || workspace;
+                        return <TaskItem
                           key={task.id}
                           task={task}
                           active={task.id === selectedTaskId}
-                          onSelect={() => onSelectTask(task.id, workspace.path)}
+                          onSelect={() => onSelectTask(task.id, taskWorkspace.path)}
                           onRename={(title) => onRenameTask(task.id, title)}
                           onTogglePin={() => onTogglePinTask(task.id)}
                           onArchive={() => onArchiveTask(task.id, true)}
+                          workspaceLabel={`${taskWorkspace.name} · ${task.branch}`}
                           canArchive={tasks.filter((item) => item.workspaceId === task.workspaceId && !item.archived).length > 1}
                           disabled={workspaceBusy && !isCurrent}
-                        />
-                      ))}
+                        />;
+                      })}
                     </div>
                   ) : null}
                 </div>
@@ -3167,6 +3212,183 @@ function useDialogFocus(open, onClose) {
   return dialogRef;
 }
 
+const boardPriorityLabels = { low: "低", medium: "中", high: "高", urgent: "紧急" };
+
+function ProjectBoard({ state, workspace, onClose, onReload, onCreateRequirement, onCreateTaskForRequirement, onMoveItem, onDeleteRequirement, onMutateBoard, onOpenTask }) {
+  const [creating, setCreating] = useState(false);
+  const [draft, setDraft] = useState({ title: "", description: "", priority: "medium", labels: "", acceptanceCriteria: "", linkedTaskIds: [] });
+  const [columnsOpen, setColumnsOpen] = useState(false);
+  const [newColumnName, setNewColumnName] = useState("");
+  const board = state.snapshot;
+  const states = [...(board?.states || [])].sort((left, right) => left.order - right.order);
+  const taskById = new Map((state.tasks || []).map((task) => [task.id, task]));
+
+  const submit = (event) => {
+    event.preventDefault();
+    if (!draft.title.trim()) return;
+    onCreateRequirement({
+      title: draft.title.trim(),
+      description: draft.description.trim(),
+      priority: draft.priority,
+      labels: draft.labels.split(",").map((label) => label.trim()).filter(Boolean),
+      acceptanceCriteria: draft.acceptanceCriteria.split("\n").map((criterion) => criterion.trim()).filter(Boolean),
+      linkedTaskIds: draft.linkedTaskIds,
+    }).then(() => {
+      setDraft({ title: "", description: "", priority: "medium", labels: "", acceptanceCriteria: "", linkedTaskIds: [] });
+      setCreating(false);
+    }).catch(() => undefined);
+  };
+
+  return (
+    <section className="project-board" aria-labelledby="project-board-title">
+      <header className="project-board-header">
+        <div>
+          <span className="project-board-kicker">项目看板</span>
+          <h1 id="project-board-title">{workspace.projectName || workspace.name}</h1>
+          <p>人的推进状态与 Agent Run 状态分开记录；Run 成功最多自动推进到“待验收”。</p>
+        </div>
+        <div className="project-board-actions">
+          <button type="button" className="secondary-button" onClick={onReload} disabled={state.loading}><RefreshCw size={14} />刷新</button>
+          <button type="button" className="secondary-button" onClick={() => setColumnsOpen((value) => !value)}><LayoutList size={14} />管理列</button>
+          <button type="button" className="primary-button" onClick={() => setCreating((value) => !value)}><Plus size={14} />新建需求</button>
+          <button type="button" className="icon-button" onClick={onClose} aria-label="关闭项目看板"><X size={17} /></button>
+        </div>
+      </header>
+
+      {board ? (
+        <div className="project-board-summary" aria-label="看板摘要">
+          <span><strong>{board.items.length}</strong>全部卡片</span>
+          <span><strong>{board.items.filter((item) => item.stateId === "in-progress").length}</strong>进行中</span>
+          <span><strong>{board.items.filter((item) => item.stateId === "review").length}</strong>待验收</span>
+          <span><strong>{board.items.filter((item) => item.pendingApprovals).length}</strong>待审批</span>
+        </div>
+      ) : null}
+
+      {columnsOpen && board ? <section className="board-column-manager"><header><strong>看板列</strong><small>显示名称可以修改；稳定 stateId 与人的状态历史不会改变。</small></header>{states.map((column, index) => <div key={column.id}><input defaultValue={column.name} aria-label={`重命名列 ${column.name}`} onBlur={(event) => { const name = event.target.value.trim(); if (name && name !== column.name) void onMutateBoard({ action: "rename-state", stateId: column.id, name }); }} /><code>{column.semanticRole}</code><button type="button" disabled={index === 0} aria-label={`向左移动列 ${column.name}`} onClick={() => { const ids = states.map((item) => item.id); [ids[index - 1], ids[index]] = [ids[index], ids[index - 1]]; void onMutateBoard({ action: "reorder-states", stateIds: ids }); }}><ArrowLeft size={13} /></button><button type="button" disabled={index === states.length - 1} aria-label={`向右移动列 ${column.name}`} onClick={() => { const ids = states.map((item) => item.id); [ids[index + 1], ids[index]] = [ids[index], ids[index + 1]]; void onMutateBoard({ action: "reorder-states", stateIds: ids }); }}><ArrowRight size={13} /></button></div>)}<form onSubmit={(event) => { event.preventDefault(); const name = newColumnName.trim(); if (!name) return; onMutateBoard({ action: "create-state", name }).then(() => setNewColumnName("")).catch(() => undefined); }}><input value={newColumnName} onChange={(event) => setNewColumnName(event.target.value)} placeholder="新增自定义列" /><button type="submit" className="secondary-button" disabled={!newColumnName.trim()}>添加列</button></form></section> : null}
+
+      {creating ? (
+        <form className="board-requirement-form" onSubmit={submit}>
+          <label><span>需求标题</span><input autoFocus value={draft.title} onChange={(event) => setDraft((value) => ({ ...value, title: event.target.value }))} placeholder="描述要完成的结果" /></label>
+          <label><span>说明</span><textarea value={draft.description} onChange={(event) => setDraft((value) => ({ ...value, description: event.target.value }))} placeholder="背景、范围和限制" /></label>
+          <div className="board-form-row">
+            <label><span>优先级</span><select value={draft.priority} onChange={(event) => setDraft((value) => ({ ...value, priority: event.target.value }))}>{Object.entries(boardPriorityLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+            <label><span>标签</span><input value={draft.labels} onChange={(event) => setDraft((value) => ({ ...value, labels: event.target.value }))} placeholder="桌面, Runtime" /></label>
+          </div>
+          <label><span>验收条件（每行一条）</span><textarea value={draft.acceptanceCriteria} onChange={(event) => setDraft((value) => ({ ...value, acceptanceCriteria: event.target.value }))} placeholder="用户可以完成……" /></label>
+          {state.tasks.length ? <fieldset className="board-task-link-picker"><legend>关联执行 Task</legend>{state.tasks.filter((task) => !task.id.startsWith("workspace-")).map((task) => <label key={task.id}><input type="checkbox" checked={draft.linkedTaskIds.includes(task.id)} onChange={() => setDraft((value) => ({ ...value, linkedTaskIds: value.linkedTaskIds.includes(task.id) ? value.linkedTaskIds.filter((id) => id !== task.id) : [...value.linkedTaskIds, task.id] }))} /><span><strong>{task.title}</strong><small>{task.branch} · {task.agent}</small></span></label>)}</fieldset> : null}
+          <footer><button type="button" className="secondary-button" onClick={() => setCreating(false)}>取消</button><button type="submit" className="primary-button" disabled={state.loading || !draft.title.trim()}>创建需求</button></footer>
+        </form>
+      ) : null}
+
+      {state.error ? <div className="board-error" role="alert"><CircleAlert size={15} /><span>{state.error}</span><button type="button" onClick={onReload}>重试</button></div> : null}
+      {state.loading && !board ? <div className="board-loading" role="status"><LoaderCircle size={20} className="status-running" />正在加载项目看板…</div> : null}
+
+      {board ? (
+        <div className="board-columns">
+          {states.map((column) => {
+            const items = board.items.filter((item) => item.stateId === column.id);
+            return (
+              <section
+                key={column.id}
+                className="board-column"
+                aria-labelledby={`board-column-${column.id}`}
+                onDragOver={(event) => event.preventDefault()}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  const itemId = event.dataTransfer.getData("application/x-rux-board-item");
+                  if (itemId) void onMoveItem(itemId, column.id);
+                }}
+              >
+                <header><h2 id={`board-column-${column.id}`}>{column.name}</h2><span>{items.length}</span></header>
+                <div className="board-card-list">
+                  {items.map((item) => (
+                    <article
+                      key={item.id}
+                      className={`board-card is-${item.type}`}
+                      draggable
+                      onDragStart={(event) => event.dataTransfer.setData("application/x-rux-board-item", item.id)}
+                    >
+                      <div className="board-card-topline"><span>{item.type === "task" ? "Task" : "需求"}</span><small>{boardPriorityLabels[item.priority]}</small></div>
+                      <h3>{item.title}</h3>
+                      {item.description ? <p>{item.description}</p> : null}
+                      {item.labels.length ? <div className="board-card-labels">{item.labels.map((label) => <span key={label}>{label}</span>)}</div> : null}
+                      {item.type === "task" ? <div className="board-task-facts"><span>{item.agent}</span><span>{item.model}</span><span>{item.branch}</span></div> : null}
+                      {item.latestRunStatus || item.pendingApprovals ? <div className="board-run-signal"><StatusIcon status={item.taskStatus || "waiting"} size={12} /><span>{item.latestRunStatus ? statusLabel[item.latestRunStatus] || item.latestRunStatus : "尚未运行"}</span>{item.pendingApprovals ? <strong>{item.pendingApprovals} 个审批</strong> : null}</div> : null}
+                      {item.acceptanceCriteria.length ? <details><summary>验收条件 · {item.acceptanceCriteria.length}</summary><ul>{item.acceptanceCriteria.map((criterion) => <li key={criterion}>{criterion}</li>)}</ul></details> : null}
+                      {item.type === "requirement" && item.linkedTaskIds.length ? <small className="board-linked-count">关联 {item.linkedTaskIds.length} 个 Task</small> : null}
+                      <footer>
+                        {item.linkedTaskId && taskById.has(item.linkedTaskId) ? <button type="button" onClick={() => onOpenTask(item.linkedTaskId)}>打开 Task</button> : item.type === "requirement" ? <button type="button" onClick={() => onCreateTaskForRequirement(item)}>创建执行任务</button> : <span />}
+                        <label><span className="sr-only">移动 {item.title}</span><select aria-label={`移动 ${item.title}`} value={item.stateId} onChange={(event) => void onMoveItem(item.id, event.target.value)}>{states.map((stateOption) => <option key={stateOption.id} value={stateOption.id}>{stateOption.name}</option>)}</select></label>
+                        {item.type === "requirement" ? <button type="button" className="board-card-delete" onClick={() => onDeleteRequirement(item.id, item.title)} aria-label={`删除需求 ${item.title}`}><Trash2 size={13} /></button> : null}
+                      </footer>
+                    </article>
+                  ))}
+                  {!items.length ? <div className="board-column-empty">暂无卡片</div> : null}
+                </div>
+              </section>
+            );
+          })}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function WorkingCopiesDialog({ state, onClose, onReload, onAuthorize, onCreate }) {
+  const dialogRef = useDialogFocus(state.open, onClose);
+  const [creating, setCreating] = useState(false);
+  const [draft, setDraft] = useState({ path: "", branch: "" });
+  if (!state.open) return null;
+  return <div className="dialog-backdrop account-dialog-backdrop" role="presentation"><section ref={dialogRef} tabIndex={-1} className="account-dialog working-copies-dialog" role="dialog" aria-modal="true" aria-labelledby="working-copies-title">
+    <header className="account-dialog-header"><div><span className="account-dialog-icon"><FolderGit2 size={18} /></span><span><h2 id="working-copies-title">项目工作副本</h2><p>同一 Git common dir 聚合为一个项目；文件与 Run 仍绑定具体工作副本</p></span></div><button type="button" className="icon-button" onClick={onClose} aria-label="关闭工作副本管理"><X size={17} /></button></header>
+    <div className="account-dialog-body working-copies-body">
+      {state.error ? <div className="account-error" role="alert"><CircleAlert size={15} /><span>{state.error}</span></div> : null}
+      <div className="working-copies-toolbar"><span>{state.items.length} 个 Git 工作副本</span><button type="button" className="secondary-button" onClick={onReload} disabled={state.loading}>{state.loading ? <LoaderCircle size={13} className="status-running" /> : <RefreshCw size={13} />}刷新</button><button type="button" className="primary-button" onClick={() => setCreating((value) => !value)}><Plus size={13} />新建 Worktree</button></div>
+      {creating ? <form className="working-copy-create-form" onSubmit={(event) => { event.preventDefault(); onCreate(draft).then(() => { setDraft({ path: "", branch: "" }); setCreating(false); }).catch(() => undefined); }}><label><span>新目录绝对路径</span><input autoFocus value={draft.path} onChange={(event) => setDraft((value) => ({ ...value, path: event.target.value }))} placeholder="/Users/name/projects/rux-feature" /></label><label><span>本地分支</span><input value={draft.branch} onChange={(event) => setDraft((value) => ({ ...value, branch: event.target.value }))} placeholder="codex/feature-name" /></label><p><ShieldCheck size={13} />Main 会先切换到已授权仓库根，Runtime 使用结构化 Git argv 创建；现有目录、已被占用分支和 Git 元数据路径都会拒绝。</p><footer><button type="button" className="secondary-button" onClick={() => setCreating(false)}>取消</button><button type="submit" className="primary-button" disabled={state.loading || !draft.path.trim() || !draft.branch.trim()}>审查并创建</button></footer></form> : null}
+      <div className="working-copy-list">{state.items.map((item) => <article key={`${item.id}:${item.path}`} className={`is-${item.availability}`}><FolderGit2 size={17} /><span><strong>{item.name}</strong><small>{item.kind === "main" ? "主工作目录" : "Worktree"} · {item.branch || item.headOid?.slice(0, 8) || "detached"}</small><code>{item.path}</code></span><em>{item.availability !== "available" ? item.availability === "missing" ? "路径不存在" : "身份不匹配" : item.authorizationState === "authorized" ? "已授权" : "待关联"}</em>{item.availability === "available" && item.authorizationState === "pending" ? <button type="button" className="primary-button" onClick={() => onAuthorize(item)} disabled={state.loading}>确认关联</button> : null}</article>)}</div>
+      {!state.loading && !state.items.length ? <div className="session-discovery-empty"><FolderGit2 size={24} /><strong>当前项目没有可列出的 Git worktree</strong></div> : null}
+    </div>
+    <footer className="account-dialog-footer"><ShieldCheck size={15} /><p>Git 输出只用于发现元数据。授权根之外的 worktree 必须由你明确确认后才能创建 Runtime 或读取文件。</p></footer>
+  </section></div>;
+}
+
+function ImprovementCenter({ state, agents, evaluationAgents, onClose, onAnalyze, onDecide, onPropose, onEvaluate, onPreviewExport, onCommitExport, onCancelExport }) {
+  const dialogRef = useDialogFocus(state.open, onClose);
+  const [edits, setEdits] = useState({});
+  const [proposing, setProposing] = useState(false);
+  const [proposal, setProposal] = useState({ type: "project-rule", scope: "project", agentProfileId: "", name: "", content: "", expectedBenefit: "", risk: "" });
+  const [evaluationCandidateId, setEvaluationCandidateId] = useState("");
+  const [evaluationAgentId, setEvaluationAgentId] = useState("");
+  const [evaluationCases, setEvaluationCases] = useState([{ id: "representative", name: "代表样本", input: "", expectedIncludes: "", holdout: false }, { id: "holdout", name: "保留样本", input: "", expectedIncludes: "", holdout: true }]);
+  if (!state.open) return null;
+  const summary = state.summary;
+  const evidenceById = new Map((summary?.evidence || []).map((evidence) => [evidence.id, evidence]));
+  const candidates = summary?.candidates || [];
+  return <div className="dialog-backdrop account-dialog-backdrop" role="presentation"><section ref={dialogRef} tabIndex={-1} className="account-dialog improvement-center" role="dialog" aria-modal="true" aria-labelledby="improvement-center-title">
+    <header className="account-dialog-header"><div><span className="account-dialog-icon"><Sparkles size={18} /></span><span><h2 id="improvement-center-title">改进中心</h2><p>证据、候选与发布物分层；没有审批就不会改变后续 Task</p></span></div><button type="button" className="icon-button" onClick={onClose} aria-label="关闭改进中心"><X size={17} /></button></header>
+    <div className="account-dialog-body improvement-center-body">
+      <section className="improvement-summary"><span><strong>{summary?.pendingCount ?? 0}</strong><small>待审批</small></span><span><strong>{summary?.evidence.length ?? 0}</strong><small>本地证据</small></span><span><strong>{summary?.assets.filter((asset) => asset.status === "active").length ?? 0}</strong><small>已发布资产</small></span><span><strong>{summary?.adoptions.length ?? 0}</strong><small>新 Task 采用</small></span><button type="button" className="secondary-button" onClick={onAnalyze} disabled={state.loading}>{state.loading ? <LoaderCircle size={13} className="status-running" /> : <RefreshCw size={13} />}分析当前项目</button><button type="button" className="primary-button" onClick={() => setProposing((value) => !value)}><Plus size={13} />创建候选</button></section>
+      {state.error ? <div className="account-error" role="alert"><CircleAlert size={15} /><span>{state.error}</span></div> : null}
+      {state.notice ? <div className="account-notice" role="status"><CheckCircle2 size={15} /><span>{state.notice}</span></div> : null}
+      <div className="improvement-boundary"><ShieldCheck size={15} /><span><strong>默认本地分析；模型评测等待 Agent、用例与预算</strong><small>未完成三项显式配置时不会调用 Provider；候选不能扩大权限、切换 Provider 或读取未授权路径。</small></span></div>
+      {proposing ? <form className="improvement-proposal-form" onSubmit={(event) => { event.preventDefault(); onPropose(proposal).then(() => { setProposal({ type: "project-rule", scope: "project", agentProfileId: "", name: "", content: "", expectedBenefit: "", risk: "" }); setProposing(false); }).catch(() => undefined); }}><div><label><span>类型</span><select value={proposal.type} onChange={(event) => { const type = event.target.value; setProposal((value) => ({ ...value, type, scope: type === "agent-instruction" ? "agent" : value.scope === "agent" ? "project" : value.scope, agentProfileId: type === "agent-instruction" ? value.agentProfileId || agents[0]?.id || "" : "" })); }}><option value="project-rule">项目规则</option><option value="skill">Skill</option><option value="workflow">Workflow</option><option value="agent-instruction">Agent 指令 Revision</option></select></label><label><span>作用域</span><select value={proposal.scope} disabled={proposal.type === "agent-instruction"} onChange={(event) => setProposal((value) => ({ ...value, scope: event.target.value }))}><option value="project">当前项目</option><option value="user">当前用户</option>{proposal.type === "agent-instruction" ? <option value="agent">指定 Agent</option> : null}</select></label></div>{proposal.type === "agent-instruction" ? <label><span>目标自定义 Agent</span><select value={proposal.agentProfileId} onChange={(event) => setProposal((value) => ({ ...value, agentProfileId: event.target.value }))}><option value="">选择 Agent…</option>{agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name} · Revision {agent.revisionNumber}</option>)}</select></label> : null}<label><span>名称</span><input autoFocus value={proposal.name} onChange={(event) => setProposal((value) => ({ ...value, name: event.target.value }))} /></label><label><span>{proposal.type === "agent-instruction" ? "完整的新 Agent 指令" : "规范化资产内容"}</span><textarea value={proposal.content} onChange={(event) => setProposal((value) => ({ ...value, content: event.target.value }))} placeholder={proposal.type === "agent-instruction" ? "发布会追加新 Revision，不修改已有 Task。" : "写明触发条件、步骤、验证和失败恢复边界"} /></label><div><label><span>预期收益</span><input value={proposal.expectedBenefit} onChange={(event) => setProposal((value) => ({ ...value, expectedBenefit: event.target.value }))} /></label><label><span>风险</span><input value={proposal.risk} onChange={(event) => setProposal((value) => ({ ...value, risk: event.target.value }))} /></label></div><footer><button type="button" className="secondary-button" onClick={() => setProposing(false)}>取消</button><button type="submit" className="primary-button" disabled={!proposal.name.trim() || !proposal.content.trim() || (proposal.type === "agent-instruction" && !proposal.agentProfileId)}>保存为待审批候选</button></footer></form> : null}
+      <section className="improvement-candidate-list"><header><strong>候选</strong><small>{candidates.length} 条不可变审计记录</small></header>{candidates.map((candidate) => <article key={candidate.id} className={`is-${candidate.status}`}>
+        <div className="improvement-candidate-heading"><span><em>{candidate.type === "project-rule" ? "项目规则" : candidate.type}</em><strong>{candidate.name}</strong><small>{candidate.scope} · Revision {candidate.revision} · {candidate.status} · proposer {candidate.proposer.kind}/{candidate.proposer.source}{candidate.proposer.tokenUsage !== undefined ? ` · ${candidate.proposer.tokenUsage} tokens` : ""}</small></span>{candidate.status === "pending" ? <span className="improvement-status">待审批</span> : null}</div>
+        <p>{candidate.rationale}</p>
+        <label><span>候选内容</span><textarea value={edits[candidate.id] ?? candidate.content} onChange={(event) => setEdits((items) => ({ ...items, [candidate.id]: event.target.value }))} disabled={!['pending', 'snoozed'].includes(candidate.status)} /></label>
+        <div className="improvement-impact"><span><strong>预期收益</strong><small>{candidate.expectedBenefit}</small></span><span><strong>风险</strong><small>{candidate.risk}</small></span></div>
+        {candidate.evaluation ? <div className="improvement-evaluation"><CheckCircle2 size={13} /><span><strong>发布门禁 {candidate.evaluation.status}</strong><small>{candidate.evaluation.checks.join(" · ")} · {candidate.evaluation.evidenceCount} 条证据</small></span></div> : null}
+        <details><summary>来源证据 · {candidate.evidenceIds.length}</summary>{candidate.evidenceIds.map((id) => { const evidence = evidenceById.get(id); return evidence ? <div key={id}><strong>{evidence.kind}</strong><small>{evidence.preview}</small><code>{evidence.taskId}{evidence.runId ? ` · ${evidence.runId}` : ""}</code></div> : null; })}</details>
+        <footer>{candidate.status === "pending" || candidate.status === "snoozed" ? <><button type="button" className="secondary-button" onClick={() => { setEvaluationCandidateId(candidate.id); setEvaluationAgentId(summary?.settings.evaluatorAgentId || evaluationAgents[0]?.id || ""); }}>隔离评测</button><button type="button" className="secondary-button" onClick={() => onDecide(candidate, "snooze")}>稍后处理</button><button type="button" className="danger-ghost-button" onClick={() => onDecide(candidate, "reject")}>拒绝</button><button type="button" className="primary-button" onClick={() => onDecide(candidate, "publish", edits[candidate.id] ?? candidate.content)}>批准发布</button></> : candidate.status === "published" ? <button type="button" className="secondary-button" onClick={() => onDecide(candidate, "rollback")}>回滚资产</button> : <small>{candidate.rejectionReason || candidate.status}</small>}</footer>
+      </article>)}{!state.loading && !candidates.length ? <div className="session-discovery-empty"><Sparkles size={24} /><strong>暂时没有改进候选</strong><p>明确说“以后都这样做”或在失败后通过验证恢复，可形成可审查候选。</p></div> : null}</section>
+      {evaluationCandidateId ? <section className="improvement-evaluation-form"><header><span><strong>隔离 A/B 评测</strong><small>每个样本分别运行 Baseline 与 Candidate；至少一个保留样本，输出按期望文本确定性评分。</small></span><button type="button" className="icon-button" onClick={() => setEvaluationCandidateId("")} aria-label="关闭评测"><X size={14} /></button></header><label><span>评测 Agent</span><select value={evaluationAgentId} onChange={(event) => setEvaluationAgentId(event.target.value)}><option value="">选择已连接 Agent…</option>{evaluationAgents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}</select></label>{evaluationCases.map((testCase, index) => <fieldset key={testCase.id}><legend>{testCase.name}{testCase.holdout ? " · Holdout" : ""}</legend><textarea value={testCase.input} onChange={(event) => setEvaluationCases((items) => items.map((item, itemIndex) => itemIndex === index ? { ...item, input: event.target.value } : item))} placeholder="测试输入" /><input value={testCase.expectedIncludes} onChange={(event) => setEvaluationCases((items) => items.map((item, itemIndex) => itemIndex === index ? { ...item, expectedIncludes: event.target.value } : item))} placeholder="输出必须包含" /></fieldset>)}<footer><span>单次预留 {summary?.settings.evaluationTokenReservation || 0} Token / ${summary?.settings.evaluationCostReservationUsd || 0} · 今日 Token {summary?.budgetUsage.filter((item) => item.date === new Date().toISOString().slice(0, 10)).reduce((sum, item) => sum + item.reservedTokens, 0) || 0}</span><button type="button" className="primary-button" disabled={state.loading || !evaluationAgentId || evaluationCases.some((item) => !item.input.trim() || !item.expectedIncludes.trim())} onClick={() => onEvaluate(evaluationCandidateId, evaluationAgentId, evaluationCases).then(() => setEvaluationCandidateId("")).catch(() => undefined)}>运行隔离评测</button></footer></section> : null}
+      <section className="improvement-asset-list"><header><strong>已发布资产</strong><small>导出必须先预览目标路径和完整文件 Diff</small></header>{(summary?.assets || []).filter((asset) => asset.status === "active").map((asset) => <article key={asset.id}><span><em>{asset.type}</em><strong>{asset.name}</strong><small>v{asset.version} · {asset.storage} · 评测 {asset.evaluation.status}</small></span><div>{['skill', 'workflow'].includes(asset.type) ? <><button type="button" className="secondary-button" onClick={() => onPreviewExport(asset, "project-codex")}>项目 Codex</button><button type="button" className="secondary-button" onClick={() => onPreviewExport(asset, "user-codex")}>用户 Codex</button></> : <small>Codex 不支持项目规则导出</small>}<button type="button" className="secondary-button" onClick={() => onPreviewExport(asset, "custom-rux")}>Rux 格式…</button></div></article>)}{!(summary?.assets || []).some((asset) => asset.status === "active") ? <small>暂无 active 发布物。</small> : null}</section>
+      {state.exportPreview ? <section className="improvement-export-preview"><header><span><strong>导出预览</strong><small>{state.exportPreview.engine} · {state.exportPreview.exists ? "将覆盖现有文件" : "将创建新文件"}</small></span><code>{state.exportPreview.filePath}</code></header><pre>{state.exportPreview.diff}</pre><footer><button type="button" className="secondary-button" onClick={onCancelExport}>取消</button><button type="button" className="primary-button" onClick={onCommitExport}>确认写入</button></footer></section> : null}
+    </div>
+    <footer className="account-dialog-footer"><ShieldCheck size={15} /><p>发布只生成 Main-owned 不可变资产版本；既有 Task、Agent Revision 与 Native Session 不会被改写。</p></footer>
+  </section></div>;
+}
+
 function NewTaskDialog({ open, onClose, onCreate, onOpenAccounts, agentChoices, initialAgentId, codexSettings, codexModels, workspace, contextCandidates, onValidateContext }) {
   const [prompt, setPrompt] = useState("");
   const [agentId, setAgentId] = useState("codex");
@@ -3725,7 +3947,7 @@ function localDataSize(bytes = 0) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-function LocalDataDialog({ state, task, workspace, onChange, onPreview, onExecute, onExport, onClose }) {
+function LocalDataDialog({ state, task, workspace, board, onChange, onPreview, onExecute, onExport, onClose }) {
   const dialogRef = useDialogFocus(state.open, onClose);
   if (!state.open) return null;
   const actionCopy = {
@@ -3734,6 +3956,9 @@ function LocalDataDialog({ state, task, workspace, onChange, onPreview, onExecut
     "delete-task": [state.scope === "workspace" ? "清理工作区任务" : "删除整个任务", "删除范围内任务的全部 Rux 本地记录，包括运行、审批、交接和版本历史。"],
   };
   const [actionTitle, actionDetail] = actionCopy[state.action];
+  const boardAffectedTaskIds = new Set(state.scope === "workspace" ? (board?.items || []).filter((item) => item.type === "task").map((item) => item.linkedTaskId) : task ? [task.id] : []);
+  const affectedBoardCardCount = (board?.items || []).filter((item) => item.type === "task" && boardAffectedTaskIds.has(item.linkedTaskId)).length;
+  const affectedRequirementLinkCount = (board?.items || []).filter((item) => item.type === "requirement").reduce((count, item) => count + item.linkedTaskIds.filter((taskId) => boardAffectedTaskIds.has(taskId)).length, 0);
   return <div className="dialog-backdrop account-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !state.loading) onClose(); }}>
     <section ref={dialogRef} tabIndex={-1} className="account-dialog local-data-dialog" role="dialog" aria-modal="true" aria-labelledby="local-data-title">
       <header className="account-dialog-header"><div><span className="account-dialog-icon"><Database size={18} /></span><span><h2 id="local-data-title">本地数据与导出</h2><p>{workspace.name} · 本地操作不会删除、归档或修改服务商原生会话</p></span></div><button type="button" className="icon-button" onClick={onClose} aria-label="关闭本地数据管理"><X size={17} /></button></header>
@@ -3756,6 +3981,7 @@ function LocalDataDialog({ state, task, workspace, onChange, onPreview, onExecut
           {!state.preview ? <button type="button" className="secondary-button" onClick={onPreview} disabled={state.loading}>{state.loading ? <LoaderCircle size={14} className="status-running" /> : <Eye size={14} />}生成影响预览</button> : <div className="local-data-impact" role="status">
             <header><strong>影响预览</strong><span>预计释放 {localDataSize(state.preview.estimatedReclaimableBytes)}</span></header>
             <ul><li><strong>{state.preview.affectedTaskCount}</strong><span>任务</span></li><li><strong>{state.preview.importedMessageCount}</strong><span>导入消息</span></li><li><strong>{state.preview.affectedProjectionRevisionCount}</strong><span>投影版本</span></li><li><strong>{state.preview.runCount}</strong><span>Rux 运行记录</span></li><li><strong>{state.preview.affectedHandoffCount}</strong><span>上下文交接</span></li></ul>
+            {state.action === "delete-task" && board ? <p><LayoutList size={14} /><span><strong>看板影响：{affectedBoardCardCount} 张 Task 卡片，{affectedRequirementLinkCount} 条需求关联</strong><small>执行后 Board Store 会移除对应 Task 卡片与关联，不删除需求卡片。</small></span></p> : null}
             <p><ShieldCheck size={14} /><span><strong>{state.preview.nativeSessions.length} 个原生会话不受影响</strong><small>{state.action === "unlink"
               ? "Task、消息和投影版本会完整保留；重新导入可以恢复刷新与继续。"
               : state.action === "remove-imported"
@@ -3775,7 +4001,7 @@ function LocalDataDialog({ state, task, workspace, onChange, onPreview, onExecut
   </div>;
 }
 
-function CodexSettingsDialog({ open, connected, catalog, settings, localMetrics, localEventMetrics, updateState, updateBusy, onCheckUpdate, onDownloadUpdate, onInstallUpdate, onConfirmUpdateHealthy, onClose, onReload, onSave, onOpenAccounts, onOpenLocalData }) {
+function CodexSettingsDialog({ open, connected, catalog, settings, boardEnabled, improvementSettings, improvementAgents, localMetrics, localEventMetrics, updateState, updateBusy, onCheckUpdate, onDownloadUpdate, onInstallUpdate, onConfirmUpdateHealthy, onClose, onReload, onSave, onBoardEnabledChange, onImprovementSettingsChange, onOpenAccounts, onOpenLocalData }) {
   const [draft, setDraft] = useState(settings);
   const [query, setQuery] = useState("");
   const dialogRef = useDialogFocus(open, onClose);
@@ -3800,6 +4026,7 @@ function CodexSettingsDialog({ open, connected, catalog, settings, localMetrics,
     || terms.some((term) => String(term).toLocaleLowerCase().includes(normalizedQuery));
   const showPermissions = matchesQuery("权限", "只读", "工作区", "确认", "写入");
   const showGeneral = matchesQuery("常规", "模型", "推理", "登录", "Agent", "刷新");
+  const showFeatures = matchesQuery("功能", "项目看板", "需求", "Task");
   const showMetrics = matchesQuery("指标", "统计", "成功", "Run", "本机", "隐私");
   const showUpdates = matchesQuery("更新", "版本", "升级", "回滚", "签名");
   const applyDraft = (nextDraft) => {
@@ -3835,6 +4062,7 @@ function CodexSettingsDialog({ open, connected, catalog, settings, localMetrics,
             <div className="rux-settings-nav-group">
               <p>编码</p>
               <button type="button" onClick={() => document.getElementById("rux-agent-settings")?.scrollIntoView({ behavior: "smooth", block: "start" })}><Bot size={16} /><span>Rux</span></button>
+              <button type="button" onClick={() => document.getElementById("rux-feature-settings")?.scrollIntoView({ behavior: "smooth", block: "start" })}><LayoutList size={16} /><span>项目看板</span></button>
               <button type="button" disabled title="即将推出"><GitBranch size={16} /><span>Git</span></button>
             </div>
           </nav>
@@ -3847,7 +4075,7 @@ function CodexSettingsDialog({ open, connected, catalog, settings, localMetrics,
               <button type="button" className="icon-button rux-settings-close" onClick={onClose} aria-label="关闭 Rux 设置"><X size={17} /></button>
             </header>
 
-            {!showPermissions && !showGeneral && !showMetrics && !showUpdates ? (
+            {!showPermissions && !showGeneral && !showFeatures && !showMetrics && !showUpdates ? (
               <div className="rux-settings-empty"><Search size={20} /><strong>没有匹配的设置</strong><span>请尝试搜索“权限”“模型”或“推理”。</span></div>
             ) : null}
 
@@ -3901,6 +4129,23 @@ function CodexSettingsDialog({ open, connected, catalog, settings, localMetrics,
                     <button type="button" className="secondary-button" onClick={onReload} disabled={!connected || catalog.loading}>{catalog.loading ? <LoaderCircle size={14} className="status-running" /> : <RefreshCw size={14} />}刷新模型</button>
                   </div>
                   <div className="rux-settings-boundary"><ShieldCheck size={15} /><span><strong>权限边界</strong><small>设置会自动保存。Rux 的所有写入仍限制在当前工作区内。</small></span></div>
+                </div>
+              </section>
+            ) : null}
+
+            {showFeatures ? (
+              <section className="rux-settings-section" id="rux-feature-settings" aria-labelledby="rux-feature-settings-heading">
+                <h2 id="rux-feature-settings-heading">功能</h2>
+                <div className="rux-settings-card rux-general-card">
+                  <div className="rux-settings-action-row">
+                    <span><strong>项目看板</strong><small>为当前项目组织需求与 Task；Run 成功最多自动推进到待验收。</small></span>
+                    <label className="settings-switch"><input type="checkbox" checked={boardEnabled} onChange={(event) => onBoardEnabledChange(event.target.checked)} /><span aria-hidden="true" /></label>
+                  </div>
+                  {[['evidenceCollection', '自动发现可复用经验', '只从本地持久化 Task/Run 和明确反馈提取非敏感证据。'], ['candidateGeneration', '生成改进候选', '生成候选不会自动发布或修改 Agent。'], ['controlledEvolution', '受控自进化', '允许用户审批后发布 Main-owned 不可变资产版本。'], ['paused', '暂停改进中心', '停止分析和候选生成，不删除已有证据与资产。']].map(([key, title, detail]) => <div className="rux-settings-action-row" key={key}><span><strong>{title}</strong><small>{detail}</small></span><label className="settings-switch"><input type="checkbox" checked={Boolean(improvementSettings?.[key])} onChange={(event) => onImprovementSettingsChange({ [key]: event.target.checked })} /><span aria-hidden="true" /></label></div>)}
+                  <div className="rux-settings-action-row"><span><strong>隔离评测 Agent</strong><small>只允许支持临时无工具会话的 Codex/Claude Code；评测用量与普通 Run 分开记录。</small></span><select aria-label="隔离评测 Agent" value={improvementSettings?.evaluatorAgentId || ""} onChange={(event) => onImprovementSettingsChange({ evaluatorAgentId: event.target.value || null })}><option value="">等待配置</option>{improvementAgents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}</select></div>
+                  <div className="improvement-budget-settings"><label><span>每日 Token 上限</span><input type="number" min="0" value={improvementSettings?.dailyTokenLimit ?? 0} onChange={(event) => onImprovementSettingsChange({ dailyTokenLimit: Number(event.target.value) || 0 })} /></label><label><span>每项目 Token 上限</span><input type="number" min="0" value={improvementSettings?.perProjectTokenLimit ?? 0} onChange={(event) => onImprovementSettingsChange({ perProjectTokenLimit: Number(event.target.value) || 0 })} /></label><label><span>单次预留 Token</span><input type="number" min="1000" value={improvementSettings?.evaluationTokenReservation ?? 20000} onChange={(event) => onImprovementSettingsChange({ evaluationTokenReservation: Math.max(1000, Number(event.target.value) || 1000) })} /></label><label><span>每日费用上限 USD（可选）</span><input type="number" min="0" step="0.01" value={improvementSettings?.dailyCostUsdLimit ?? ""} onChange={(event) => onImprovementSettingsChange({ dailyCostUsdLimit: event.target.value === "" ? null : Number(event.target.value) })} placeholder="留空表示只限制 Token" /></label><label><span>单次费用预留 USD</span><input type="number" min="0" step="0.01" value={improvementSettings?.evaluationCostReservationUsd ?? 0} onChange={(event) => onImprovementSettingsChange({ evaluationCostReservationUsd: Number(event.target.value) || 0 })} /></label></div>
+                  {[['onlyWhenIdle', '仅在空闲时评测'], ['onlyOnAcPower', '仅接电时评测'], ['backgroundModelReview', '允许后台模型评审']].map(([key, title]) => <div className="rux-settings-action-row" key={key}><span><strong>{title}</strong><small>{key === 'backgroundModelReview' ? '默认开启但只有 Agent、用例与预算均已配置后才会执行；普通 Run 不受失败影响。' : '策略在 Main 发起评测前强制检查。'}</small></span><label className="settings-switch"><input type="checkbox" checked={Boolean(improvementSettings?.[key])} onChange={(event) => onImprovementSettingsChange({ [key]: event.target.checked })} /><span aria-hidden="true" /></label></div>)}
+                  <div className="rux-settings-boundary"><ShieldCheck size={15} /><span><strong>Main-owned 本地数据</strong><small>关闭后隐藏入口并停止创建新卡片；已有看板数据仍保留。</small></span></div>
                 </div>
               </section>
             ) : null}
@@ -4216,6 +4461,10 @@ export function App() {
   const [handoffState, setHandoffState] = useState({ open: false, loading: false, error: "", targetAgentId: "", messageIds: [], filePaths: [], agentSummary: "", agentSummaryGenerationId: "", summaryProvenance: null, constraints: "", preview: null, source: { messages: [], files: [] } });
   const [localDataState, setLocalDataState] = useState({ open: false, loading: false, error: "", notice: "", summary: null, preview: null, scope: "task", action: "unlink", format: "markdown", revisions: "current" });
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [boardState, setBoardState] = useState({ open: false, loading: false, error: "", projectId: "", snapshot: null, tasks: [] });
+  const [boardSnapshotsByProject, setBoardSnapshotsByProject] = useState({});
+  const [workingCopiesState, setWorkingCopiesState] = useState({ open: false, loading: false, error: "", projectId: "", items: [] });
+  const [improvementState, setImprovementState] = useState({ open: false, loading: false, error: "", notice: "", projectId: "", summary: null, exportPreview: null });
   const [authState, setAuthState] = useState(() => cachedAgentDetection?.authState || null);
   const [authChecking, setAuthChecking] = useState(false);
   const [runValidationBusy, setRunValidationBusy] = useState(false);
@@ -4251,6 +4500,10 @@ export function App() {
   const codexProvider = authState?.providers?.find((provider) => provider.id === "chatgpt");
   const codexConnected = codexProvider?.status === "connected";
   const connectedProviderCount = authState?.providers?.filter((provider) => provider.status === "connected").length || 0;
+  const improvementAssetsForWorkspace = (workspace) => {
+    const projectId = workspace?.projectId || workspace?.id;
+    return (improvementState.summary?.assets || []).filter((asset) => asset.status === "active" && asset.scope !== "agent" && (asset.scope === "user" || asset.projectId === projectId)).map((asset) => ({ id: asset.id, type: asset.type, name: asset.name, content: asset.content, version: asset.version }));
+  };
 
   useEffect(() => {
     let disposed = false;
@@ -4261,13 +4514,14 @@ export function App() {
     if (window.rux) setHydratedWorkspaceId(null);
 
     const hydrate = async () => {
-      const [agentResult, profileResult, connectionResult, nextState, eventMetrics, nextUpdateState] = await Promise.all([
+      const [agentResult, profileResult, connectionResult, nextState, eventMetrics, nextUpdateState, improvementSummary] = await Promise.all([
         window.rux ? Promise.resolve({ adapters: cachedAgentDetection?.adapters || fallbackAdapters }) : runtime.listAgents(),
         runtime.listAgentProfiles(),
         runtime.listProviderConnections(),
         window.rux ? window.rux.getWorkspaceState() : Promise.resolve(null),
         runtime.getLocalProductEventSummary(),
         runtime.getUpdateState(),
+        window.rux ? window.rux.getImprovementSummary({}) : Promise.resolve(null),
       ]);
       if (disposed) return;
       setAdapters(agentResult.adapters.map((adapter) => adapter.id === "rux-native" ? {
@@ -4279,12 +4533,17 @@ export function App() {
       setNativeConnections(connectionResult);
       setLocalProductEventMetrics(eventMetrics);
       setUpdateState(nextUpdateState);
+      if (improvementSummary) setImprovementState((state) => ({ ...state, summary: improvementSummary }));
       setAgentProfileError("");
 
       if (window.rux && nextState) {
         const snapshots = await Promise.all(nextState.recent.map((workspace) =>
           window.rux.loadTaskState(workspace.id)));
         if (disposed) return;
+        const projectIds = [...new Set(nextState.recent.filter((workspace) => !workspace.placeholder).map((workspace) => workspace.projectId || workspace.id))];
+        const boardSnapshots = await Promise.all(projectIds.map((projectId) => window.rux.loadBoard({ projectId })));
+        if (disposed) return;
+        setBoardSnapshotsByProject(Object.fromEntries(boardSnapshots.map((board) => [board.projectId, board])));
 
         const activeSnapshot = snapshots.find((snapshot) => snapshot.workspaceId === nextState.active.id);
         const storedActiveTasks = withoutSupersededWorkspaceStarter((activeSnapshot?.tasks || [])
@@ -4303,6 +4562,8 @@ export function App() {
           ?? activeTasks[0];
 
         setWorkspaceState(nextState);
+        const activeProjectId = nextState.active.projectId || nextState.active.id;
+        setExpandedProjectIds((ids) => ids.includes(activeProjectId) ? ids : [activeProjectId, ...ids]);
         setTasks(hydratedTasks);
         setSelectedTaskId(preferredTask.id);
         setHydratedWorkspaceId(nextState.active.id);
@@ -4330,13 +4591,28 @@ export function App() {
   useEffect(() => {
     if (!window.rux || hydratedWorkspaceId !== workspaceState.active.id) return;
     const snapshot = workspaceTaskSnapshot(workspaceState.active.id, tasks);
-    void window.rux.saveTaskState(snapshot).then(() => {
+    void window.rux.saveTaskState(snapshot).then(async () => {
       setPersistenceError("");
+      const activeProjectId = workspaceState.active.projectId || workspaceState.active.id;
+      if (boardState.open && boardState.projectId === activeProjectId) {
+        try {
+          const board = await window.rux.loadBoard({ projectId: activeProjectId });
+          setBoardState((state) => state.open && state.projectId === board.projectId
+            ? { ...state, snapshot: board, tasks: tasks.filter((task) => {
+                const workspace = workspaceState.recent.find((item) => item.id === task.workspaceId);
+                return (workspace?.projectId || workspace?.id) === activeProjectId;
+              }), error: "" }
+            : state);
+          setBoardSnapshotsByProject((boards) => ({ ...boards, [board.projectId]: board }));
+        } catch (error) {
+          setBoardState((state) => ({ ...state, error: error instanceof Error ? error.message : String(error) }));
+        }
+      }
     }).catch((error) => {
       setPersistenceError(error instanceof Error ? error.message : String(error));
       for (const activeRun of cancellationsRef.current.values()) activeRun.cancel();
     });
-  }, [hydratedWorkspaceId, tasks, workspaceState.active.id]);
+  }, [boardState.open, boardState.projectId, hydratedWorkspaceId, tasks, workspaceState.active.id, workspaceState.active.projectId]);
 
   useEffect(() => {
     if (showcaseMode) return;
@@ -4377,6 +4653,9 @@ export function App() {
         setAgentsOpen(false);
         setAccountsOpen(false);
         setSettingsOpen(false);
+        setBoardState((state) => ({ ...state, open: false }));
+        setWorkingCopiesState((state) => ({ ...state, open: false }));
+        setImprovementState((state) => ({ ...state, open: false }));
         setRestorePreview(null);
         return;
       }
@@ -5071,9 +5350,12 @@ export function App() {
     const requestedModel = adapter === "claude-code"
       ? modelAlias(taskSnapshot.model)
       : taskSnapshot.model && !taskSnapshot.model.toLowerCase().includes("default") ? taskSnapshot.model : undefined;
+    const pinnedImprovementContext = (taskSnapshot.improvementAssets || []).length
+      ? `Rux approved improvement assets pinned when this Task was created:\n\n${taskSnapshot.improvementAssets.map((asset) => `[${asset.type}] ${asset.name} · v${asset.version}\n${asset.content}`).join("\n\n")}\n\nCurrent user request:\n${prompt}`
+      : prompt;
     let run;
     try {
-      run = runtime.run(prompt, {
+      run = runtime.run(pinnedImprovementContext, {
         adapter,
         permissionMode: taskSnapshot.permissionMode || "acceptEdits",
         model: requestedModel,
@@ -5272,6 +5554,7 @@ export function App() {
       plan: [],
       activity: [],
       runs: [],
+      improvementAssets: improvementAssetsForWorkspace(workspaceState.active),
     };
     const preflight = runPreflight(task, prompt);
     if (!preflight.ok) {
@@ -5326,6 +5609,7 @@ export function App() {
       plan: [],
       activity: [],
       runs: [],
+      improvementAssets: improvementAssetsForWorkspace(workspaceState.active),
     };
     setTaskActionError("");
     setTasks((items) => [task, ...items.filter((item) => item.id !== `workspace-${selectedTask.workspaceId}`)]);
@@ -5392,7 +5676,7 @@ export function App() {
     window.setTimeout(() => composerInputRef.current?.focus(), 0);
   };
 
-  const createBlankTask = (choice, workspace = workspaceState.active, sourceTask = selectedTask, initialDraft = "") => {
+  const createBlankTask = (choice, workspace = workspaceState.active, sourceTask = selectedTask, initialDraft = "", boardSource = null) => {
     if (!choice || workspace.placeholder) return false;
     const id = `task-${Date.now()}`;
     const createdAt = isoNow();
@@ -5423,6 +5707,8 @@ export function App() {
       plan: [],
       activity: [],
       runs: [],
+      improvementAssets: improvementAssetsForWorkspace(workspace),
+      ...(boardSource ? { boardSource } : {}),
     };
     setTaskActionError("");
     setTasks((items) => [task, ...items.filter((item) => item.id !== `workspace-${workspace.id}`)]);
@@ -5430,12 +5716,13 @@ export function App() {
     setSelectedTaskId(id);
     setInspectorOpen(false);
     setTerminalOpen(false);
+    setBoardState((state) => ({ ...state, open: false }));
     setSidebarOpen(false);
     window.setTimeout(() => composerInputRef.current?.focus(), 0);
     return id;
   };
 
-  const startEditableConversation = (preferredAgentId = "", workspace = workspaceState.active, sourceTask = selectedTask) => {
+  const startEditableConversation = (preferredAgentId = "", workspace = workspaceState.active, sourceTask = selectedTask, initialDraft = "", boardSource = null) => {
     if (workspace.placeholder) {
       void chooseWorkspace();
       return false;
@@ -5450,10 +5737,11 @@ export function App() {
       openAccounts();
       return false;
     }
-    return createBlankTask(choice, workspace, sourceTask);
+    return createBlankTask(choice, workspace, sourceTask, initialDraft, boardSource);
   };
 
   const selectTask = (id) => {
+    setBoardState((state) => ({ ...state, open: false }));
     setSelectedTaskId(id);
     setTaskActionError("");
     setSidebarOpen(false);
@@ -5552,7 +5840,8 @@ export function App() {
     const nextSelected = nextWorkspaceTaskList.find((task) => task.id === preferredTaskId)
       ?? nextWorkspaceTaskList[0];
     setWorkspaceState(nextState);
-    setExpandedProjectIds((ids) => ids.includes(nextState.active.id) ? ids : [nextState.active.id, ...ids]);
+    const activeProjectId = nextState.active.projectId || nextState.active.id;
+    setExpandedProjectIds((ids) => ids.includes(activeProjectId) ? ids : [activeProjectId, ...ids]);
     setTasks(nextTasks);
     setSelectedTaskId(nextSelected.id);
     setHydratedWorkspaceId(nextState.active.id);
@@ -5631,6 +5920,233 @@ export function App() {
     if (!activated) return;
     const sourceTask = tasks.find((task) => task.workspaceId === workspace.id);
     startEditableConversation("", workspace, sourceTask);
+  };
+
+  const loadProjectBoard = async (projectId = workspaceState.active.projectId || workspaceState.active.id) => {
+    if (!window.rux) {
+      setBoardState((state) => ({ ...state, open: true, loading: false, projectId, error: "项目看板需要 Rux 桌面 Main-owned Store；Web 预览不会持久化看板。" }));
+      return null;
+    }
+    setBoardState((state) => ({ ...state, open: true, loading: true, projectId, error: "" }));
+    try {
+      const snapshot = await window.rux.loadBoard({ projectId });
+      const projectWorkspaceIds = new Set(workspaceState.recent.filter((workspace) => (workspace.projectId || workspace.id) === projectId).map((workspace) => workspace.id));
+      const boardTasks = tasks.filter((task) => projectWorkspaceIds.has(task.workspaceId));
+      setBoardState((state) => ({ ...state, open: true, loading: false, projectId, snapshot, tasks: boardTasks, error: "" }));
+      setBoardSnapshotsByProject((boards) => ({ ...boards, [snapshot.projectId]: snapshot }));
+      return snapshot;
+    } catch (error) {
+      setBoardState((state) => ({ ...state, open: true, loading: false, projectId, error: error instanceof Error ? error.message : String(error) }));
+      return null;
+    }
+  };
+
+  const openProjectBoard = async (path) => {
+    const workspace = workspaceState.recent.find((item) => item.path === path) || workspaceState.active;
+    const activated = await activateWorkspace(path);
+    if (!activated) return;
+    setInspectorOpen(false);
+    setTerminalOpen(false);
+    setSidebarOpen(false);
+    await loadProjectBoard(workspace.projectId || workspace.id);
+  };
+
+  const mutateProjectBoard = async (mutation) => {
+    if (!window.rux || !boardState.snapshot) throw new Error("项目看板尚未加载");
+    setBoardState((state) => ({ ...state, loading: true, error: "" }));
+    try {
+      const snapshot = await window.rux.mutateBoard({
+        projectId: boardState.snapshot.projectId,
+        expectedRevision: boardState.snapshot.revision,
+        mutation,
+      });
+      setBoardState((state) => ({ ...state, loading: false, snapshot, error: "" }));
+      setBoardSnapshotsByProject((boards) => ({ ...boards, [snapshot.projectId]: snapshot }));
+      return snapshot;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setBoardState((state) => ({ ...state, loading: false, error: message }));
+      if (message.includes("BOARD_REVISION_CONFLICT")) await loadProjectBoard(boardState.snapshot.projectId);
+      throw error;
+    }
+  };
+
+  const deleteBoardRequirement = async (itemId, title) => {
+    if (!window.confirm(`删除需求「${title}」？\n\n这不会删除关联 Task。`)) return;
+    await mutateProjectBoard({ action: "delete-requirement", itemId });
+  };
+
+  const createTaskForBoardRequirement = async (requirement) => {
+    const projectId = boardState.snapshot?.projectId;
+    if (!projectId) return;
+    const createdAt = isoNow();
+    const taskId = startEditableConversation("", workspaceState.active, selectedTask, requirement.description || requirement.title, {
+      projectId,
+      requirementItemId: requirement.id,
+      createdAt,
+    });
+    if (!taskId || !window.rux) return;
+    try {
+      let persisted = false;
+      for (let attempt = 0; attempt < 8; attempt += 1) {
+        const taskState = await window.rux.loadTaskState(workspaceState.active.id);
+        if (taskState.tasks.some((task) => task.id === taskId)) { persisted = true; break; }
+        await new Promise((resolve) => window.setTimeout(resolve, 80));
+      }
+      if (!persisted) throw new Error("新 Task 尚未完成持久化；看板关联未写入，请稍后重试。");
+      const current = await window.rux.loadBoard({ projectId });
+      const item = current.items.find((candidate) => candidate.id === requirement.id && candidate.type === "requirement");
+      if (!item) throw new Error("来源需求已被删除；Task 已保留但未建立看板关联。");
+      const snapshot = await window.rux.mutateBoard({ projectId, expectedRevision: current.revision, mutation: { action: "update-requirement", itemId: requirement.id, linkedTaskIds: [...new Set([...item.linkedTaskIds, taskId])] } });
+      setBoardSnapshotsByProject((boards) => ({ ...boards, [projectId]: snapshot }));
+    } catch (error) {
+      setTaskActionError(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const setProjectBoardEnabled = async (enabled) => {
+    if (!window.rux || workspaceState.active.placeholder) return;
+    const projectId = workspaceState.active.projectId || workspaceState.active.id;
+    try {
+      const current = boardSnapshotsByProject[projectId] || await window.rux.loadBoard({ projectId });
+      const snapshot = await window.rux.mutateBoard({ projectId, expectedRevision: current.revision, mutation: { action: "set-enabled", enabled } });
+      setBoardSnapshotsByProject((boards) => ({ ...boards, [projectId]: snapshot }));
+      setBoardState((state) => state.projectId === projectId ? { ...state, snapshot, open: enabled && state.open, error: "" } : state);
+    } catch (error) {
+      setTaskActionError(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const loadProjectWorkingCopies = async (projectId = workingCopiesState.projectId) => {
+    if (!window.rux || !projectId) return;
+    setWorkingCopiesState((state) => ({ ...state, open: true, loading: true, projectId, error: "" }));
+    try {
+      const items = await window.rux.listProjectWorkingCopies({ projectId });
+      setWorkingCopiesState((state) => ({ ...state, open: true, loading: false, projectId, items, error: "" }));
+    } catch (error) {
+      setWorkingCopiesState((state) => ({ ...state, open: true, loading: false, projectId, error: error instanceof Error ? error.message : String(error) }));
+    }
+  };
+
+  const authorizeProjectWorkingCopy = async (workingCopy) => {
+    if (!window.rux || !window.confirm(`关联工作副本「${workingCopy.name}」？\n\n路径：${workingCopy.path}\n\n确认后 Rux 会把该目录加入当前逻辑项目，并切换到这个工作副本。`)) return;
+    setWorkingCopiesState((state) => ({ ...state, loading: true, error: "" }));
+    try {
+      const nextState = await window.rux.authorizeProjectWorkingCopy({ projectId: workingCopy.projectId, path: workingCopy.path, confirmed: true });
+      await applyWorkspaceState(nextState);
+      setWorkingCopiesState((state) => ({ ...state, loading: false, open: false }));
+    } catch (error) {
+      setWorkingCopiesState((state) => ({ ...state, loading: false, error: error instanceof Error ? error.message : String(error) }));
+    }
+  };
+
+  const createProjectWorkingCopy = async ({ path, branch }) => {
+    if (!window.rux) throw new Error("新建 Worktree 仅在桌面应用中可用");
+    const projectId = workingCopiesState.projectId;
+    if (!window.confirm(`创建 Git Worktree？\n\n目录：${path}\n分支：${branch}\n\nRux 会停止当前 Runtime/Terminal，使用结构化 Git 命令创建并切换到新工作副本。`)) throw new Error("已取消创建 Worktree");
+    setWorkingCopiesState((state) => ({ ...state, loading: true, error: "" }));
+    try {
+      const nextState = await window.rux.createProjectWorkingCopy({ projectId, path: path.trim(), branch: branch.trim(), confirmed: true });
+      await applyWorkspaceState(nextState);
+      setWorkingCopiesState((state) => ({ ...state, loading: false, open: false }));
+      return nextState;
+    } catch (error) {
+      setWorkingCopiesState((state) => ({ ...state, loading: false, error: error instanceof Error ? error.message : String(error) }));
+      throw error;
+    }
+  };
+
+  const analyzeCurrentProjectImprovements = async (projectId = improvementState.projectId || workspaceState.active.projectId || workspaceState.active.id) => {
+    if (!window.rux || workspaceState.active.placeholder) return;
+    setImprovementState((state) => ({ ...state, open: true, loading: true, projectId, error: "" }));
+    try {
+      const summary = await window.rux.analyzeImprovements({ projectId });
+      setImprovementState((state) => ({ ...state, open: true, loading: false, projectId, summary, error: "" }));
+    } catch (error) {
+      setImprovementState((state) => ({ ...state, open: true, loading: false, projectId, error: error instanceof Error ? error.message : String(error) }));
+    }
+  };
+
+  const decideImprovementCandidate = async (candidate, action, editedContent = undefined) => {
+    if (!window.rux) return;
+    const actionLabel = { publish: "发布这条改进资产", reject: "拒绝这条候选", snooze: "稍后处理这条候选", rollback: "回滚已发布资产" }[action];
+    if (!window.confirm(`${actionLabel}？\n\n来源候选：${candidate.name}\n\n既有 Task 和 Agent Revision 不会被改写。`)) return;
+    setImprovementState((state) => ({ ...state, loading: true, error: "" }));
+    try {
+      const summary = await window.rux.decideImprovement({ candidateId: candidate.id, action, confirmed: true, ...(editedContent !== undefined ? { editedContent } : {}) });
+      setImprovementState((state) => ({ ...state, loading: false, summary, error: "" }));
+      if (candidate.type === "agent-instruction" && (action === "publish" || action === "rollback")) {
+        try {
+          const profileResult = await runtimeRef.current?.listAgentProfiles();
+          if (profileResult?.profiles) setAgentProfiles(profileResult.profiles);
+        } catch (error) {
+          setAgentProfileError(error instanceof Error ? error.message : String(error));
+        }
+      }
+    } catch (error) {
+      setImprovementState((state) => ({ ...state, loading: false, error: error instanceof Error ? error.message : String(error) }));
+    }
+  };
+
+  const updateImprovementSettings = async (patch) => {
+    if (!window.rux) return;
+    try {
+      const summary = await window.rux.updateImprovementSettings({ patch });
+      setImprovementState((state) => ({ ...state, summary, error: "" }));
+    } catch (error) {
+      setTaskActionError(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const proposeImprovementCandidate = async (proposal) => {
+    if (!window.rux) throw new Error("改进候选仅在桌面应用中可用");
+    try {
+      const { agentProfileId, ...proposalFields } = proposal;
+      const summary = await window.rux.proposeImprovement({ projectId: improvementState.projectId || workspaceState.active.projectId || workspaceState.active.id, ...proposalFields, ...(agentProfileId ? { agentProfileId } : {}) });
+      setImprovementState((state) => ({ ...state, summary, error: "" }));
+      return summary;
+    } catch (error) {
+      setImprovementState((state) => ({ ...state, error: error instanceof Error ? error.message : String(error) }));
+      throw error;
+    }
+  };
+
+  const previewImprovementExport = async (asset, target) => {
+    if (!window.rux) return;
+    setImprovementState((state) => ({ ...state, loading: true, error: "", notice: "", exportPreview: null }));
+    try {
+      const preview = await window.rux.previewImprovementExport({ assetId: asset.id, target, projectId: improvementState.projectId || workspaceState.active.projectId || workspaceState.active.id });
+      setImprovementState((state) => ({ ...state, loading: false, exportPreview: preview, error: "" }));
+    } catch (error) {
+      setImprovementState((state) => ({ ...state, loading: false, error: error instanceof Error ? error.message : String(error) }));
+    }
+  };
+
+  const commitImprovementExport = async () => {
+    if (!window.rux || !improvementState.exportPreview) return;
+    const preview = improvementState.exportPreview;
+    if (!window.confirm(`${preview.exists ? "覆盖" : "创建"}资产文件？\n\n${preview.filePath}\n\n写入内容与刚才显示的 Diff 指纹绑定；目标变化会拒绝执行。`)) return;
+    setImprovementState((state) => ({ ...state, loading: true, error: "" }));
+    try {
+      const result = await window.rux.commitImprovementExport({ previewId: preview.id, confirmed: true });
+      setImprovementState((state) => ({ ...state, loading: false, exportPreview: null, notice: `已导出 ${result.bytes} bytes：${result.filePath}` }));
+    } catch (error) {
+      setImprovementState((state) => ({ ...state, loading: false, error: error instanceof Error ? error.message : String(error) }));
+    }
+  };
+
+  const evaluateImprovementCandidate = async (candidateId, evaluatorAgentId, cases) => {
+    if (!window.rux) throw new Error("隔离评测仅在桌面应用中可用");
+    setImprovementState((state) => ({ ...state, loading: true, error: "", notice: "" }));
+    try {
+      const summary = await window.rux.evaluateImprovement({ candidateId, evaluatorAgentId, cases });
+      const record = [...summary.evaluations].reverse().find((item) => item.candidateId === candidateId);
+      setImprovementState((state) => ({ ...state, loading: false, summary, notice: record ? `评测 ${record.status}：Candidate ${record.candidatePassed}/${record.cases.length}，Baseline ${record.baselinePassed}/${record.cases.length}，Token ${record.totalTokens ?? "未报告"}` : "评测已记录" }));
+      return summary;
+    } catch (error) {
+      setImprovementState((state) => ({ ...state, loading: false, error: error instanceof Error ? error.message : String(error) }));
+      throw error;
+    }
   };
 
   const toggleProject = (workspaceId) => {
@@ -6648,6 +7164,11 @@ export function App() {
         expandedProjectIds={expandedProjectIds}
         onToggleProject={toggleProject}
         onCreateTaskInWorkspace={createTaskInWorkspace}
+        onOpenBoard={openProjectBoard}
+        boardEnabledByWorkspace={Object.fromEntries(Object.entries(boardSnapshotsByProject).map(([projectId, board]) => [projectId, board.enabled]))}
+        onOpenWorkingCopies={(projectId) => void loadProjectWorkingCopies(projectId)}
+        onOpenImprovements={() => void analyzeCurrentProjectImprovements(workspaceState.active.projectId || workspaceState.active.id)}
+        improvementPendingCount={improvementState.summary?.pendingCount || 0}
         onCollapse={() => setSidebarCollapsed(true)}
         onOpenAccounts={openAccounts}
         onOpenSettings={openSettings}
@@ -6676,6 +7197,20 @@ export function App() {
       ) : null}
 
       <main className={`main-surface ${terminalOpen ? "terminal-is-open" : ""} ${inspectorOpen ? "inspector-is-open" : ""}`}>
+        {boardState.open ? (
+          <ProjectBoard
+            state={boardState}
+            workspace={workspaceState.active}
+            onClose={() => setBoardState((state) => ({ ...state, open: false }))}
+            onReload={() => void loadProjectBoard(boardState.projectId)}
+            onCreateRequirement={(requirement) => mutateProjectBoard({ action: "create-requirement", ...requirement })}
+            onCreateTaskForRequirement={(requirement) => void createTaskForBoardRequirement(requirement)}
+            onMoveItem={(itemId, stateId) => mutateProjectBoard({ action: "move-item", itemId, stateId })}
+            onDeleteRequirement={deleteBoardRequirement}
+            onMutateBoard={mutateProjectBoard}
+            onOpenTask={selectTask}
+          />
+        ) : (
         <section className="task-workspace">
           <TaskHeader
             task={selectedTask}
@@ -6753,8 +7288,9 @@ export function App() {
             canSwitchAgent={!workspaceState.active.placeholder}
           />
         </section>
+        )}
 
-        <Inspector
+        {!boardState.open ? <Inspector
           open={inspectorOpen}
           onClose={() => setInspectorOpen(false)}
           tab={inspectorTab}
@@ -6783,9 +7319,9 @@ export function App() {
           onPreviewRunRestore={previewRunRestore}
           onConfirmRunRestore={confirmRunRestore}
           onCancelRunRestore={() => setRunRestorePreview(null)}
-        />
+        /> : null}
 
-        <TerminalPanel open={terminalOpen} onClose={() => setTerminalOpen(false)} />
+        {!boardState.open ? <TerminalPanel open={terminalOpen} onClose={() => setTerminalOpen(false)} /> : null}
       </main>
 
       <NewTaskDialog
@@ -6855,6 +7391,26 @@ export function App() {
           void chooseWorkspace();
         }}
       />
+      <WorkingCopiesDialog
+        state={workingCopiesState}
+        onClose={() => setWorkingCopiesState((state) => ({ ...state, open: false }))}
+        onReload={() => void loadProjectWorkingCopies()}
+        onAuthorize={(workingCopy) => void authorizeProjectWorkingCopy(workingCopy)}
+        onCreate={createProjectWorkingCopy}
+      />
+      <ImprovementCenter
+        state={improvementState}
+        agents={agentProfiles}
+        evaluationAgents={agentChoices.filter((agent) => agent.available && ["codex", "claude-code"].includes(agent.adapter))}
+        onClose={() => setImprovementState((state) => ({ ...state, open: false }))}
+        onAnalyze={() => void analyzeCurrentProjectImprovements()}
+        onDecide={(candidate, action, editedContent) => void decideImprovementCandidate(candidate, action, editedContent)}
+        onPropose={proposeImprovementCandidate}
+        onEvaluate={evaluateImprovementCandidate}
+        onPreviewExport={(asset, target) => void previewImprovementExport(asset, target)}
+        onCommitExport={() => void commitImprovementExport()}
+        onCancelExport={() => setImprovementState((state) => ({ ...state, exportPreview: null }))}
+      />
       <SessionSyncDialog
         state={sessionSyncState}
         onClose={() => setSessionSyncState((state) => ({ ...state, open: false }))}
@@ -6874,6 +7430,7 @@ export function App() {
         state={localDataState}
         task={selectedTask}
         workspace={workspaceState.active}
+        board={boardSnapshotsByProject[workspaceState.active.projectId || workspaceState.active.id]}
         onChange={(patch) => setLocalDataState((state) => ({ ...state, ...patch }))}
         onPreview={() => void previewLocalData()}
         onExecute={() => void executeLocalData()}
@@ -6885,6 +7442,9 @@ export function App() {
         connected={codexConnected}
         catalog={codexCatalog}
         settings={codexSettings}
+        boardEnabled={boardSnapshotsByProject[workspaceState.active.projectId || workspaceState.active.id]?.enabled !== false}
+        improvementSettings={improvementState.summary?.settings}
+        improvementAgents={agentChoices.filter((agent) => agent.available && ["codex", "claude-code"].includes(agent.adapter))}
         localMetrics={localSuccessMetrics}
         localEventMetrics={localProductEventMetrics}
         updateState={updateState}
@@ -6896,6 +7456,8 @@ export function App() {
         onClose={() => setSettingsOpen(false)}
         onReload={() => void loadCodexModels()}
         onSave={saveCodexSettings}
+        onBoardEnabledChange={(enabled) => void setProjectBoardEnabled(enabled)}
+        onImprovementSettingsChange={(patch) => void updateImprovementSettings(patch)}
         onOpenAccounts={openAccounts}
         onOpenLocalData={() => void openLocalData("workspace")}
       />

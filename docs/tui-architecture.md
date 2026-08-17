@@ -1,6 +1,6 @@
 # Rux TUI architecture, installation, and release
 
-更新时间：2026-08-17 · Runtime protocol v16
+更新时间：2026-08-17 · Runtime protocol v17
 
 ## Product shape
 

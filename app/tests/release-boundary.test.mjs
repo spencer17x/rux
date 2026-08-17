@@ -239,12 +239,18 @@ test("clean startup waits for explicit project and account actions", async () =>
   assert.match(rendererSource, /if \(value === "codex"\) return "Codex"/);
   assert.match(rendererSource, /aria-label="Rux 推理强度"/);
   assert.match(rendererSource, /这是仅查看的导入会话，原会话的模型、权限和消息不会在这里修改/);
-  assert.match(rendererSource, /const createBlankTask = \(choice, workspace = workspaceState\.active, sourceTask = selectedTask, initialDraft = ""\) =>/);
+  assert.match(rendererSource, /const createBlankTask = \(choice, workspace = workspaceState\.active, sourceTask = selectedTask, initialDraft = "", boardSource = null\) =>/);
   assert.match(rendererSource, /else startEditableConversation\(\);/);
   assert.match(rendererSource, /className="project-new-task-button"/);
-  assert.match(rendererSource, /aria-label=\{`在项目 \$\{workspace\.name\} 中新建对话`\}/);
+  assert.match(rendererSource, /aria-label=\{`在项目 \$\{project\.name\} 中新建对话`\}/);
   assert.match(rendererSource, /onClick=\{\(\) => onCreateTaskInWorkspace\(workspace\.path\)\}/);
   assert.doesNotMatch(rendererSource, /!searchQuery && !hasUnpinnedTasks/);
+  assert.match(rendererSource, /aria-label=\{`打开项目 \$\{project\.name\} 的看板`\}/);
+  assert.match(rendererSource, /Run 成功最多自动推进到“待验收”/);
+  assert.match(rendererSource, /aria-label=\{`管理项目 \$\{project\.name\} 的工作副本`\}/);
+  assert.match(rendererSource, />改进中心</);
+  assert.match(rendererSource, /没有审批就不会改变后续 Task/);
+  assert.match(rendererSource, /Rux approved improvement assets pinned when this Task was created/);
   assert.doesNotMatch(rendererSource, /composer-interaction-lock/);
   assert.match(rendererSource, /title: "新对话"/);
   assert.match(rendererSource, /messages: \[\],\s+plan: \[\],\s+activity: \[\],\s+runs: \[\]/);
@@ -337,7 +343,7 @@ test("external Session discovery is explicit, Workspace-filtered, and cannot exp
   assert.match(rendererSource, /迁移到 \{item\.attribution\.workspaceName\}/);
   assert.match(mainSource, /RUX_AUTHORIZED_WORKSPACES: JSON\.stringify\(authorizedWorkspaces\)/);
   assert.match(mainSource, /\["runtime\.shutdown", "session\.list", "session\.import", "session\.refresh", "session\.rebuild", "session\.revision\.list", "session\.revision\.restore", "session\.attribution\.migrate", "session\.read", "session\.resume\.check", "handoff\.preview", "handoff\.commit", "local\.data\.summary", "local\.data\.preview", "local\.data\.execute", "local\.data\.export"\]/);
-  assert.match(protocolSource, /"runtime\.shutdown" \| "session\.list" \| "session\.import" \| "session\.refresh" \| "session\.rebuild" \| "session\.revision\.list" \| "session\.revision\.restore" \| "session\.attribution\.migrate" \| "session\.read" \| "session\.resume\.check" \| "handoff\.preview" \| "handoff\.commit" \| "handoff\.summary\.generate" \| "local\.data\.summary" \| "local\.data\.preview" \| "local\.data\.execute" \| "local\.data\.export"/);
+  assert.match(protocolSource, /"runtime\.shutdown" \| "session\.list" \| "session\.import" \| "session\.refresh" \| "session\.rebuild" \| "session\.revision\.list" \| "session\.revision\.restore" \| "session\.attribution\.migrate" \| "session\.read" \| "session\.resume\.check" \| "handoff\.preview" \| "handoff\.commit" \| "handoff\.summary\.generate" \| "improvement\.evaluation\.run" \| "local\.data\.summary" \| "local\.data\.preview" \| "local\.data\.execute" \| "local\.data\.export"/);
   assert.match(mainSource, /migrateImportedSessionWorkspace/);
 });
 
@@ -608,4 +614,23 @@ test("renderer exposes Revision-owned Auto policy, actual per-turn model, and so
   assert.match(renderer, /Engine \/ Provider 未报告本次 Run 的 Token 用量/);
   assert.match(renderer, /Cached input/);
   assert.match(renderer, /Rux 估算/);
+});
+
+test("Project Board and controlled improvement remain Main-owned and message-only Runs avoid redundant Git scans", async () => {
+  const mainSource = await readFile(path.join(root, "src/electron/main.ts"), "utf8");
+  const runtimeSource = await readFile(path.join(root, "src/electron/runtime.ts"), "utf8");
+  const hostSource = await readFile(path.join(root, "src/electron/stdio-runtime.ts"), "utf8");
+  assert.match(mainSource, /new BoardStore\(resolve\(app\.getPath\("userData"\), "project-boards\.json"\)\)/);
+  assert.match(mainSource, /new ImprovementStore\(resolve\(app\.getPath\("userData"\), "improvements\.json"\)\)/);
+  assert.match(mainSource, /requireAuthorizedProjectWorkspaces\(parsed\.projectId\)/);
+  assert.match(mainSource, /git", \["-C", source\.path, "worktree", "list", "--porcelain"\]/);
+  assert.match(mainSource, /method: "git\.worktree\.create"/);
+  assert.match(mainSource, /WORKTREE_IDENTITY_MISMATCH/);
+  assert.match(mainSource, /improvementExportPreviews/);
+  assert.match(mainSource, /publishAgentInstructionCandidate/);
+  for (const source of [runtimeSource, hostSource]) {
+    assert.match(source, /runsWithPossibleWorkspaceChanges/);
+    assert.match(source, /gitChanges\.unchangedRunPatch\(baseline\)/);
+    assert.match(source, /case "git\.worktree\.create"/);
+  }
 });

@@ -5,6 +5,7 @@ import {
   ipcMain,
   type IpcMainInvokeEvent,
   MessageChannelMain,
+  powerMonitor,
   safeStorage,
   type MessagePortMain,
   shell,
@@ -23,11 +24,16 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
+import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import runtimePath from "./runtime?modulePath";
 import { AgentProfileStore } from "./agent-profile-store";
 import { TaskStore } from "./task-store";
+import { BoardStore } from "./board-store.ts";
+import { ImprovementStore } from "./improvement-store.ts";
+import { assertImprovementExportPath, improvementAssetContent, improvementExportDiff, improvementFileHash } from "./improvement-export.ts";
+import { publishAgentInstructionCandidate, rollbackAgentInstructionCandidate } from "./improvement-agent-publication.ts";
 import { NativeProviderStore } from "./native-provider-store.ts";
 import { LocalProductEventStore, type LocalProductEventKind } from "./local-product-event-store.ts";
 import { UpdateManager } from "./update-manager.ts";
@@ -62,6 +68,21 @@ import {
   workspaceActivateParamsSchema,
   workspaceOpenParamsSchema,
   workspaceTaskStateSchema,
+  boardLoadParamsSchema,
+  boardMutationParamsSchema,
+  projectWorkingCopiesParamsSchema,
+  projectWorkingCopyAuthorizeParamsSchema,
+  projectWorkingCopyCreateParamsSchema,
+  gitWorktreeCreateResultSchema,
+  improvementSummaryParamsSchema,
+  improvementAnalyzeParamsSchema,
+  improvementDecideParamsSchema,
+  improvementSettingsUpdateParamsSchema,
+  improvementProposeParamsSchema,
+  improvementExportPreviewParamsSchema,
+  improvementExportCommitParamsSchema,
+  improvementEvaluateParamsSchema,
+  improvementEvaluationRecordSchema,
   type DesktopInfo,
   type NativeProviderConnectionImpactPreview,
   type NativeProviderConnectionImpactPreviewParams,
@@ -75,6 +96,14 @@ import {
   type WorkspaceTaskState,
   type HandoffTarget,
   type HandoffSummaryProvenance,
+  type BoardSnapshot,
+  type ProjectWorkingCopy,
+  type ImprovementSummary,
+  type ImprovementExportPreview,
+  type ImprovementExportResult,
+  type ImprovementExportTarget,
+  type ImprovementEvaluationRecord,
+  type ImprovementEvaluateParams,
 } from "../shared/protocol";
 import { failClosedTimeout, runtimeRequestPolicy } from "./runtime-request-policy.ts";
 
@@ -102,6 +131,8 @@ let runtimePort: MessagePortMain | null = null;
 let workspaceState: WorkspaceState | null = null;
 let workspaceAuthorizationSource: WorkspaceAuthorizationSource = "placeholder";
 let taskStore: TaskStore | null = null;
+let boardStore: BoardStore | null = null;
+let improvementStore: ImprovementStore | null = null;
 let agentProfileStore: AgentProfileStore | null = null;
 let nativeProviderStore: NativeProviderStore | null = null;
 let localProductEventStore: LocalProductEventStore | null = null;
@@ -113,10 +144,22 @@ const handoffSummaryGenerations = new Map<string, {
   provenance: HandoffSummaryProvenance;
   expiresAt: number;
 }>();
+const improvementExportPreviews = new Map<string, {
+  assetId: string;
+  target: ImprovementExportTarget;
+  filePath: string;
+  baseDirectory: string;
+  content: string;
+  beforeHash?: string;
+  afterHash: string;
+  expiresAt: number;
+}>();
 let runtimeStopPromise: Promise<void> | null = null;
 let workspaceTransition: Promise<void> = Promise.resolve();
 let quitCleanupStarted = false;
 let allowQuit = false;
+let backgroundImprovementTimer: NodeJS.Timeout | undefined;
+let backgroundImprovementRunning = false;
 const pendingRequests = new Map<string, PendingRequest>();
 const runtimeExitPromises = new WeakMap<UtilityProcess, Promise<number>>();
 
@@ -171,14 +214,83 @@ function inspectWorkspace(inputPath: string, lastOpenedAt = new Date().toISOStri
 
   const placeholderPath = resolve(app.getPath("userData"), "welcome-workspace");
   const placeholder = workspacePath === placeholderPath;
+  const repositoryRootValue = placeholder ? undefined : gitValue(workspacePath, ["rev-parse", "--show-toplevel"]);
+  const repositoryRoot = repositoryRootValue ? realpathSync(resolve(repositoryRootValue)) : undefined;
+  const commonDirValue = repositoryRoot ? gitValue(workspacePath, ["rev-parse", "--git-common-dir"]) : undefined;
+  const gitDirValue = repositoryRoot ? gitValue(workspacePath, ["rev-parse", "--git-dir"]) : undefined;
+  const gitCommonDir = commonDirValue ? realpathSync(resolve(workspacePath, commonDirValue)) : undefined;
+  const gitDir = gitDirValue ? realpathSync(resolve(workspacePath, gitDirValue)) : undefined;
+  const workspaceId = createHash("sha256").update(workspacePath).digest("hex").slice(0, 12);
+  const projectId = gitCommonDir
+    ? createHash("sha256").update(`git:${gitCommonDir}`).digest("hex").slice(0, 12)
+    : workspaceId;
+  const workingCopyId = repositoryRoot
+    ? createHash("sha256").update(`worktree:${repositoryRoot}`).digest("hex").slice(0, 12)
+    : workspaceId;
   return {
-    id: createHash("sha256").update(workspacePath).digest("hex").slice(0, 12),
+    id: workspaceId,
     name: placeholder ? "选择项目" : basename(workspacePath) || workspacePath,
     path: workspacePath,
     branch: gitValue(workspacePath, ["branch", "--show-current"]) ?? "—",
     lastOpenedAt,
+    ...(!placeholder ? {
+      projectId,
+      projectName: repositoryRoot ? basename(repositoryRoot) || repositoryRoot : basename(workspacePath) || workspacePath,
+      workingCopyId,
+      workingCopyName: repositoryRoot ? basename(repositoryRoot) || repositoryRoot : basename(workspacePath) || workspacePath,
+      workingCopyKind: repositoryRoot ? (gitDir === gitCommonDir ? "main" : "worktree") : "directory",
+      ...(repositoryRoot ? { repositoryRoot } : {}),
+      ...(gitCommonDir ? { gitCommonDir } : {}),
+    } : {}),
     ...(placeholder ? { placeholder: true } : {}),
   };
+}
+
+function pathIsWithin(rootPath: string, candidatePath: string): boolean {
+  const candidateRelative = relative(rootPath, candidatePath);
+  return candidateRelative === "" || (!isAbsolute(candidateRelative) && candidateRelative !== ".." && !candidateRelative.startsWith(`..${sep}`));
+}
+
+function projectWorkingCopies(projectId: string): ProjectWorkingCopy[] {
+  const authorizedProjectWorkspaces = requireAuthorizedProjectWorkspaces(projectId);
+  const source = authorizedProjectWorkspaces.find((workspace) => workspace.gitCommonDir) ?? authorizedProjectWorkspaces[0];
+  if (!source.gitCommonDir) return [];
+  let output: string;
+  try {
+    output = execFileSync("git", ["-C", source.path, "worktree", "list", "--porcelain"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 3_000 });
+  } catch {
+    throw new Error("WORKTREE_DISCOVERY_FAILED: Git could not list Project working copies");
+  }
+  const records = output.trim().split(/\n\s*\n/).filter(Boolean);
+  return records.map((record, index) => {
+    const lines = record.split("\n");
+    const rawPath = lines.find((line) => line.startsWith("worktree "))?.slice("worktree ".length);
+    if (!rawPath) throw new Error("WORKTREE_DISCOVERY_FAILED: Git returned a working copy without a path");
+    const rawHead = lines.find((line) => line.startsWith("HEAD "))?.slice("HEAD ".length);
+    const rawBranch = lines.find((line) => line.startsWith("branch "))?.slice("branch ".length).replace(/^refs\/heads\//, "");
+    let canonicalPath = resolve(rawPath);
+    let availability: ProjectWorkingCopy["availability"] = "missing";
+    let inspected: WorkspaceSummary | undefined;
+    try {
+      canonicalPath = realpathSync(canonicalPath);
+      inspected = inspectWorkspace(canonicalPath);
+      availability = (inspected.projectId ?? inspected.id) === projectId ? "available" : "invalid";
+    } catch {
+      availability = existsSync(canonicalPath) ? "invalid" : "missing";
+    }
+    const authorized = availability === "available" && authorizedProjectWorkspaces.some((workspace) => pathIsWithin(workspace.path, canonicalPath));
+    return {
+      id: inspected?.workingCopyId ?? createHash("sha256").update(`worktree:${canonicalPath}`).digest("hex").slice(0, 12),
+      projectId,
+      path: canonicalPath,
+      name: basename(canonicalPath) || canonicalPath,
+      kind: index === 0 ? "main" : "worktree",
+      ...(rawBranch ? { branch: rawBranch } : {}),
+      ...(rawHead ? { headOid: rawHead } : {}),
+      availability,
+      authorizationState: authorized ? "authorized" : "pending",
+    };
+  });
 }
 
 function workspaceStatePath(): string {
@@ -282,6 +394,23 @@ function requireWorkspaceState(): WorkspaceState {
 function requireTaskStore(): TaskStore {
   if (!taskStore) throw new Error("Rux task store is unavailable");
   return taskStore;
+}
+
+function requireBoardStore(): BoardStore {
+  if (!boardStore) throw new Error("Rux Board Store is unavailable");
+  return boardStore;
+}
+
+function requireImprovementStore(): ImprovementStore {
+  if (!improvementStore) throw new Error("Rux Improvement Store is unavailable");
+  return improvementStore;
+}
+
+function requireAuthorizedProjectWorkspaces(projectId: string): WorkspaceSummary[] {
+  const workspaces = requireWorkspaceState().recent.filter((workspace) => !workspace.placeholder && (workspace.projectId ?? workspace.id) === projectId);
+  if (!workspaces.length) throw new Error("BOARD_PROJECT_UNAUTHORIZED: Project is not in the authorized Workspace set");
+  for (const workspace of workspaces) requireAuthorizedWorkspaceId(workspace.id);
+  return workspaces;
 }
 
 function localSubjectHash(value: string): string {
@@ -663,6 +792,88 @@ async function requestRuntime(request: RuntimeRequest): Promise<unknown> {
   });
 }
 
+async function performImprovementEvaluation(parsed: ImprovementEvaluateParams): Promise<ImprovementSummary> {
+  const candidate = requireImprovementStore().getCandidate(parsed.candidateId);
+  if (!candidate?.projectId) throw new Error("IMPROVEMENT_EVALUATION_PROJECT_REQUIRED: Candidate is not bound to a Project");
+  requireAuthorizedProjectWorkspaces(candidate.projectId);
+  const active = requireWorkspaceState().active;
+  if ((active.projectId ?? active.id) !== candidate.projectId) throw new Error("IMPROVEMENT_EVALUATION_PROJECT_INACTIVE: Open the candidate Project before evaluation");
+  const settings = requireImprovementStore().summary(candidate.projectId).settings;
+  if (settings.onlyWhenIdle && activeRunSubjects.size > 0) throw new Error("IMPROVEMENT_EVALUATION_NOT_IDLE: Wait for active Runs to finish");
+  if (settings.onlyOnAcPower && powerMonitor.isOnBatteryPower()) throw new Error("IMPROVEMENT_EVALUATION_POWER_POLICY: Evaluation is restricted to AC power");
+
+  let adapter: "codex" | "claude-code";
+  let evaluatorAgentRevisionId: string;
+  let profileId: string | undefined;
+  let model: string | undefined;
+  let reasoningEffort: string | undefined;
+  let evaluatorInstructions = "";
+  const customProfile = agentProfileStore?.get(parsed.evaluatorAgentId);
+  if (customProfile) {
+    if (customProfile.backend !== "codex" && customProfile.backend !== "claude-code") throw new Error("IMPROVEMENT_EVALUATOR_UNSUPPORTED: Evaluator must use Codex or Claude Code with isolated-session support");
+    adapter = customProfile.backend;
+    evaluatorAgentRevisionId = customProfile.latestRevisionId;
+    profileId = customProfile.id;
+    model = customProfile.model;
+    reasoningEffort = customProfile.reasoningEffort;
+    evaluatorInstructions = customProfile.instructions;
+  } else if (parsed.evaluatorAgentId === "codex" || parsed.evaluatorAgentId === "claude-code") {
+    adapter = parsed.evaluatorAgentId;
+    evaluatorAgentRevisionId = builtInAgentRevisionId(adapter);
+  } else {
+    throw new Error("IMPROVEMENT_EVALUATOR_UNAVAILABLE: Select a connected built-in or custom Codex/Claude Code Agent");
+  }
+  const reservation = requireImprovementStore().reserveEvaluation(candidate.projectId);
+  try {
+    const record = improvementEvaluationRecordSchema.parse(await requestRuntime({
+      kind: "request",
+      id: `improvement-evaluation-${randomUUID()}`,
+      method: "improvement.evaluation.run",
+      params: {
+        operationId: `improvement-evaluation-${randomUUID()}`,
+        candidateId: candidate.id,
+        projectId: candidate.projectId,
+        candidateContent: candidate.content,
+        adapter,
+        evaluatorAgentId: parsed.evaluatorAgentId,
+        evaluatorAgentRevisionId,
+        ...(profileId ? { profileId } : {}),
+        ...(model ? { model } : {}),
+        ...(reasoningEffort ? { reasoningEffort } : {}),
+        ...(evaluatorInstructions ? { evaluatorInstructions } : {}),
+        cases: parsed.cases,
+      },
+    })) as ImprovementEvaluationRecord;
+    return requireImprovementStore().recordEvaluation(reservation.id, record);
+  } catch (error) {
+    requireImprovementStore().failEvaluation(reservation.id);
+    throw error;
+  }
+}
+
+async function maybeRunBackgroundImprovementEvaluation(): Promise<void> {
+  if (backgroundImprovementRunning || !improvementStore || !workspaceState || workspaceState.active.placeholder) return;
+  const projectId = workspaceState.active.projectId ?? workspaceState.active.id;
+  const summary = improvementStore.summary(projectId);
+  const settings = summary.settings;
+  if (!settings.backgroundModelReview || settings.paused || !settings.evaluatorAgentId) return;
+  const today = new Date().toISOString().slice(0, 10);
+  const candidate = summary.candidates.find((item) => ["pending", "snoozed"].includes(item.status)
+    && summary.evaluations.some((evaluation) => evaluation.candidateId === item.id)
+    && !summary.evaluations.some((evaluation) => evaluation.candidateId === item.id && evaluation.createdAt.startsWith(today)));
+  if (!candidate) return;
+  const prior = [...summary.evaluations].reverse().find((evaluation) => evaluation.candidateId === candidate.id);
+  if (!prior) return;
+  backgroundImprovementRunning = true;
+  try {
+    await performImprovementEvaluation({ candidateId: candidate.id, evaluatorAgentId: settings.evaluatorAgentId, cases: prior.cases });
+  } catch (error) {
+    console.error(`[improvement-background] ${error instanceof Error ? error.message : String(error)}`);
+  } finally {
+    backgroundImprovementRunning = false;
+  }
+}
+
 function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.desktopInfo, (event): DesktopInfo => {
     assertTrustedRenderer(event);
@@ -678,7 +889,7 @@ function registerIpcHandlers(): void {
     const parsed = runtimeRequestSchema.parse(input) as RuntimeRequest;
     if (
       ["runtime.shutdown", "session.list", "session.import", "session.refresh", "session.rebuild", "session.revision.list", "session.revision.restore", "session.attribution.migrate", "session.read", "session.resume.check", "handoff.preview", "handoff.commit", "local.data.summary", "local.data.preview", "local.data.execute", "local.data.export"].includes(parsed.method)
-      || ["provider.connection.sync", "provider.connection.test"].includes(parsed.method)
+      || ["provider.connection.sync", "provider.connection.test", "git.worktree.create", "improvement.evaluation.run"].includes(parsed.method)
     ) {
       throw new Error("This Runtime method is not exposed to the Renderer");
     }
@@ -783,6 +994,175 @@ function registerIpcHandlers(): void {
     requireAuthorizedWorkspaceId(parsed.workspaceId);
     const saved = requireTaskStore().save(parsed);
     return { workspaceId: saved.workspaceId, savedAt: saved.updatedAt, persisted: true };
+  });
+
+  ipcMain.handle(IPC_CHANNELS.boardLoad, (event, input: unknown): BoardSnapshot => {
+    assertTrustedRenderer(event);
+    const parsed = boardLoadParamsSchema.parse(input);
+    const workspaces = requireAuthorizedProjectWorkspaces(parsed.projectId);
+    const tasks = workspaces.flatMap((workspace) => requireTaskStore().load(workspace.id).tasks);
+    return requireBoardStore().load(parsed.projectId, tasks);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.boardMutate, (event, input: unknown): BoardSnapshot => {
+    assertTrustedRenderer(event);
+    const parsed = boardMutationParamsSchema.parse(input);
+    const workspaces = requireAuthorizedProjectWorkspaces(parsed.projectId);
+    const tasks = workspaces.flatMap((workspace) => requireTaskStore().load(workspace.id).tasks);
+    return requireBoardStore().mutate(parsed, tasks);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.projectWorkingCopiesList, (event, input: unknown): ProjectWorkingCopy[] => {
+    assertTrustedRenderer(event);
+    const parsed = projectWorkingCopiesParamsSchema.parse(input);
+    return projectWorkingCopies(parsed.projectId);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.projectWorkingCopyAuthorize, async (event, input: unknown): Promise<WorkspaceState> => {
+    assertTrustedRenderer(event);
+    const parsed = projectWorkingCopyAuthorizeParamsSchema.parse(input);
+    const candidate = projectWorkingCopies(parsed.projectId).find((workingCopy) => workingCopy.path === resolve(parsed.path));
+    if (!candidate || candidate.availability !== "available") throw new Error("WORKTREE_AUTHORIZATION_INVALID: Working copy is unavailable or no longer belongs to this Project");
+    if (candidate.authorizationState === "authorized") return requireWorkspaceState();
+    const activated = await activateWorkspace(candidate.path, true);
+    if ((activated.active.projectId ?? activated.active.id) !== parsed.projectId) throw new Error("WORKTREE_AUTHORIZATION_INVALID: Activated Workspace Project identity changed");
+    return activated;
+  });
+
+  ipcMain.handle(IPC_CHANNELS.projectWorkingCopyCreate, async (event, input: unknown): Promise<WorkspaceState> => {
+    assertTrustedRenderer(event);
+    const parsed = projectWorkingCopyCreateParamsSchema.parse(input);
+    const workspaces = requireAuthorizedProjectWorkspaces(parsed.projectId);
+    const source = workspaces.find((workspace) => workspace.repositoryRoot && workspace.path === workspace.repositoryRoot);
+    if (!source) throw new Error("WORKTREE_ROOT_AUTHORIZATION_REQUIRED: Authorize the Project repository root before creating a worktree");
+    if ((requireWorkspaceState().active.projectId ?? requireWorkspaceState().active.id) !== parsed.projectId || requireWorkspaceState().active.id !== source.id) {
+      await activateWorkspace(source.path, false);
+    }
+    const result = gitWorktreeCreateResultSchema.parse(await requestRuntime({
+      kind: "request",
+      id: `worktree-create-${randomUUID()}`,
+      method: "git.worktree.create",
+      params: { path: parsed.path, branch: parsed.branch, confirmed: true },
+    }));
+    const inspected = inspectWorkspace(result.path);
+    if ((inspected.projectId ?? inspected.id) !== parsed.projectId) throw new Error("WORKTREE_IDENTITY_MISMATCH: Created path did not retain the source Git common dir");
+    return activateWorkspace(result.path, true);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.improvementSummary, (event, input: unknown): ImprovementSummary => {
+    assertTrustedRenderer(event);
+    const parsed = improvementSummaryParamsSchema.parse(input ?? {});
+    if (parsed.projectId) requireAuthorizedProjectWorkspaces(parsed.projectId);
+    return requireImprovementStore().summary(parsed.projectId);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.improvementAnalyze, (event, input: unknown): ImprovementSummary => {
+    assertTrustedRenderer(event);
+    const parsed = improvementAnalyzeParamsSchema.parse(input);
+    const workspaces = requireAuthorizedProjectWorkspaces(parsed.projectId);
+    const tasks = workspaces.flatMap((workspace) => requireTaskStore().load(workspace.id).tasks);
+    return requireImprovementStore().analyze(parsed.projectId, tasks);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.improvementEvaluate, async (event, input: unknown): Promise<ImprovementSummary> => {
+    assertTrustedRenderer(event);
+    return performImprovementEvaluation(improvementEvaluateParamsSchema.parse(input));
+  });
+
+  ipcMain.handle(IPC_CHANNELS.improvementDecide, (event, input: unknown): ImprovementSummary => {
+    assertTrustedRenderer(event);
+    const parsed = improvementDecideParamsSchema.parse(input);
+    const candidate = requireImprovementStore().getCandidate(parsed.candidateId);
+    if (!candidate) throw new Error("IMPROVEMENT_CANDIDATE_MISSING: Candidate no longer exists");
+    if (candidate?.projectId) requireAuthorizedProjectWorkspaces(candidate.projectId);
+    if (candidate.type === "agent-instruction" && (parsed.action === "publish" || parsed.action === "rollback")) {
+      const profiles = agentProfileStore;
+      if (!profiles) throw new Error("Rux Agent Profile Store is unavailable");
+      return parsed.action === "publish"
+        ? publishAgentInstructionCandidate(requireImprovementStore(), profiles, candidate.id, parsed.editedContent)
+        : rollbackAgentInstructionCandidate(requireImprovementStore(), profiles, candidate.id);
+    }
+    return requireImprovementStore().decide(parsed);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.improvementSettingsUpdate, (event, input: unknown): ImprovementSummary => {
+    assertTrustedRenderer(event);
+    const parsed = improvementSettingsUpdateParamsSchema.parse(input);
+    return requireImprovementStore().updateSettings(parsed);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.improvementPropose, (event, input: unknown): ImprovementSummary => {
+    assertTrustedRenderer(event);
+    const parsed = improvementProposeParamsSchema.parse(input);
+    requireAuthorizedProjectWorkspaces(parsed.projectId);
+    if (parsed.type === "agent-instruction") {
+      const profile = parsed.agentProfileId ? agentProfileStore?.get(parsed.agentProfileId) : undefined;
+      if (!profile) throw new Error("IMPROVEMENT_AGENT_TARGET_MISSING: Select an existing custom Agent Definition");
+      return requireImprovementStore().propose(parsed, { agentProfileId: profile.id, agentRevisionId: profile.latestRevisionId });
+    }
+    return requireImprovementStore().propose(parsed);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.improvementExportPreview, async (event, input: unknown): Promise<ImprovementExportPreview | null> => {
+    assertTrustedRenderer(event);
+    const parsed = improvementExportPreviewParamsSchema.parse(input);
+    const summary = requireImprovementStore().summary();
+    const asset = summary.assets.find((item) => item.id === parsed.assetId && item.status === "active");
+    if (!asset) throw new Error("IMPROVEMENT_ASSET_UNAVAILABLE: Only an active immutable asset can be exported");
+    const candidate = summary.candidates.find((item) => item.id === asset.candidateId);
+    const rendered = improvementAssetContent(asset, candidate?.expectedBenefit ?? "", parsed.target);
+    let baseDirectory: string;
+    let filePath: string;
+    if (parsed.target === "project-codex") {
+      if (!parsed.projectId) throw new Error("IMPROVEMENT_EXPORT_PROJECT_REQUIRED: Project export requires a Project");
+      const workspaces = requireAuthorizedProjectWorkspaces(parsed.projectId);
+      const root = workspaces.find((workspace) => workspace.repositoryRoot && workspace.path === workspace.repositoryRoot);
+      if (!root?.repositoryRoot) throw new Error("IMPROVEMENT_EXPORT_ROOT_REQUIRED: Authorize the repository root before exporting a Project Skill");
+      baseDirectory = root.repositoryRoot;
+      filePath = resolve(baseDirectory, ".agents", "skills", rendered.fileName);
+    } else if (parsed.target === "user-codex") {
+      baseDirectory = homedir();
+      filePath = resolve(baseDirectory, ".agents", "skills", rendered.fileName);
+    } else {
+      const options: Electron.OpenDialogOptions = { title: "选择 Rux 资产导出目录", properties: ["openDirectory", "createDirectory"], buttonLabel: "选择导出目录" };
+      const selected = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
+      if (selected.canceled || !selected.filePaths[0]) return null;
+      baseDirectory = realpathSync(selected.filePaths[0]);
+      filePath = resolve(baseDirectory, rendered.fileName);
+    }
+    assertImprovementExportPath(baseDirectory, filePath);
+    let before = "";
+    if (existsSync(filePath)) {
+      const status = statSync(filePath);
+      if (!status.isFile() || status.size > 1024 * 1024) throw new Error("IMPROVEMENT_EXPORT_TARGET_INVALID: Existing export target is not a bounded regular file");
+      before = readFileSync(filePath, "utf8");
+    }
+    const beforeHash = existsSync(filePath) ? improvementFileHash(before) : undefined;
+    const afterHash = improvementFileHash(rendered.content);
+    const previewId = randomUUID();
+    const expiresAt = Date.now() + 10 * 60_000;
+    improvementExportPreviews.set(previewId, { assetId: asset.id, target: parsed.target, filePath, baseDirectory, content: rendered.content, ...(beforeHash ? { beforeHash } : {}), afterHash, expiresAt });
+    return { id: previewId, assetId: asset.id, target: parsed.target, engine: rendered.engine, filePath, exists: beforeHash !== undefined, ...(beforeHash ? { beforeHash } : {}), afterHash, diff: improvementExportDiff(before, rendered.content), expiresAt: new Date(expiresAt).toISOString() };
+  });
+
+  ipcMain.handle(IPC_CHANNELS.improvementExportCommit, (event, input: unknown): ImprovementExportResult => {
+    assertTrustedRenderer(event);
+    const parsed = improvementExportCommitParamsSchema.parse(input);
+    const preview = improvementExportPreviews.get(parsed.previewId);
+    improvementExportPreviews.delete(parsed.previewId);
+    if (!preview || preview.expiresAt < Date.now()) throw new Error("IMPROVEMENT_EXPORT_PREVIEW_STALE: Export preview is missing or expired");
+    const asset = requireImprovementStore().summary().assets.find((item) => item.id === preview.assetId && item.status === "active");
+    if (!asset) throw new Error("IMPROVEMENT_ASSET_UNAVAILABLE: Asset changed after preview");
+    assertImprovementExportPath(preview.baseDirectory, preview.filePath);
+    const current = existsSync(preview.filePath) ? readFileSync(preview.filePath, "utf8") : "";
+    const currentHash = existsSync(preview.filePath) ? improvementFileHash(current) : undefined;
+    if (currentHash !== preview.beforeHash) throw new Error("IMPROVEMENT_EXPORT_PREVIEW_STALE: Export target changed after preview");
+    if (improvementFileHash(preview.content) !== preview.afterHash) throw new Error("IMPROVEMENT_EXPORT_PREVIEW_STALE: Proposed asset content changed after preview");
+    mkdirSync(dirname(preview.filePath), { recursive: true });
+    const temporary = `${preview.filePath}.rux-${randomUUID()}.tmp`;
+    writeFileSync(temporary, preview.content, { encoding: "utf8", mode: 0o600 });
+    renameSync(temporary, preview.filePath);
+    return { assetId: preview.assetId, target: preview.target, filePath: preview.filePath, bytes: Buffer.byteLength(preview.content), exportedAt: new Date().toISOString() };
   });
 
   ipcMain.handle(IPC_CHANNELS.sessionImport, async (event, input: unknown) => {
@@ -1267,6 +1647,8 @@ if (ownsSingleInstanceLock) app.whenReady().then(() => {
     undefined,
     (revisionId) => agentProfileStore?.getRevision(revisionId),
   );
+  boardStore = new BoardStore(resolve(app.getPath("userData"), "project-boards.json"));
+  improvementStore = new ImprovementStore(resolve(app.getPath("userData"), "improvements.json"));
   const restoredInterrupted = requireWorkspaceState().recent
     .filter((workspace) => !workspace.placeholder)
     .flatMap((workspace) => taskStore!.load(workspace.id).tasks)
@@ -1275,6 +1657,8 @@ if (ownsSingleInstanceLock) app.whenReady().then(() => {
   registerIpcHandlers();
   startRuntimeProcess();
   mainWindow = createMainWindow();
+  backgroundImprovementTimer = setInterval(() => void maybeRunBackgroundImprovementEvaluation(), 15 * 60_000);
+  backgroundImprovementTimer.unref();
   setTimeout(() => {
     if (!updateManager) return;
     if (updateManager.getState().rollbackPending) void updateManager.recoverIfNeeded();
@@ -1295,6 +1679,7 @@ app.on("before-quit", (event) => {
   event.preventDefault();
   if (quitCleanupStarted) return;
   quitCleanupStarted = true;
+  if (backgroundImprovementTimer) clearInterval(backgroundImprovementTimer);
   void stopRuntimeProcess("application quit").finally(() => {
     try {
       taskStore?.close();

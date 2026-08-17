@@ -216,6 +216,17 @@ function emitStreamScenario() {
 }
 
 function emitRuntimeEchoScenario(prompt) {
+  if (prompt.includes("Rux isolated A/B improvement evaluation")) {
+    completeItem({
+      type: "agentMessage",
+      id: `message-evaluation-${runtimeSequence}`,
+      text: "Generated summary from isolated evaluation.",
+      phase: "final_answer",
+      memoryCitation: null,
+    });
+    completeTurn("completed");
+    return;
+  }
   if (prompt.includes("Generate an optional narrative Context Handoff summary")) {
     completeItem({
       type: "agentMessage",
