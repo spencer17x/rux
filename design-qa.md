@@ -1,67 +1,64 @@
-# Design QA — Rux v1 Codex-only reset
+# Design QA — Current ChatGPT Codex screenshot parity
 
-> Historical QA record. Its fixed Codex Desktop anchors are superseded for new v1 work by the current-client parity contract in `docs/product-requirements.md` and versioned same-state reference evidence.
+final result: passed
 
-## Evidence
+## Comparison target
 
-- Source visual truth: `design-audit/final-local-goals/00-codex-26.810.52044-reference.png`.
-- Normalized source: `design-audit/codex-v1-reset/00-reference-1433x812.png`.
-- Browser implementation: `design-audit/codex-v1-reset/01-showcase-1433x812.png`.
-- Full-view comparison: `design-audit/codex-v1-reset/02-side-by-side-1433x812.png`.
-- Packaged Codex account surface: `design-audit/codex-v1-reset/03-packaged-codex-account.png`.
-- Packaged main surface: `design-audit/codex-v1-reset/04-packaged-main.png`.
-- Existing focused project-rail evidence remains under `design-audit/project-rail-codex-alignment/`.
+- Source visual truth: `/Users/17a/projects/rux/design-audit/chatgpt-codex-current-2026-08-19/01-main-environment.png` through `05-terminal-dock.png`.
+- Source pixels: 2866 × 1624 (`@2x` capture).
+- Source normalized copies: 1356 × 768 for the available QA display.
+- CSS target: 1433 × 812; implementation packaged capture: 1356 × 768 with equivalent aspect ratio.
+- Browser implementation viewport: 1356 × 768.
+- Packaged implementation: `/Users/17a/projects/rux/app/release/mac-arm64/Rux.app`.
 
-## Viewport and normalization
+## Accepted implementation evidence
 
-- Source: 2866 × 1624 physical pixels at 2× density, normalized to 1433 × 812.
-- Browser implementation: 1433 × 812 CSS and physical pixels at deviceScaleFactor 1.
-- State: Codex reference shows a permission-waiting Task; Rux implementation shows the accepted completed showcase Task with Environment open. These are different lifecycle states, so transcript copy and approval content are not treated as geometry mismatches.
-- The side-by-side artifact compares both complete frames in one image. Focused rail comparisons were already passed at the same normalized viewport.
+- Main + Environment, browser same-content state: `design-audit/chatgpt-codex-current-2026-08-19/27-browser-main-environment.png`.
+- Account menu: `design-audit/chatgpt-codex-current-2026-08-19/24-browser-account-menu.png`.
+- Settings: `design-audit/chatgpt-codex-current-2026-08-19/28-browser-settings-final.png` and packaged `21-final-settings.png`.
+- Quick tools: `design-audit/chatgpt-codex-current-2026-08-19/26-browser-quick-tools-no-inspector.png`.
+- Terminal: packaged `design-audit/chatgpt-codex-current-2026-08-19/23-final-terminal-light.png`.
 
-## Findings
+The browser showcase was used only to reproduce comparable dynamic transcript/account/menu content. Packaged-app captures verify the native Settings, Environment and PTY Terminal surfaces.
 
-- No actionable P0, P1, or P2 mismatch remains for the v1 reset.
-- The 240 px sidebar, 46 px top bar, centered 736 px transcript/Composer rail, 99 px Composer and right-floating Environment surface retain the accepted Codex Desktop anchors.
-- Removing `Agents`, generic Agent import, Board, Working Copies and Improvement Center is an intentional product-content change required by the v1 Codex-only brief. It reduces the sidebar while preserving its density, spacing and hierarchy.
-- The Composer now shows a fixed `Codex` identity in the same control slot; approval, model, voice and send controls retain their positions.
-- The packaged account row now opens one Codex/ChatGPT surface directly. No multi-Agent detection or Provider builder is visible.
+## Primary interactions tested
+
+- Open/close account menu; use the Settings entry.
+- Open Settings and inspect the complete sidebar taxonomy and General controls.
+- Open/close quick-tools menu.
+- Open/close Environment panel.
+- Open/close the real packaged PTY Terminal.
+- Composer permission and model controls remained keyboard-labelled.
+- Browser console: no errors or warnings.
 
 ## Required fidelity surfaces
 
-- Fonts and typography: the existing system/SF/Inter stack, 13–14 px navigation text, compact metadata, single-line truncation and transcript hierarchy remain aligned. Native rasterization differences are acceptable.
-- Spacing and layout rhythm: major tracks, insets, row heights, radii, thin dividers and overlay placement match the accepted reference anchors.
-- Colors and tokens: pale flat sidebar, white task surface, soft neutral selection, low-contrast borders and restrained shadows remain aligned.
-- Image and icon fidelity: the UI contains no required raster imagery. Existing library icons are used consistently; no placeholder or handcrafted icon art was introduced.
-- Copy and content: visible product name is `Rux`; execution identity is `Codex`; removed multi-Agent concepts do not leak into the normal sidebar, Composer, account page or settings page.
-
-## Interaction verification
-
-- Browser preview:
-  - `新对话` creates a blank Task directly and focuses `给 Agent 发送消息`.
-  - `账户与登录` opens the Codex-only account surface.
-  - `Rux 设置` exposes permissions, Codex model/reasoning, local data, updates and Git placeholder without Board or improvement controls.
-  - Console warning/error list was empty.
-- Packaged Electron app:
-  - Launched `app/release/mac-arm64/Rux.app`.
-  - Accessibility tree exposed only `新对话`, `变更`, `环境`, `已安排` in primary navigation.
-  - Composer exposed `执行引擎：Codex` with no Agent menu.
-  - Account row opened the Codex/ChatGPT login surface directly and showed the real connected Codex CLI status without exposing credentials.
-- Automated verification:
-  - Full `npm test` passed.
-  - `npm run build:desktop` passed.
-  - `npm run package` passed; package remains unsigned.
+- **Fonts and typography:** system sans and monospace hierarchy match the reference closely. Headings, navigation, transcript, menus and settings use the same optical scale; dynamic content wrapping differences are accepted.
+- **Spacing and layout rhythm:** 240 px rail, 46 px top bar, centered ~736 px transcript/Composer rail, 300 px floating Environment panel and ~298 px bottom Terminal match the normalized source. Settings content was narrowed to 728 px and section spacing tightened after comparison.
+- **Colors and tokens:** pale neutral sidebar, white canvas, blue settings switches, orange Full Access state, green/red Git stats and low-elevation overlays match the source. Terminal was changed from dark to the reference light theme.
+- **Image quality and assets:** no source raster artwork is required. Supplied screenshot thumbnails remain real image attachments. UI icons use the repository's consistent Lucide family; no handcrafted SVG/CSS-art substitutions were added.
+- **Copy and content:** navigation, account menu, settings taxonomy, quick tools, model label, permission wording, Environment labels and Terminal controls match the supplied Chinese reference. `Rux` replaces the `Codex`/`ChatGPT` product brand intentionally.
+- **Accessibility:** visible controls have accessible names; account/quick menus expose menu semantics; settings switches expose checkbox state; Terminal input is reachable. Full VoiceOver and 200% zoom remain separate verification work.
 
 ## Comparison history
 
-1. Initial implementation still exposed Agents, Improvement Center, Board/Working Copy entries, generic session import, Agent switching and a multi-Provider account dialog.
-2. First reset removed those navigation entries, fixed the Composer identity to Codex, forced new Tasks to the built-in Codex choice and removed the pre-Run multi-Agent detection gate.
-3. Packaged click verification found the footer account row still opened an old `管理 Agent 与 Provider` popover.
-4. The footer was changed to open the Codex-only account surface directly; settings were reduced to Codex v1 concepts; browser and packaged click paths then passed.
+### Iteration 1 — blocked
+
+- [P1] Terminal covered the Composer instead of reserving space above the bottom panel.
+- [P1] Terminal used a dark theme while the supplied Codex reference used a light PTY surface.
+- [P2] Settings content was too wide and the permission/general section rhythm was too loose.
+- [P2] Account menu, settings taxonomy and quick-tools menu were missing or used the older Rux structure.
+
+Fixes: reserved 298 px for Terminal, switched xterm to a light token set, narrowed Settings to 728 px, tightened vertical rhythm, restored the full reference taxonomy, added anchored account and quick-tools menus, and aligned Environment/source composition.
+
+### Iteration 2 — passed
+
+Post-fix evidence: `23-final-terminal-light.png`, `24-browser-account-menu.png`, `26-browser-quick-tools-no-inspector.png`, `27-browser-main-environment.png`, and `28-browser-settings-final.png`.
+
+No actionable P0/P1/P2 visual differences remain for the five supplied states.
 
 ## Follow-up polish
 
-- P3: exact private Codex glyphs and macOS font rasterization vary slightly because Rux uses its existing public icon library and Electron rendering.
-- P3: the completed showcase contains more project rows than the permission reference; normal startup remains user-owned and does not preload those fixtures.
-
-final result: passed
+- [P3] Some icon glyphs differ subtly from OpenAI's private icon set while retaining the same meaning, size and stroke family.
+- [P3] Packaged isolated QA is signed out and uses an empty local Task, so account name and transcript content differ from the user's live reference; same-content browser captures cover geometry.
+- Destination flows behind Pull Requests, Sites, Scheduled and Plugins require their own screenshots and functional parity passes; this report validates the supplied visible states, not every downstream feature.

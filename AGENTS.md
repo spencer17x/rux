@@ -45,7 +45,7 @@ On macOS arm64, the packaged app is `app/release/mac-arm64/Rux.app`. Packaging i
 - Record the reference client version, platform, account/region gates, viewport and click path for release evidence.
 - Do not infer desktop UI from CLI commands, App Server methods, feature flags or dormant Rux code.
 - Absence is part of parity. If the reference surface does not expose a control, Rux v1 must not expose it.
-- The current confirmed reference does not expose user model switching. Do not show model selectors, default-model settings, manual model IDs, model catalog refresh or Auto routing UI. Actual model/usage may appear only where the reference client shows equivalent read-only evidence.
+- The current confirmed reference exposes a Composer model/reasoning selector such as `5.6 Sol 中`. Match that control and its state; do not infer additional model-management UI beyond the captured reference.
 - Use `Rux` for product branding while preserving exact technical names in commands, paths, logs, diffs, Provider errors and protocol evidence.
 - Do not claim complete parity without same-version, same-state visual and interaction evidence.
 

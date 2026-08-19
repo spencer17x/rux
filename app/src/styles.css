@@ -10092,6 +10092,77 @@ select:focus-visible {
   .local-data-controls { grid-template-columns: 1fr; }
 }
 
+/* Current ChatGPT Codex reference — 2026-08-19, 1433 × 812 logical px. */
+.codex-shell .sidebar-nav { gap: 2px; padding: 10px 16px 18px; }
+.codex-shell .sidebar-nav > button { min-height: 31px; padding: 5px 8px; border-radius: 8px; color: #383a3d; font-size: 14px; font-weight: 560; }
+.codex-shell .sidebar-nav > button:hover { background: #e9eaeb; }
+.codex-shell .sidebar-footer { padding: 8px 16px 10px; border-top: 1px solid #dedfe0; background: #f5f6f7; }
+.codex-shell .sidebar-footer .account-switcher { min-height: 36px; padding: 4px 2px; border-radius: 8px; }
+.codex-shell .sidebar-footer .account-switcher > .workspace-copy { display: flex; align-items: center; }
+.codex-shell .account-initials { color: #fff; background: #83908f; font-size: 8px; letter-spacing: .01em; }
+.codex-shell .account-popover { right: 16px; bottom: 58px; left: 16px; width: auto; padding: 8px; border-color: #d7d8da; border-radius: 12px; box-shadow: 0 12px 30px rgb(0 0 0 / 0.12); }
+.codex-shell .account-popover > button { min-height: 35px; padding: 7px 8px; border-radius: 7px; font-size: 13px; }
+.codex-shell .account-popover > button > span:not(.account-avatar) { flex: 1; text-align: left; }
+.codex-shell .account-popover > button > small { margin-left: auto; color: #8c8e91; font-size: 11px; }
+.codex-shell .account-popover-profile { min-height: 42px !important; }
+
+.codex-shell .main-surface.inspector-is-open .task-workspace,
+.codex-shell .main-surface.inspector-is-open .task-header { width: 100%; }
+.codex-shell .inspector { top: 58px; right: 16px; bottom: auto; width: 300px; max-height: calc(100vh - 74px); border: 1px solid #dedede; border-radius: 18px; background: rgb(255 255 255 / 0.98); box-shadow: 0 12px 35px rgb(0 0 0 / 0.10); }
+.codex-shell .inspector.is-open { transform: translateX(0); }
+
+.quick-tools-shell { position: relative; }
+.quick-tools-menu { position: absolute; z-index: 80; top: 40px; right: -86px; display: grid; width: 258px; padding: 8px; border: 1px solid #dedede; border-radius: 12px; background: rgb(255 255 255 / .98); box-shadow: 0 14px 36px rgb(0 0 0 / .12); }
+.quick-tools-menu button { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; min-height: 42px; align-items: center; gap: 9px; padding: 7px 10px; border: 0; border-radius: 8px; color: #242629; background: transparent; font: inherit; text-align: left; }
+.quick-tools-menu button:hover { background: #f0f1f2; }
+.quick-tools-menu button span { font-weight: 560; }
+.quick-tools-menu kbd { padding: 2px 7px; border: 0; border-radius: 10px; color: #777a7d; background: #f0f0f1; font-size: 11px; }
+
+.codex-shell .composer-agent-button.is-fixed { display: none; }
+.codex-shell .permission-chip.is-full-access { color: #ef5d19; background: transparent; }
+.codex-shell .permission-chip.is-full-access svg { stroke: #ef5d19; }
+
+.codex-shell .terminal-panel { height: 298px; border-top-color: #dedede; background: #fff; }
+.codex-shell .main-surface.terminal-is-open .task-workspace { height: calc(100% - 298px); }
+.codex-shell .terminal-header { min-height: 40px; padding: 0 16px; background: #fafafa; }
+.codex-shell .terminal-tabs { gap: 4px; }
+.codex-shell .terminal-tabs > button { min-height: 32px; border-radius: 8px; }
+.codex-shell .terminal-tabs > button.is-active { padding: 7px 10px; background: #f0f0f1; }
+.codex-shell .terminal-tabs > button.is-active > span { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.codex-shell .terminal-new-tab { width: 32px; justify-content: center; padding: 0; }
+
+.rux-settings-sidebar { width: 240px; background: #f4f5f6; }
+.rux-settings-content { width: min(728px, calc(100% - 72px)); padding-top: 68px; padding-bottom: 80px; }
+.rux-settings-title-row h1 { font-size: 27px; font-weight: 640; }
+.rux-settings-nav { padding: 12px 8px 40px; }
+.rux-settings-nav-group + .rux-settings-nav-group { margin-top: 18px; }
+.rux-settings-nav-group p { padding: 0 9px; color: #a2a4a7; font-size: 12px; }
+.rux-settings-nav button { min-height: 31px; padding: 5px 9px; border-radius: 8px; font-size: 14px; }
+.rux-settings-nav button.is-active { background: #e2e3e5; }
+.rux-settings-section { margin-top: 24px; }
+.rux-settings-section + .rux-settings-section { margin-top: 42px; }
+.rux-settings-section > h2 { margin-bottom: 16px; font-size: 17px; }
+.rux-settings-card { border-color: #dedede; border-radius: 16px; }
+.codex-settings-toggle-card .rux-settings-action-row { min-height: 72px; padding: 14px 16px; }
+.codex-settings-toggle-card .rux-settings-action-row + .rux-settings-action-row { border-top: 1px solid #e5e5e5; }
+.settings-switch { width: 34px; height: 20px; flex-basis: 34px; }
+.settings-switch span { width: 34px; height: 20px; background: #c8c9ca; }
+.settings-switch span::after { width: 16px; height: 16px; }
+.settings-switch input:checked + span { background: #2997ff; }
+.settings-switch input:checked + span::after { transform: translateX(14px); }
+.codex-shell .rux-settings-window .settings-switch input:checked + span { background: #2997ff; }
+.rux-settings-general-card { overflow: hidden; }
+.rux-general-card > label,
+.rux-general-card > .rux-settings-action-row { min-height: 60px; padding: 11px 16px; }
+.rux-general-card > label + label,
+.rux-general-card > label + .rux-settings-action-row,
+.rux-general-card > .rux-settings-action-row + .rux-settings-action-row,
+.rux-general-card > .rux-settings-action-row + label { border-top: 1px solid #e8e8e8; }
+.rux-general-card select { min-width: 112px; padding: 7px 12px; border: 1px solid #dedede; border-radius: 10px; background: #fff; }
+.settings-segmented { display: inline-flex; gap: 2px; padding: 2px; border-radius: 11px; background: #f1f1f2; }
+.settings-segmented button { padding: 5px 11px; border: 0; border-radius: 9px; color: #7b7d80; background: transparent; }
+.settings-segmented button.is-active { color: #242629; background: #fff; box-shadow: 0 1px 3px rgb(0 0 0 / .08); }
+
 /* 2026-08 visual audit refinements */
 .timeline-region {
   position: relative;
@@ -11212,3 +11283,10 @@ select:focus-visible {
   .board-columns { grid-template-columns: minmax(250px, 1fr); }
   .board-form-row { grid-template-columns: 1fr; }
 }
+
+/* Final current-Codex parity overrides; keep last so historical compatibility CSS cannot win. */
+.rux-settings-content { width: min(728px, calc(100% - 72px)); padding-top: 68px; padding-bottom: 80px; }
+.rux-settings-section { margin-top: 24px; }
+.rux-settings-section + .rux-settings-section { margin-top: 42px; }
+.codex-shell .rux-settings-window .settings-switch input:checked + span { background: #2997ff; }
+.codex-shell .main-surface.terminal-is-open .task-workspace { height: calc(100% - 298px); }

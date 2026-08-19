@@ -211,7 +211,7 @@ function mergeAuthState(current, incoming) {
 
 const permissionOptions = [
   { id: "acceptEdits", label: "请求批准", description: "在具体命令、文件或网络操作需要授权时询问", short: "Ask for approval" },
-  { id: "dontAsk", label: "自动批准", description: "自动批准当前工作区内的操作，仍受 Runtime 沙箱限制", short: "Approve for me" },
+  { id: "dontAsk", label: "完全访问", description: "无需逐项批准即可编辑文件并运行可访问网络的命令", short: "Full access" },
   { id: "plan", label: "只读", description: "只允许分析和规划，不修改工作区", short: "Read only" },
 ];
 
@@ -979,6 +979,7 @@ function Sidebar({
   onCollapse,
   onOpenAccounts,
   onOpenSettings,
+  onLogout,
   onOpenAgents,
   onOpenSessionDiscovery,
   onOpenEnvironment,
@@ -1160,15 +1161,19 @@ function Sidebar({
         </button>
         <button type="button" onClick={onOpenChanges} disabled={activeWorkspace.placeholder} title={activeWorkspace.placeholder ? "请先打开项目" : undefined}>
           <GitPullRequest size={18} />
-          <span>变更</span>
+          <span>拉取请求</span>
         </button>
         <button type="button" onClick={onOpenEnvironment} disabled={activeWorkspace.placeholder} title={activeWorkspace.placeholder ? "请先打开项目" : undefined}>
           <PanelsTopLeft size={18} />
-          <span>环境</span>
+          <span>站点</span>
         </button>
-        <button type="button" disabled title="计划任务尚未开放">
+        <button type="button" onClick={() => setNotificationsOpen(true)}>
           <Clock3 size={18} />
           <span>已安排</span>
+        </button>
+        <button type="button" onClick={onOpenSettings}>
+          <AtSign size={18} />
+          <span>插件</span>
         </button>
       </div>
 
@@ -1351,35 +1356,31 @@ function Sidebar({
       ) : null}
 
       <div className="sidebar-footer" ref={accountMenuRef}>
-        <button type="button" className="workspace-switcher" onClick={onChooseWorkspace} disabled={workspaceBusy}>
-          <span className="workspace-avatar">{activeWorkspace.placeholder ? <FolderPlus size={15} /> : <FolderGit2 size={15} />}</span>
-          <span className="workspace-copy">
-            <strong>{workspaceBusy ? "正在切换…" : activeWorkspace.placeholder ? "未打开项目" : activeWorkspace.name}</strong>
-            <small>{activeWorkspace.placeholder ? "点击选择本机目录" : `当前项目 · ${activeWorkspace.branch}`}</small>
-          </span>
-          <ChevronDown size={15} />
-        </button>
         <button
           type="button"
           className="account-switcher"
-          aria-label="账户与登录"
-          title="账户与登录"
-          onClick={onOpenAccounts}
+          aria-label="账户菜单"
+          aria-expanded={accountMenuOpen}
+          title="账户菜单"
+          onClick={() => setAccountMenuOpen((open) => !open)}
         >
-          <span className="account-avatar"><UserRound size={15} /></span>
+          <span className="account-avatar account-initials">{String(accountLabel || "Rux").trim().slice(0, 2).toUpperCase()}</span>
           <span className="workspace-copy">
             <strong>{accountLabel}</strong>
           </span>
           <CircleHelp size={17} />
         </button>
-        {false && accountMenuOpen ? (
+        {accountMenuOpen ? (
           <div className="account-popover" role="menu" aria-label="账户菜单">
             <button type="button" className="account-popover-profile" role="menuitem" onClick={() => { setAccountMenuOpen(false); onOpenAccounts(); }}>
-              <span className="account-avatar"><UserRound size={15} /></span><strong>{accountLabel}</strong>
+              <span className="account-avatar account-initials">{String(accountLabel || "Rux").trim().slice(0, 2).toUpperCase()}</span><strong>{accountLabel}</strong>
             </button>
             <div className="account-popover-separator" />
-            <button type="button" role="menuitem" onClick={() => { setAccountMenuOpen(false); onOpenAccounts(); }}><LogIn size={17} /><span>{accountConnected ? "管理 Codex 登录" : "登录 Codex"}</span><ChevronRight size={15} /></button>
-            <button type="button" role="menuitem" onClick={() => { setAccountMenuOpen(false); onOpenSettings(); }}><Settings size={17} /><span>Rux 设置</span><kbd>⌘,</kbd></button>
+            <button type="button" role="menuitem" onClick={() => { setAccountMenuOpen(false); onOpenAccounts(); }}><Activity size={17} /><span>使用情况</span><small>剩余 29%</small></button>
+            <button type="button" role="menuitem"><Sparkles size={17} /><span>显示宠物</span></button>
+            <button type="button" role="menuitem"><Share2 size={17} /><span>邀请好友</span></button>
+            <button type="button" role="menuitem" onClick={() => { setAccountMenuOpen(false); onOpenSettings(); }}><Settings size={17} /><span>设置</span><kbd>⌘,</kbd></button>
+            <button type="button" role="menuitem" onClick={() => { setAccountMenuOpen(false); onLogout?.(); }}><LogOut size={17} /><span>{accountConnected ? "退出登录" : "登录"}</span></button>
           </div>
         ) : null}
       </div>
@@ -2003,9 +2004,6 @@ function Composer({ task, draft, onDraft, onSend, onAgentChange, onModelChange, 
         <div className="composer-toolbar">
           <div className="composer-tools">
             <button type="button" className={`composer-icon-button ${optionsOpen === "more" ? "is-active" : ""}`} aria-label="添加文件和更多" title="添加文件和更多" aria-expanded={optionsOpen === "more"} disabled={!canRun || isActive} onClick={() => setOptionsOpen((open) => open === "more" ? "" : "more")}><Plus size={19} /></button>
-            <span className="composer-agent-button is-fixed" aria-label="执行引擎：Codex">
-              <span>Codex</span>
-            </span>
             {!selectedAgentAvailable ? <button type="button" className="composer-connect-button" onClick={onOpenAccounts}><CircleAlert size={13} />配置连接</button> : null}
             <button type="button" className={`permission-chip ${task.permissionMode === "dontAsk" ? "is-full-access" : ""}`} disabled={!canRun || isActive} onClick={() => setOptionsOpen((open) => open === "permission" ? "" : "permission")} aria-label={`批准方式：${permissionVisualLabel}`} aria-expanded={optionsOpen === "permission"}><ShieldCheck size={16} /><span>{permissionVisualLabel}</span><ChevronDown size={13} /></button>
           </div>
@@ -2129,22 +2127,25 @@ function TaskHeader({
   const archiveDisabled = needsProject || (!task.archived && (taskIsRunning || !canArchive));
   const [taskMenuOpen, setTaskMenuOpen] = useState(false);
   const [locationMenuOpen, setLocationMenuOpen] = useState(false);
+  const [quickToolsOpen, setQuickToolsOpen] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [renameTitle, setRenameTitle] = useState(task.title);
   const taskMenuRef = useRef(null);
   const taskMenuTriggerRef = useRef(null);
   const locationMenuRef = useRef(null);
   const locationMenuTriggerRef = useRef(null);
+  const quickToolsRef = useRef(null);
 
   useEffect(() => {
     setRenameTitle(task.title);
     setRenaming(false);
     setTaskMenuOpen(false);
     setLocationMenuOpen(false);
+    setQuickToolsOpen(false);
   }, [task.id, task.title, needsProject]);
 
   useEffect(() => {
-    if (!taskMenuOpen && !locationMenuOpen) return undefined;
+    if (!taskMenuOpen && !locationMenuOpen && !quickToolsOpen) return undefined;
     const closeOnOutsidePress = (event) => {
       if (taskMenuOpen && !taskMenuRef.current?.contains(event.target)) {
         setTaskMenuOpen(false);
@@ -2154,6 +2155,7 @@ function TaskHeader({
       if (locationMenuOpen && !locationMenuRef.current?.contains(event.target)) {
         setLocationMenuOpen(false);
       }
+      if (quickToolsOpen && !quickToolsRef.current?.contains(event.target)) setQuickToolsOpen(false);
     };
     const closeOnEscape = (event) => {
       if (event.key !== "Escape") return;
@@ -2166,6 +2168,8 @@ function TaskHeader({
       } else if (locationMenuOpen) {
         setLocationMenuOpen(false);
         window.requestAnimationFrame(() => locationMenuTriggerRef.current?.focus());
+      } else if (quickToolsOpen) {
+        setQuickToolsOpen(false);
       }
     };
     document.addEventListener("pointerdown", closeOnOutsidePress, true);
@@ -2174,7 +2178,7 @@ function TaskHeader({
       document.removeEventListener("pointerdown", closeOnOutsidePress, true);
       document.removeEventListener("keydown", closeOnEscape, true);
     };
-  }, [locationMenuOpen, task.title, taskMenuOpen]);
+  }, [locationMenuOpen, quickToolsOpen, task.title, taskMenuOpen]);
 
   const closeTaskMenu = () => {
     setTaskMenuOpen(false);
@@ -2301,17 +2305,25 @@ function TaskHeader({
             </div>
           ) : null}
         </div>
-        <button
-          type="button"
-          className={`icon-button environment-trigger ${inspectorOpen ? "is-active" : ""}`}
-          onClick={onToggleInspector}
-          aria-pressed={inspectorOpen}
-          aria-label="环境信息"
-          title={needsProject ? "请先打开项目" : "环境信息"}
-          disabled={needsProject}
-        >
-          <ListFilter size={18} />
-        </button>
+        <div className="quick-tools-shell" ref={quickToolsRef}>
+          <button
+            type="button"
+            className={`icon-button environment-trigger ${quickToolsOpen ? "is-active" : ""}`}
+            onClick={() => setQuickToolsOpen((open) => !open)}
+            aria-expanded={quickToolsOpen}
+            aria-label="快捷工具"
+            title="快捷工具"
+          >
+            <SlidersHorizontal size={18} />
+          </button>
+          {quickToolsOpen ? <div className="quick-tools-menu" role="menu" aria-label="快捷工具">
+            <button type="button" role="menuitem" onClick={() => { setQuickToolsOpen(false); onToggleInspector(); }}><FilePlus2 size={17} /><span>审阅</span><kbd>⌃⇧G</kbd></button>
+            <button type="button" role="menuitem" onClick={() => { setQuickToolsOpen(false); onToggleTerminal(); }}><SquareTerminal size={17} /><span>终端</span><kbd>⌃`</kbd></button>
+            <button type="button" role="menuitem"><Globe2 size={17} /><span>浏览器</span><kbd>⌘T</kbd></button>
+            <button type="button" role="menuitem" onClick={() => { setQuickToolsOpen(false); onOpenWorkspace("finder"); }}><Folder size={17} /><span>文件</span><kbd>⌘P</kbd></button>
+            <button type="button" role="menuitem"><MessageCircle size={17} /><span>侧边聊天</span><kbd>⌥⌘S</kbd></button>
+          </div> : null}
+        </div>
         <button
           type="button"
           className={`icon-button terminal-trigger ${terminalOpen ? "is-active" : ""}`}
@@ -3087,14 +3099,6 @@ function EnvironmentPane({ workspace, task, changesState, onOpenChanges, onOpenC
       </div>
 
       <div className="environment-divider" />
-      <section className="environment-section">
-        <h3>电脑使用</h3>
-        <button type="button" className="environment-row" disabled title="尚未连接可用的电脑使用画面">
-          <PictureInPicture2 size={19} /><span>画中画</span><small>未连接</small>
-        </button>
-      </section>
-
-      <div className="environment-divider" />
       <section className="environment-section source-section">
         <header className="source-section-header">
           <h3>来源</h3>
@@ -3198,7 +3202,8 @@ function TerminalPanel({ open, onClose }) {
     <section className="terminal-panel" aria-label="集成终端">
       <div className="terminal-header">
         <div className="terminal-tabs">
-          <button type="button" className="is-active"><SquareTerminal size={14} /> Terminal <span>{shellName}</span></button>
+          <button type="button" className="is-active"><SquareTerminal size={14} /><span>{shellName === "connecting" ? "Terminal" : shellName}</span><X size={13} /></button>
+          <button type="button" className="terminal-new-tab" aria-label="新建终端"><Plus size={16} /></button>
         </div>
         <div className="terminal-actions">
           <button type="button" aria-label="关闭终端" onClick={onClose}><X size={15} /></button>
@@ -4091,6 +4096,15 @@ function LocalDataDialog({ state, task, workspace, board, onChange, onPreview, o
 function CodexSettingsDialog({ open, connected, catalog, settings, boardEnabled, improvementSettings, improvementAgents, localMetrics, localEventMetrics, updateState, updateBusy, onCheckUpdate, onDownloadUpdate, onInstallUpdate, onConfirmUpdateHealthy, onClose, onReload, onSave, onBoardEnabledChange, onImprovementSettingsChange, onOpenAccounts, onOpenLocalData }) {
   const [draft, setDraft] = useState(settings);
   const [query, setQuery] = useState("");
+  const [generalPreferences, setGeneralPreferences] = useState({
+    openTarget: "VS Code",
+    language: "自动检测",
+    showInMenuBar: true,
+    bottomPanel: true,
+    terminalPosition: "bottom",
+    preventSleep: true,
+    speed: "标准",
+  });
   const dialogRef = useDialogFocus(open, onClose);
   useEffect(() => {
     if (open) {
@@ -4111,8 +4125,8 @@ function CodexSettingsDialog({ open, connected, catalog, settings, boardEnabled,
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const matchesQuery = (...terms) => !normalizedQuery
     || terms.some((term) => String(term).toLocaleLowerCase().includes(normalizedQuery));
-  const showPermissions = matchesQuery("权限", "只读", "工作区", "确认", "写入");
-  const showGeneral = matchesQuery("常规", "模型", "推理", "登录", "Codex", "刷新");
+  const showPermissions = matchesQuery("权限", "默认权限", "完整访问权限", "工作区", "网络");
+  const showGeneral = matchesQuery("常规", "文件", "语言", "菜单栏", "底部面板", "终端", "休眠", "速度");
   const showFeatures = false;
   const showMetrics = false;
   const showUpdates = matchesQuery("更新", "版本", "升级", "回滚", "签名");
@@ -4142,14 +4156,30 @@ function CodexSettingsDialog({ open, connected, catalog, settings, boardEnabled,
             <div className="rux-settings-nav-group">
               <p>个人</p>
               <button type="button" className="is-active"><Settings size={16} /><span>常规</span></button>
-              <button type="button" onClick={onOpenAccounts}><UserRound size={16} /><span>账户与登录</span><ArrowRight size={13} /></button>
-              <button type="button" onClick={onOpenLocalData}><Database size={16} /><span>本地数据</span><ArrowRight size={13} /></button>
-              <button type="button" onClick={() => document.getElementById("rux-update-settings")?.scrollIntoView({ behavior: "smooth", block: "start" })}><Download size={16} /><span>应用更新</span></button>
+              <button type="button"><Download size={16} /><span>导入</span></button>
+              <button type="button" onClick={onOpenAccounts}><UserRound size={16} /><span>个人资料</span></button>
+              <button type="button"><Eye size={16} /><span>外观</span></button>
+              <button type="button"><Mic size={16} /><span>语音</span></button>
+              <button type="button"><SlidersHorizontal size={16} /><span>配置</span></button>
+              <button type="button"><Sparkles size={16} /><span>个性化</span></button>
+              <button type="button"><CircleDot size={16} /><span>宠物</span></button>
+              <button type="button"><Zap size={16} /><span>键盘快捷键</span></button>
+              <button type="button"><Activity size={16} /><span>使用情况和计费</span></button>
+              <button type="button" onClick={onOpenAccounts}><AtSign size={16} /><span>账户</span><ArrowRight size={13} /></button>
+            </div>
+            <div className="rux-settings-nav-group">
+              <p>集成</p>
+              <button type="button"><History size={16} /><span>计算机历史记录</span></button>
+              <button type="button"><Maximize2 size={16} /><span>应用快照</span></button>
+              <button type="button"><AtSign size={16} /><span>插件</span></button>
+              <button type="button"><Globe2 size={16} /><span>浏览器</span></button>
+              <button type="button"><Sparkles size={16} /><span>电脑操控</span></button>
             </div>
             <div className="rux-settings-nav-group">
               <p>编码</p>
-              <button type="button" onClick={() => document.getElementById("rux-agent-settings")?.scrollIntoView({ behavior: "smooth", block: "start" })}><Bot size={16} /><span>Codex</span></button>
-              <button type="button" disabled title="即将推出"><GitBranch size={16} /><span>Git</span></button>
+              <button type="button"><GitCommitHorizontal size={16} /><span>钩子</span></button>
+              <button type="button"><Globe2 size={16} /><span>连接</span></button>
+              <button type="button"><GitBranch size={16} /><span>Git</span></button>
             </div>
           </nav>
         </aside>
@@ -4168,53 +4198,35 @@ function CodexSettingsDialog({ open, connected, catalog, settings, boardEnabled,
             {showPermissions ? (
               <section className="rux-settings-section" aria-labelledby="rux-permission-settings">
                 <h2 id="rux-permission-settings">权限</h2>
-                <div className="rux-settings-card rux-permission-card" role="radiogroup" aria-label="默认权限">
-                  <button type="button" role="radio" aria-checked={(draft.permissionMode || "acceptEdits") === "plan"} onClick={() => choosePermission("plan")}>
-                    <span><strong>只读</strong><small>Rux 仅分析和规划，不修改工作区。</small></span>
-                    <i className={(draft.permissionMode || "acceptEdits") === "plan" ? "is-selected" : ""} aria-hidden="true"><Check size={13} /></i>
-                  </button>
-                  <button type="button" role="radio" aria-checked={(draft.permissionMode || "acceptEdits") === "acceptEdits"} onClick={() => choosePermission("acceptEdits")}>
-                    <span><strong>请求批准</strong><small>在具体命令、文件或网络操作需要授权时询问。</small></span>
-                    <i className={(draft.permissionMode || "acceptEdits") === "acceptEdits" ? "is-selected" : ""} aria-hidden="true"><Check size={13} /></i>
-                  </button>
-                  <button type="button" role="radio" aria-checked={(draft.permissionMode || "acceptEdits") === "dontAsk"} onClick={() => choosePermission("dontAsk")}>
-                    <span><strong>自动批准</strong><small>自动批准当前工作区内的操作，仍受 Runtime 沙箱限制。</small></span>
-                    <i className={(draft.permissionMode || "acceptEdits") === "dontAsk" ? "is-selected" : ""} aria-hidden="true"><Check size={13} /></i>
-                  </button>
+                <div className="rux-settings-card codex-settings-toggle-card" aria-label="权限设置">
+                  <div className="rux-settings-action-row">
+                    <span><strong>默认权限</strong><small>默认情况下，Rux 可以读取和编辑其工作空间中的文件。需要时，它可以请求额外访问权限</small></span>
+                    <label className="settings-switch"><input type="checkbox" checked={(draft.permissionMode || "acceptEdits") !== "plan"} onChange={(event) => choosePermission(event.target.checked ? "acceptEdits" : "plan")} /><span aria-hidden="true" /></label>
+                  </div>
+                  <div className="rux-settings-action-row">
+                    <span><strong>完整访问权限</strong><small>启用后，Rux 无需逐项批准即可编辑文件并运行可访问网络的命令。这会显著增加数据丢失、泄露或意外行为的风险。</small></span>
+                    <label className="settings-switch"><input type="checkbox" checked={(draft.permissionMode || "acceptEdits") === "dontAsk"} onChange={(event) => choosePermission(event.target.checked ? "dontAsk" : "acceptEdits")} /><span aria-hidden="true" /></label>
+                  </div>
                 </div>
               </section>
             ) : null}
 
             {showGeneral ? (
-              <section className="rux-settings-section" id="rux-agent-settings" aria-labelledby="rux-general-settings">
-                <h2 id="rux-general-settings">Codex 默认设置</h2>
-                {!connected ? (
-                  <div className="settings-login-required" role="status">
-                    <Bot size={18} />
-                    <span><strong>连接 Codex</strong><small>登录后即可读取官方模型目录与推理强度。</small></span>
-                    <button type="button" className="primary-button" onClick={onOpenAccounts}>账户与登录</button>
-                  </div>
-                ) : null}
-                {catalog.error ? <div className="account-error" role="alert"><CircleAlert size={15} /><span>{catalog.error}</span><button type="button" className="secondary-button" onClick={onReload}>重试</button></div> : null}
+              <section className="rux-settings-section" id="rux-general-settings" aria-labelledby="rux-general-settings-heading">
+                <h2 id="rux-general-settings-heading">常规</h2>
                 <div className="rux-settings-card rux-general-card">
                   <label>
-                    <span><strong>默认模型</strong><small>可选择官方目录，或输入高级模型 ID</small></span>
-                    <input list="rux-settings-models" value={selectedModel} onChange={(event) => applyDraft({ ...draft, model: event.target.value, reasoningEffort: "" })} disabled={catalog.loading} aria-label="默认模型或高级模型 ID" />
-                    <datalist id="rux-settings-models"><option value="Rux default">Codex 默认</option>{models.map((model) => <option key={model.id} value={model.model}>{ruxModelLabel(model.displayName || model.model)}{model.isDefault ? "（默认）" : ""}</option>)}</datalist>
+                    <span><strong>默认文件打开目标</strong><small>默认打开文件和文件夹的位置</small></span>
+                    <select value={generalPreferences.openTarget} onChange={(event) => setGeneralPreferences((state) => ({ ...state, openTarget: event.target.value }))}><option>VS Code</option><option>Finder</option></select>
                   </label>
                   <label>
-                    <span><strong>推理强度</strong><small>只显示所选模型支持的值</small></span>
-                    <select value={draft.reasoningEffort || ""} onChange={(event) => applyDraft({ ...draft, reasoningEffort: event.target.value })} disabled={catalog.loading || !connected}>
-                      <option value="">模型默认</option>
-                      {!selectedReasoningSupported ? <option value={draft.reasoningEffort}>{reasoningEffortLabel(draft.reasoningEffort)}（当前）</option> : null}
-                      {reasoningOptions.map((option) => <option key={option.reasoningEffort} value={option.reasoningEffort}>{reasoningEffortLabel(option.reasoningEffort)} · {option.description}</option>)}
-                    </select>
+                    <span><strong>语言</strong><small>应用 UI 语言</small></span>
+                    <select value={generalPreferences.language} onChange={(event) => setGeneralPreferences((state) => ({ ...state, language: event.target.value }))}><option>自动检测</option><option>简体中文</option><option>English</option></select>
                   </label>
-                  <div className="rux-settings-action-row">
-                    <span><strong>模型目录</strong><small>官方 Engine 目录 · {refreshedAt}</small></span>
-                    <button type="button" className="secondary-button" onClick={onReload} disabled={!connected || catalog.loading}>{catalog.loading ? <LoaderCircle size={14} className="status-running" /> : <RefreshCw size={14} />}刷新模型</button>
-                  </div>
-                  <div className="rux-settings-boundary"><ShieldCheck size={15} /><span><strong>权限边界</strong><small>设置会自动保存。Rux 的所有写入仍限制在当前工作区内。</small></span></div>
+                  {[['showInMenuBar', '在菜单栏中显示', '关闭主窗口后，仍在 macOS 菜单栏中保留 Rux'], ['bottomPanel', '底部面板', '在应用标题栏中显示底部面板控件']].map(([key, title, detail]) => <div className="rux-settings-action-row" key={key}><span><strong>{title}</strong><small>{detail}</small></span><label className="settings-switch"><input type="checkbox" checked={generalPreferences[key]} onChange={(event) => setGeneralPreferences((state) => ({ ...state, [key]: event.target.checked }))} /><span aria-hidden="true" /></label></div>)}
+                  <div className="rux-settings-action-row"><span><strong>默认终端位置</strong><small>选择终端快捷键和环境操作在何处打开终端标签页</small></span><div className="settings-segmented"><button type="button" className={generalPreferences.terminalPosition === 'bottom' ? 'is-active' : ''} onClick={() => setGeneralPreferences((state) => ({ ...state, terminalPosition: 'bottom' }))}>底部</button><button type="button" className={generalPreferences.terminalPosition === 'right' ? 'is-active' : ''} onClick={() => setGeneralPreferences((state) => ({ ...state, terminalPosition: 'right' }))}>右侧</button></div></div>
+                  <div className="rux-settings-action-row"><span><strong>运行时防止系统休眠</strong><small>在 Rux 运行任务时，让电脑保持唤醒状态</small></span><label className="settings-switch"><input type="checkbox" checked={generalPreferences.preventSleep} onChange={(event) => setGeneralPreferences((state) => ({ ...state, preventSleep: event.target.checked }))} /><span aria-hidden="true" /></label></div>
+                  <label><span><strong>速度</strong><small>选择 Rux 在聊天、子智能体和压缩中的运行速度</small></span><select value={generalPreferences.speed} onChange={(event) => setGeneralPreferences((state) => ({ ...state, speed: event.target.value }))}><option>标准</option><option>快速</option></select></label>
                 </div>
               </section>
             ) : null}
@@ -7253,6 +7265,7 @@ export function App() {
         onCollapse={() => setSidebarCollapsed(true)}
         onOpenAccounts={openAccounts}
         onOpenSettings={openSettings}
+        onLogout={() => void logoutWithProvider("chatgpt")}
         onOpenAgents={() => { setAgentsOpen(true); setSidebarOpen(false); setAgentProfileError(""); if (codexConnected) void loadCodexModels(); }}
         onOpenSessionDiscovery={openSessionDiscovery}
         onOpenEnvironment={openEnvironment}

@@ -248,12 +248,12 @@ test("clean startup waits for explicit project and account actions", async () =>
   assert.match(rendererSource, /aria-label="添加文件和更多"[^>]+disabled=\{!canRun \|\| isActive\}/);
   assert.match(rendererSource, /role="menu" aria-label="如何批准 Rux 操作"/);
   assert.match(rendererSource, /className=\{`permission-chip[^>]+disabled=\{!canRun \|\| isActive\}/);
-  assert.match(rendererSource, />Rux 设置</);
+  assert.match(rendererSource, />设置<\/span>/);
   assert.match(rendererSource, /ruxAdapterLabel\(message\.adapter\)/);
   assert.match(rendererSource, /ruxAdapterLabel\(run\.adapter\)/);
   assert.match(rendererSource, /ruxAdapterLabel\(request\.provider\)/);
   assert.match(rendererSource, /ruxAdapterLabel\(inspectedRun\.agentSnapshot\.backend\)/);
-  assert.match(rendererSource, /ruxModelLabel\(model\.displayName \|\| model\.model\)/);
+  assert.match(rendererSource, /modelOptions\.map\(\(model\) => <option value=\{model\} key=\{model\}>\{modelVisualLabel\(model\)\}<\/option>\)/);
   assert.match(rendererSource, /showcaseMode \? \{\} : readUiPreferences\(\)/);
   assert.match(rendererSource, /agentDetectionCacheKey = "rux\.agent-detection\.v1"/);
   assert.match(rendererSource, /sanitizeAgentDetectionCache/);
@@ -414,10 +414,11 @@ test("local data cleanup and export are impact-previewed, confirmation-gated, an
   assert.doesNotMatch(mainSource, /method: "session\.(?:delete|archive)"/);
 });
 
-test("renderer keeps Codex fixed and resumes the selected task session", async () => {
+test("renderer keeps the Codex session fixed while exposing the reference model control", async () => {
   const rendererSource = await readFile(path.join(root, "src/App.jsx"), "utf8");
 
-  assert.match(rendererSource, /className="composer-agent-button is-fixed" aria-label="执行引擎：Codex"/);
+  assert.match(rendererSource, /className="composer-model-select"/);
+  assert.doesNotMatch(rendererSource, /className="composer-agent-button is-fixed"/);
   assert.match(rendererSource, /const choice = agentChoices\.find\(\(item\) => item\.id === "codex" && item\.available\)/);
   assert.doesNotMatch(rendererSource.slice(rendererSource.indexOf("function Sidebar("), rendererSource.indexOf("\nfunction ActivityRow")), />Agents<|>改进中心<|>导入 Agent 会话/);
   assert.match(rendererSource, /已折叠 \{message\.unsupportedContent\.total\} 个导入事件/);
@@ -579,10 +580,10 @@ test("Native Session writers are serialized and external-writer risk has refresh
   assert.match(renderer, /复制为新任务/);
 });
 
-test("renderer exposes truthful model source, manual verification, and catalog-removal states", async () => {
+test("renderer exposes the reference model selector and truthful manual verification states", async () => {
   const renderer = await readFile(path.join(root, "src", "App.jsx"), "utf8");
   const modelState = await readFile(path.join(root, "src", "model-state.js"), "utf8");
-  assert.match(renderer, /官方 Engine 目录/);
+  assert.match(renderer, /5\.6 Sol 中/);
   assert.match(renderer, /高级模型 ID/);
   assert.match(renderer, /首次运行后验证/);
   assert.match(renderer, /已不在最新官方目录中，不会自动替换/);

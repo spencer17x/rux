@@ -10,9 +10,9 @@ Do not expose a feature merely because Runtime supports it. V1 Renderer must not
 
 ## Confirmed Current Decisions
 
-- The current ChatGPT Codex reference does not support user model switching.
-- Remove or hide Composer model selectors, default-model settings, manual model IDs, model-catalog refresh and Auto routing UI.
-- Codex owns internal model resolution. Show actual model and usage only when and where the reference client shows equivalent read-only evidence.
+- The authoritative 2026-08-19 screenshots live under `design-audit/chatgpt-codex-current-2026-08-19/` at 2866 × 1624.
+- The current ChatGPT Codex reference exposes a Composer model/reasoning selector such as `5.6 Sol 中`; preserve and align it.
+- Match the screenshot navigation (`新对话`, `拉取请求`, `站点`, `已安排`, `插件`), bottom account popover, full settings taxonomy, quick-tools menu, right Environment panel and bottom Terminal dock.
 - New chat actions open a focused blank Task directly; do not add a Rux setup modal.
 - Product, Workspace selection and account/login remain distinct actions.
 - Normal v1 startup and settings are Codex-only. Historical non-Codex data may remain readable only when doing so does not reintroduce a normal creation or configuration path.
@@ -50,8 +50,8 @@ If Computer Use cannot capture the target ChatGPT/Codex window, record the block
 
 ### Composer And Runs
 
-- Match the target's attachment/more, fixed Codex identity, permission, voice, send, stop and queued-input behavior.
-- Do not expose Agent or model selection.
+- Match the target's attachment/more, permission, model/reasoning, voice, send, stop and queued-input behavior.
+- Do not expose Rux-specific Agent selection or model-management concepts beyond the captured Codex control.
 - Provider-native approvals start the Run and ask only for the concrete command, file, network or tool action.
 - Match the target's streaming, plan, tool activity, collapsed rows, errors, feedback and return-to-latest behavior.
 
@@ -67,7 +67,7 @@ If Computer Use cannot capture the target ChatGPT/Codex window, record the block
 - Match the target's Codex authentication states and settings categories.
 - Opening the account surface must not silently contact unrelated Providers or inspect secrets.
 - Login/logout uses the official Codex boundary and preserves local task history.
-- Do not show default-model, model catalog, Auto routing, custom Provider, Board, Improvement or local metrics settings unless verified in the current target.
+- Do not show Auto routing, custom Provider, Board, Improvement or local metrics settings unless verified in the current target.
 
 ## Visual Acceptance
 
