@@ -1,5 +1,7 @@
 # Provider Adapter support, network security, and migration contract
 
+> Compatibility-only security record. This document does not define Rux v1 product requirements or authorize any Provider/Agent UI. The v1 surface follows `docs/product-requirements.md`; these boundaries remain only while dormant historical adapter code exists.
+
 Status: accepted initial contract, 2026-08-17.
 
 This document defines the Provider/Engine combinations Rux currently supports and the compatibility boundary for adding or upgrading an Adapter. It does not grant an Adapter more credential, network, Workspace, or Session authority than the shared Runtime protocol.

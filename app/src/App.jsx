@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   Activity,
   Archive,
@@ -45,6 +46,7 @@ import {
   LogIn,
   LogOut,
   Menu,
+  MessageCircle,
   Maximize2,
   Mic,
   MoreHorizontal,
@@ -158,7 +160,7 @@ const fallbackWorkspaceState = showcaseMode
     };
 
 const fallbackAdapters = [
-  { id: "codex", name: "Codex", available: false, detail: "尚未检测本机 Codex" },
+  { id: "codex", name: "Codex", available: showcaseMode, detail: showcaseMode ? "Codex 展示运行时" : "Codex 将在首次运行时检查" },
   { id: "claude-code", name: "Claude Code", available: false, detail: "尚未检测本机 Claude Code" },
   { id: "rux-native", name: "Rux Native", available: false, detail: "添加原生 Provider 后即可使用，无需安装 Agent CLI" },
 ];
@@ -828,10 +830,11 @@ function StatusIcon({ status, size = 14 }) {
   return <Circle size={size} className="status-waiting" aria-label="待开始" />;
 }
 
-function TaskItem({ task, active, onSelect, onRename, onTogglePin, onArchive, workspaceLabel = "", canArchive = true, disabled = false }) {
+function TaskItem({ task, active, onSelect, onRename, onTogglePin, onArchive, projectName = "", workspaceName = "", branch = "", canArchive = true, disabled = false }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [title, setTitle] = useState(task.title);
+  const [hoverCard, setHoverCard] = useState(null);
   const shellRef = useRef(null);
 
   useEffect(() => setTitle(task.title), [task.title]);
@@ -860,6 +863,15 @@ function TaskItem({ task, active, onSelect, onRename, onTogglePin, onArchive, wo
     setMenuOpen(false);
   };
 
+  const showHoverCard = () => {
+    const rect = shellRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    setHoverCard({
+      left: rect.right + 8,
+      top: Math.max(8, Math.min(rect.top - 4, window.innerHeight - 126)),
+    });
+  };
+
   if (renaming) {
     return (
       <form className="task-rename-form" onSubmit={(event) => { event.preventDefault(); submitRename(); }}>
@@ -883,19 +895,27 @@ function TaskItem({ task, active, onSelect, onRename, onTogglePin, onArchive, wo
   }
 
   return (
-    <div ref={shellRef} className={`task-item-shell ${active ? "is-active" : ""}`}>
+    <div
+      ref={shellRef}
+      className={`task-item-shell ${active ? "is-active" : ""}`}
+      onPointerEnter={showHoverCard}
+      onPointerLeave={() => setHoverCard(null)}
+      onFocusCapture={showHoverCard}
+      onBlurCapture={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) setHoverCard(null);
+      }}
+    >
       <button
         type="button"
         className={`task-item ${active ? "is-active" : ""}`}
         onClick={() => { setMenuOpen(false); onSelect(); }}
         disabled={disabled}
         aria-current={active ? "page" : undefined}
-        title={`${task.title} · ${task.preview} · ${task.updatedAt}`}
+        title={undefined}
       >
         <span className="task-copy">
           <span className="task-title-row">
             <span className="task-title">{task.title}</span>
-            {workspaceLabel ? <small className="task-worktree-label">{workspaceLabel}</small> : null}
             {["running", "blocked", "failed", "interrupted"].includes(task.status) ? <StatusIcon status={task.status} size={12} /> : null}
           </span>
           <span className="task-meta">
@@ -904,20 +924,31 @@ function TaskItem({ task, active, onSelect, onRename, onTogglePin, onArchive, wo
           </span>
         </span>
       </button>
-      <button
+      {!task.archived ? <div className="task-quick-actions" aria-label={`任务快捷操作 ${task.title}`}>
+        <button type="button" onClick={() => { setHoverCard(null); onTogglePin(); }} disabled={disabled} aria-label={task.pinned ? `取消置顶 ${task.title}` : `置顶 ${task.title}`} title={task.pinned ? "取消置顶" : "置顶"}><Pin size={13} /></button>
+        <button type="button" onClick={() => { setHoverCard(null); onArchive(); }} disabled={disabled || ["running", "blocked"].includes(task.status) || !canArchive} aria-label={`归档 ${task.title}`} title={!canArchive ? "每个项目至少保留一个未归档任务" : "归档"}><Archive size={13} /></button>
+      </div> : <button
         type="button"
         className="task-more-button"
         aria-label={`任务操作 ${task.title}`}
         aria-expanded={menuOpen}
         onClick={() => setMenuOpen((open) => !open)}
         disabled={disabled}
-      ><MoreHorizontal size={14} /></button>
+      ><MoreHorizontal size={14} /></button>}
       {menuOpen ? (
         <div className="task-action-menu" role="menu">
           {!task.archived ? <button type="button" role="menuitem" onClick={() => { onTogglePin(); setMenuOpen(false); }}><Pin size={13} />{task.pinned ? "取消置顶" : "置顶任务"}</button> : null}
           <button type="button" role="menuitem" onClick={() => { setRenaming(true); setMenuOpen(false); }}><PencilLine size={13} />重命名</button>
           <button type="button" role="menuitem" disabled={["running", "blocked"].includes(task.status) || (!task.archived && !canArchive)} title={!task.archived && !canArchive ? "每个项目至少保留一个未归档任务" : undefined} onClick={() => { onArchive(); setMenuOpen(false); }}><Archive size={13} />{task.archived ? "重新打开" : "归档任务"}</button>
         </div>
+      ) : null}
+      {hoverCard && !menuOpen && !renaming ? createPortal(
+        <div className="task-hover-card" role="tooltip" style={{ left: hoverCard.left, top: hoverCard.top }}>
+          <div className="task-hover-heading"><strong>{task.title}</strong><small>{task.updatedAt}</small></div>
+          <div><Folder size={14} /><span>{projectName || workspaceName || "项目"}</span></div>
+          <div><GitBranch size={14} /><span>{branch || task.branch || "—"}</span></div>
+        </div>,
+        document.body,
       ) : null}
     </div>
   );
@@ -937,6 +968,8 @@ function Sidebar({
   onChooseWorkspace,
   expandedProjectIds,
   onToggleProject,
+  pinnedProjectIds,
+  onTogglePinProject,
   onCreateTaskInWorkspace,
   onOpenBoard,
   boardEnabledByWorkspace,
@@ -964,6 +997,7 @@ function Sidebar({
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [productMenuOpen, setProductMenuOpen] = useState(false);
+  const [projectMenu, setProjectMenu] = useState(null);
   const accountMenuRef = useRef(null);
   const productMenuRef = useRef(null);
   const productTriggerRef = useRef(null);
@@ -983,7 +1017,7 @@ function Sidebar({
   }, new Map()).values()].map((project) => ({
     ...project,
     primary: project.workspaces.find((workspace) => workspace.id === activeWorkspace.id) || project.workspaces[0],
-  }));
+  })).sort((left, right) => Number(pinnedProjectIds.includes(right.id)) - Number(pinnedProjectIds.includes(left.id)));
 
   useEffect(() => {
     if (!accountMenuOpen && !notificationsOpen) return undefined;
@@ -1023,6 +1057,25 @@ function Sidebar({
       document.removeEventListener("keydown", closeOnEscape, true);
     };
   }, [productMenuOpen]);
+
+  useEffect(() => {
+    if (!projectMenu) return undefined;
+    const closeProjectMenu = (event) => {
+      if (!event.target.closest?.(".project-info-popover") && !event.target.closest?.(".project-more-button")) setProjectMenu(null);
+    };
+    const closeOnEscape = (event) => {
+      if (event.key === "Escape") setProjectMenu(null);
+    };
+    document.addEventListener("pointerdown", closeProjectMenu, true);
+    document.addEventListener("keydown", closeOnEscape, true);
+    const closeOnResize = () => setProjectMenu(null);
+    window.addEventListener("resize", closeOnResize);
+    return () => {
+      document.removeEventListener("pointerdown", closeProjectMenu, true);
+      document.removeEventListener("keydown", closeOnEscape, true);
+      window.removeEventListener("resize", closeOnResize);
+    };
+  }, [projectMenu]);
 
   return (
     <aside
@@ -1117,19 +1170,6 @@ function Sidebar({
           <Clock3 size={18} />
           <span>已安排</span>
         </button>
-        <button type="button" onClick={onOpenAgents}>
-          <AtSign size={18} />
-          <span>Agents</span>
-        </button>
-        <button type="button" onClick={onOpenImprovements}>
-          <Sparkles size={18} />
-          <span>改进中心</span>
-          {improvementPendingCount ? <small className="nav-count-badge">{improvementPendingCount}</small> : null}
-        </button>
-        <button type="button" onClick={onOpenSessionDiscovery} disabled={activeWorkspace.placeholder} title={activeWorkspace.placeholder ? "请先打开项目" : undefined}>
-          <History size={18} />
-          <span>导入 Agent 会话</span>
-        </button>
       </div>
 
       {searchOpen ? (
@@ -1175,7 +1215,9 @@ function Sidebar({
                 onRename={(title) => onRenameTask(task.id, title)}
                 onTogglePin={() => onTogglePinTask(task.id)}
                 onArchive={() => onArchiveTask(task.id, true)}
-                workspaceLabel={workspace ? `${workspace.name} · ${task.branch}` : task.branch}
+                projectName={workspace?.projectName || workspace?.name}
+                workspaceName={workspace?.name}
+                branch={task.branch}
                 canArchive={tasks.filter((item) => item.workspaceId === task.workspaceId && !item.archived).length > 1}
                 disabled={workspaceBusy && workspace?.id !== activeWorkspace.id}
               />
@@ -1208,10 +1250,27 @@ function Sidebar({
                     >
                       <Folder size={16} />
                       <span className="project-name">{project.name}</span>
-                      {isCurrent ? <span className="project-current-dot" aria-label="当前项目" title="当前项目" /> : null}
-                      <span className="project-branch">{workspace.branch}</span>
                       {projectOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                     </button>
+                    <button
+                      type="button"
+                      className="project-more-button"
+                      onClick={(event) => {
+                        const rect = event.currentTarget.getBoundingClientRect();
+                        const sidebarRect = event.currentTarget.closest(".sidebar")?.getBoundingClientRect();
+                        const trigger = event.currentTarget;
+                        setProjectMenu((current) => current?.project.id === project.id ? null : {
+                          project,
+                          taskCount: visibleTasks.filter((task) => workspaceIds.has(task.workspaceId)).length,
+                          left: Math.max(rect.right + 7, (sidebarRect?.right || rect.right) - 6),
+                          top: Math.max(8, Math.min(rect.top - 7, window.innerHeight - 190)),
+                        });
+                        window.requestAnimationFrame(() => trigger.blur());
+                      }}
+                      aria-label={`项目 ${project.name} 的更多信息`}
+                      aria-expanded={projectMenu?.project.id === project.id}
+                      title="项目详情"
+                    ><MoreHorizontal size={15} /></button>
                     <button
                       type="button"
                       className="project-new-task-button"
@@ -1220,31 +1279,12 @@ function Sidebar({
                       aria-label={`在项目 ${project.name} 中新建对话`}
                       title={`在 ${project.name} 中新建对话`}
                     >
-                      <Plus size={14} />
+                      <SquarePen size={14} />
                     </button>
                   </div>
 
                   {projectOpen ? (
                     <div className="task-list project-task-list">
-                      {!searchQuery && boardEnabledByWorkspace[project.id] !== false ? (
-                        <button
-                          type="button"
-                          className="project-board-entry"
-                          onClick={() => onOpenBoard(workspace.path)}
-                          disabled={workspaceBusy}
-                          aria-label={`打开项目 ${project.name} 的看板`}
-                        >
-                          <LayoutList size={14} />
-                          <span>看板</span>
-                        </button>
-                      ) : null}
-                      {!searchQuery && project.workspaces.some((item) => item.gitCommonDir) ? (
-                        <button type="button" className="project-board-entry" onClick={() => onOpenWorkingCopies(project.id)} disabled={workspaceBusy} aria-label={`管理项目 ${project.name} 的工作副本`}>
-                          <FolderGit2 size={14} />
-                          <span>工作副本</span>
-                          <small>{project.workspaces.length}</small>
-                        </button>
-                      ) : null}
                       {projectTasks.map((task) => {
                         const taskWorkspace = project.workspaces.find((item) => item.id === task.workspaceId) || workspace;
                         return <TaskItem
@@ -1255,7 +1295,9 @@ function Sidebar({
                           onRename={(title) => onRenameTask(task.id, title)}
                           onTogglePin={() => onTogglePinTask(task.id)}
                           onArchive={() => onArchiveTask(task.id, true)}
-                          workspaceLabel={`${taskWorkspace.name} · ${task.branch}`}
+                          projectName={project.name}
+                          workspaceName={taskWorkspace.name}
+                          branch={task.branch}
                           canArchive={tasks.filter((item) => item.workspaceId === task.workspaceId && !item.archived).length > 1}
                           disabled={workspaceBusy && !isCurrent}
                         />;
@@ -1296,6 +1338,18 @@ function Sidebar({
         ) : null}
       </nav>
 
+      {projectMenu ? createPortal(
+        <div className="project-info-popover" role="menu" aria-label={`项目 ${projectMenu.project.name}`} style={{ left: projectMenu.left, top: projectMenu.top }}>
+          <div className="project-info-title"><Folder size={16} /><strong>{projectMenu.project.name}</strong><button type="button" className={pinnedProjectIds.includes(projectMenu.project.id) ? "is-pinned" : ""} onClick={() => onTogglePinProject(projectMenu.project.id)} onPointerUp={(event) => event.currentTarget.blur()} aria-label={pinnedProjectIds.includes(projectMenu.project.id) ? `取消置顶项目 ${projectMenu.project.name}` : `置顶项目 ${projectMenu.project.name}`} title={pinnedProjectIds.includes(projectMenu.project.id) ? "取消置顶项目" : "置顶项目"}><Pin size={14} /></button></div>
+          <div className="project-info-row"><MessageCircle size={14} /><span>{projectMenu.taskCount} 个任务</span></div>
+          <div className="project-info-divider" />
+          <div className="project-info-row project-info-path"><Folder size={14} /><span>{projectMenu.project.primary.path.replace(/^\/Users\/[^/]+/, "~")}</span></div>
+          <div className="project-info-divider" />
+          <button type="button" role="menuitem" onClick={() => { const id = projectMenu.project.id; setProjectMenu(null); onOpenWorkingCopies(id); }}><Settings size={14} /><span>编辑项目</span></button>
+        </div>,
+        document.body,
+      ) : null}
+
       <div className="sidebar-footer" ref={accountMenuRef}>
         <button type="button" className="workspace-switcher" onClick={onChooseWorkspace} disabled={workspaceBusy}>
           <span className="workspace-avatar">{activeWorkspace.placeholder ? <FolderPlus size={15} /> : <FolderGit2 size={15} />}</span>
@@ -1310,8 +1364,7 @@ function Sidebar({
           className="account-switcher"
           aria-label="账户与登录"
           title="账户与登录"
-          aria-expanded={accountMenuOpen}
-          onClick={() => setAccountMenuOpen((open) => !open)}
+          onClick={onOpenAccounts}
         >
           <span className="account-avatar"><UserRound size={15} /></span>
           <span className="workspace-copy">
@@ -1319,13 +1372,13 @@ function Sidebar({
           </span>
           <CircleHelp size={17} />
         </button>
-        {accountMenuOpen ? (
+        {false && accountMenuOpen ? (
           <div className="account-popover" role="menu" aria-label="账户菜单">
             <button type="button" className="account-popover-profile" role="menuitem" onClick={() => { setAccountMenuOpen(false); onOpenAccounts(); }}>
               <span className="account-avatar"><UserRound size={15} /></span><strong>{accountLabel}</strong>
             </button>
             <div className="account-popover-separator" />
-            <button type="button" role="menuitem" onClick={() => { setAccountMenuOpen(false); onOpenAccounts(); }}><LogIn size={17} /><span>{accountConnected ? "管理 Agent 与 Provider" : "检测 Agent 与 Provider"}</span><ChevronRight size={15} /></button>
+            <button type="button" role="menuitem" onClick={() => { setAccountMenuOpen(false); onOpenAccounts(); }}><LogIn size={17} /><span>{accountConnected ? "管理 Codex 登录" : "登录 Codex"}</span><ChevronRight size={15} /></button>
             <button type="button" role="menuitem" onClick={() => { setAccountMenuOpen(false); onOpenSettings(); }}><Settings size={17} /><span>Rux 设置</span><kbd>⌘,</kbd></button>
           </div>
         ) : null}
@@ -1950,16 +2003,9 @@ function Composer({ task, draft, onDraft, onSend, onAgentChange, onModelChange, 
         <div className="composer-toolbar">
           <div className="composer-tools">
             <button type="button" className={`composer-icon-button ${optionsOpen === "more" ? "is-active" : ""}`} aria-label="添加文件和更多" title="添加文件和更多" aria-expanded={optionsOpen === "more"} disabled={!canRun || isActive} onClick={() => setOptionsOpen((open) => open === "more" ? "" : "more")}><Plus size={19} /></button>
-            <button
-              type="button"
-              className={`composer-agent-button ${optionsOpen === "agent" ? "is-active" : ""}`}
-              aria-label={`选择 Agent：${ruxAgentLabel(selectedAgentChoice?.name || task.agent)}`}
-              aria-expanded={optionsOpen === "agent"}
-              disabled={!canSwitchAgent}
-              onClick={() => setOptionsOpen((open) => open === "agent" ? "" : "agent")}
-            >
-              <span>{ruxAgentLabel(selectedAgentChoice?.name || task.agent)}</span><ChevronDown size={13} />
-            </button>
+            <span className="composer-agent-button is-fixed" aria-label="执行引擎：Codex">
+              <span>Codex</span>
+            </span>
             {!selectedAgentAvailable ? <button type="button" className="composer-connect-button" onClick={onOpenAccounts}><CircleAlert size={13} />配置连接</button> : null}
             <button type="button" className={`permission-chip ${task.permissionMode === "dontAsk" ? "is-full-access" : ""}`} disabled={!canRun || isActive} onClick={() => setOptionsOpen((open) => open === "permission" ? "" : "permission")} aria-label={`批准方式：${permissionVisualLabel}`} aria-expanded={optionsOpen === "permission"}><ShieldCheck size={16} /><span>{permissionVisualLabel}</span><ChevronDown size={13} /></button>
           </div>
@@ -2020,7 +2066,7 @@ function Composer({ task, draft, onDraft, onSend, onAgentChange, onModelChange, 
             ))}
           </div>
         ) : null}
-        {optionsOpen === "agent" ? (
+        {false && optionsOpen === "agent" ? (
           <div className="composer-agent-menu" role="menu" aria-label="切换 Agent">
             <div className="composer-agent-menu-heading"><strong>选择 Agent</strong><small>切换后将在当前项目中创建新任务</small></div>
             {!selectedAgentChoice ? <div className="composer-agent-menu-history"><span>{ruxAgentLabel(task.agent)}</span><small>当前任务固定的 Agent Definition 已删除</small></div> : null}
@@ -3579,6 +3625,47 @@ function parseNativeCustomHeaders(text) {
   });
 }
 
+function CodexAccountDialog({ open, state, adapters, loginProvider, logoutProvider, error, notice, onClose, onLogin, onLogout, onCancelLogin, onOpenSettings }) {
+  const dialogRef = useDialogFocus(open, onClose);
+  if (!open) return null;
+  const provider = state?.providers?.find((item) => item.id === "chatgpt");
+  const adapter = adapters.find((item) => item.id === "codex");
+  const connected = provider?.status === "connected";
+  const loggingIn = loginProvider === "chatgpt";
+  const loggingOut = logoutProvider === "chatgpt";
+  const status = connected ? `已连接 · ${authMethodLabel(provider.authMethod)}` : provider?.status === "signed-out" ? "未登录" : "Codex 将在运行时检查连接";
+  return (
+    <div className="dialog-backdrop account-dialog-backdrop" role="presentation" onMouseDown={(event) => {
+      if (event.target === event.currentTarget) onClose();
+    }}>
+      <section ref={dialogRef} tabIndex={-1} className="account-dialog accounts-dialog codex-account-dialog" role="dialog" aria-modal="true" aria-labelledby="account-dialog-title">
+        <header className="account-dialog-header">
+          <div><span className="account-dialog-icon"><UserRound size={18} /></span><span><h2 id="account-dialog-title">账户与登录</h2><p>Rux 使用 Codex 的官方登录与本机 Session，不保存你的 Token</p></span></div>
+          <button type="button" className="icon-button" onClick={onClose} aria-label="关闭账户与登录"><X size={17} /></button>
+        </header>
+        <div className="account-dialog-body">
+          {error ? <div className="account-error" role="alert"><CircleAlert size={15} /><span>{error}</span></div> : null}
+          {notice ? <div className="account-notice" role="status">{loggingIn || loggingOut ? <LoaderCircle size={15} className="status-running" /> : <CheckCircle2 size={15} />}<span>{notice}</span></div> : null}
+          <section className="account-provider codex-only-provider">
+            <span className="account-provider-mark is-chatgpt"><Bot size={19} /></span>
+            <div className="account-provider-copy">
+              <div className="account-provider-title"><h3>Codex</h3><span>ChatGPT</span></div>
+              <p>{provider?.detail || adapter?.detail || "任务会直接交给官方 Codex Engine 执行。"}</p>
+              {provider?.version || adapter?.version ? <code>codex {provider?.version || adapter?.version}</code> : null}
+            </div>
+            <div className="account-provider-actions">
+              <span className={`account-provider-status ${connected ? "is-connected" : ""}`}>{connected ? <CheckCircle2 size={13} /> : <Circle size={11} />}{status}</span>
+              {connected ? <button type="button" className="account-login-button is-secondary" disabled={loggingOut || loggingIn} onClick={() => onLogout("chatgpt")}>{loggingOut ? <LoaderCircle size={13} className="status-running" /> : <LogOut size={13} />}{loggingOut ? "正在退出" : "退出登录"}</button> : <button data-dialog-initial-focus type="button" className={`account-login-button ${loggingIn ? "is-cancel" : ""}`} onClick={() => loggingIn ? onCancelLogin("chatgpt") : onLogin("chatgpt")} disabled={loggingOut}>{loggingIn ? <X size={14} /> : <LogIn size={14} />}{loggingIn ? "取消登录" : "使用 ChatGPT 登录"}</button>}
+            </div>
+          </section>
+          <div className="account-dialog-secondary-actions"><button type="button" className="secondary-button" onClick={onOpenSettings} disabled={loggingIn || loggingOut}><Settings size={14} /> Rux 设置</button><p>模型、推理强度与审批方式在设置或 Composer 中选择。</p></div>
+        </div>
+        <footer className="account-dialog-footer"><ShieldCheck size={15} /><p>认证、刷新和原生 Session 均由官方 Codex 边界持有；Rux 只保存非敏感任务关联。</p></footer>
+      </section>
+    </div>
+  );
+}
+
 function AccountsDialog({ open, state, adapters, agentChoices, selectedAgentId, canCreateTask, nativeConnections, nativeDiagnostics, nativeBusy, checking, loginProvider, logoutProvider, error, notice, onClose, onDetect, onLogin, onLogout, onCancelLogin, onSaveNative, onTestNative, onDeleteNative, onDiagnoseNative, onMigrateNative, onUseAgent, onOpenSettings }) {
   const dialogRef = useDialogFocus(open, onClose);
   const emptyNativeDraft = () => ({ label: "OpenAI", providerType: "openai-responses", baseUrl: "https://api.openai.com/v1", defaultModel: "", apiKey: "", customHeadersText: "", clearCustomHeaders: false });
@@ -4025,9 +4112,9 @@ function CodexSettingsDialog({ open, connected, catalog, settings, boardEnabled,
   const matchesQuery = (...terms) => !normalizedQuery
     || terms.some((term) => String(term).toLocaleLowerCase().includes(normalizedQuery));
   const showPermissions = matchesQuery("权限", "只读", "工作区", "确认", "写入");
-  const showGeneral = matchesQuery("常规", "模型", "推理", "登录", "Agent", "刷新");
-  const showFeatures = matchesQuery("功能", "项目看板", "需求", "Task");
-  const showMetrics = matchesQuery("指标", "统计", "成功", "Run", "本机", "隐私");
+  const showGeneral = matchesQuery("常规", "模型", "推理", "登录", "Codex", "刷新");
+  const showFeatures = false;
+  const showMetrics = false;
   const showUpdates = matchesQuery("更新", "版本", "升级", "回滚", "签名");
   const applyDraft = (nextDraft) => {
     setDraft(nextDraft);
@@ -4061,8 +4148,7 @@ function CodexSettingsDialog({ open, connected, catalog, settings, boardEnabled,
             </div>
             <div className="rux-settings-nav-group">
               <p>编码</p>
-              <button type="button" onClick={() => document.getElementById("rux-agent-settings")?.scrollIntoView({ behavior: "smooth", block: "start" })}><Bot size={16} /><span>Rux</span></button>
-              <button type="button" onClick={() => document.getElementById("rux-feature-settings")?.scrollIntoView({ behavior: "smooth", block: "start" })}><LayoutList size={16} /><span>项目看板</span></button>
+              <button type="button" onClick={() => document.getElementById("rux-agent-settings")?.scrollIntoView({ behavior: "smooth", block: "start" })}><Bot size={16} /><span>Codex</span></button>
               <button type="button" disabled title="即将推出"><GitBranch size={16} /><span>Git</span></button>
             </div>
           </nav>
@@ -4101,11 +4187,11 @@ function CodexSettingsDialog({ open, connected, catalog, settings, boardEnabled,
 
             {showGeneral ? (
               <section className="rux-settings-section" id="rux-agent-settings" aria-labelledby="rux-general-settings">
-                <h2 id="rux-general-settings">Agent 默认设置</h2>
+                <h2 id="rux-general-settings">Codex 默认设置</h2>
                 {!connected ? (
                   <div className="settings-login-required" role="status">
                     <Bot size={18} />
-                    <span><strong>先连接 Codex</strong><small>在 Agent 与 Provider 中检测并连接后，即可读取模型与推理强度。</small></span>
+                    <span><strong>连接 Codex</strong><small>登录后即可读取官方模型目录与推理强度。</small></span>
                     <button type="button" className="primary-button" onClick={onOpenAccounts}>账户与登录</button>
                   </div>
                 ) : null}
@@ -4424,6 +4510,7 @@ export function App() {
   const [expandedProjectIds, setExpandedProjectIds] = useState(() => showcaseMode
     ? [fallbackWorkspaceState.active.id]
     : Array.isArray(uiPreferences.expandedProjectIds) ? uiPreferences.expandedProjectIds : []);
+  const [pinnedProjectIds, setPinnedProjectIds] = useState(() => Array.isArray(uiPreferences.pinnedProjectIds) ? uiPreferences.pinnedProjectIds : []);
   const [adapters, setAdapters] = useState(() => cachedAgentDetection?.adapters || fallbackAdapters);
   const [inspectorTab, setInspectorTab] = useState(showcaseMode ? "environment" : uiPreferences.inspectorTab || "environment");
   const [inspectorOpen, setInspectorOpen] = useState(showcaseMode || (Boolean(uiPreferences.inspectorOpen) && Boolean(window.rux)));
@@ -4620,6 +4707,7 @@ export function App() {
       window.localStorage.setItem(uiPreferencesKey, JSON.stringify({
         selectedTaskId,
         expandedProjectIds,
+        pinnedProjectIds,
         sidebarCollapsed,
         inspectorOpen,
         inspectorTab,
@@ -4631,7 +4719,7 @@ export function App() {
     } catch {
       // UI preferences are optional; private sessions may reject storage.
     }
-  }, [codexSettings, drafts, expandedProjectIds, inspectorOpen, inspectorTab, selectedFile, selectedTaskId, sidebarCollapsed]);
+  }, [codexSettings, drafts, expandedProjectIds, inspectorOpen, inspectorTab, pinnedProjectIds, selectedFile, selectedTaskId, sidebarCollapsed]);
 
   useEffect(() => {
     if (showcaseMode || !authState?.checkedAt) return;
@@ -4725,7 +4813,9 @@ export function App() {
   const agentChoices = useMemo(() => {
     const builtIns = adapters.filter((adapter) => ["codex", "claude-code", "mock"].includes(adapter.id)).map((adapter) => {
       const provider = authProviderForAdapter(authState, adapter.id);
-      const authenticationReady = adapter.id === "mock" || provider?.status === "connected";
+      const authenticationReady = adapter.id === "codex"
+        ? provider?.status !== "signed-out"
+        : adapter.id === "mock" || provider?.status === "connected";
       const providerConnection = provider?.providerConnection || defaultProviderConnectionForAdapter(adapter.id);
       const verifiedModels = verifiedModelHistory(tasks, adapter.id, providerConnection.id);
       const defaultModel = adapter.id === "codex"
@@ -5457,13 +5547,6 @@ export function App() {
       return;
     }
     const taskSnapshot = selectedTask;
-    setRunValidationBusy(true);
-    const validation = await validateCliAgentForRun(taskSnapshot);
-    setRunValidationBusy(false);
-    if (!validation.ok) {
-      setTaskActionError(validation.error);
-      return;
-    }
     const taskId = taskSnapshot.id;
     const createdAt = isoNow();
     const messageId = `user-${Date.now()}`;
@@ -5727,13 +5810,9 @@ export function App() {
       void chooseWorkspace();
       return false;
     }
-    const pinnedAgentId = preferredAgentId || sourceTask?.agentProfileId || (sourceTask ? runtimeAdapterForTask(sourceTask) : "");
-    const sourceAdapter = sourceTask ? runtimeAdapterForTask(sourceTask) : "";
-    const choice = agentChoices.find((item) => item.id === pinnedAgentId && item.available)
-      || agentChoices.find((item) => item.adapter === sourceAdapter && item.available)
-      || agentChoices.find((item) => item.available);
+    const choice = agentChoices.find((item) => item.id === "codex" && item.available);
     if (!choice) {
-      setTaskActionError("当前没有可用 Agent。请先检测并连接 Agent，然后开始新对话。");
+      setTaskActionError("Codex 当前不可用。请在账户与登录中连接 Codex，然后开始新对话。");
       openAccounts();
       return false;
     }
@@ -7163,6 +7242,8 @@ export function App() {
         onChooseWorkspace={chooseWorkspace}
         expandedProjectIds={expandedProjectIds}
         onToggleProject={toggleProject}
+        pinnedProjectIds={pinnedProjectIds}
+        onTogglePinProject={(projectId) => setPinnedProjectIds((ids) => ids.includes(projectId) ? ids.filter((id) => id !== projectId) : [projectId, ...ids])}
         onCreateTaskInWorkspace={createTaskInWorkspace}
         onOpenBoard={openProjectBoard}
         boardEnabledByWorkspace={Object.fromEntries(Object.entries(boardSnapshotsByProject).map(([projectId, board]) => [projectId, board.enabled]))}
@@ -7182,7 +7263,7 @@ export function App() {
         taskActionError={taskActionError}
         onDismissTaskActionError={() => setTaskActionError("")}
         accountLabel={accountLabel}
-        accountConnected={connectedProviderCount > 0}
+        accountConnected={codexConnected}
         collapsed={sidebarCollapsed}
       />
 
@@ -7337,7 +7418,7 @@ export function App() {
         contextCandidates={changesState.snapshot?.files || []}
         onValidateContext={(paths) => runtimeRef.current?.contextSnapshot(paths) ?? Promise.reject(new Error("Rux Runtime 尚未就绪"))}
       />
-      <AccountsDialog
+      <CodexAccountDialog
         open={accountsOpen}
         state={authState}
         adapters={adapters}

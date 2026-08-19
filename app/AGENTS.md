@@ -1,63 +1,101 @@
-# Prototype Instructions
+# Rux Desktop Parity Instructions
 
-Run the local server yourself and open the preview in the browser available to this environment. Do not give the user server-start instructions when you can run it.
+## Product Boundary
 
-Before making substantial visual changes, use the Product Design plugin's `get-context` skill when the visual source is unclear or no longer matches the current goal. When the user gives durable prototype-specific design feedback, preferences, or decisions, record them in `AGENTS.md`.
+Rux v1 recreates the Codex workspace in the current ChatGPT desktop client with functional and interaction parity. `Rux` replaces the product brand; it does not create a separate v1 product model.
 
-The desktop UI should stay visually close to the Codex app: a pale, flat navigation sidebar; one focused task transcript; restrained disclosure rows; a prominent bottom composer; and Changes/Context/Run shown on demand instead of a permanent IDE-style third column. Avoid dense card grids, tiny typography, and excessive status pills.
+The current target-client surface is authoritative. Direct user observations and same-version screenshots outrank older Codex references, generic OpenAI documentation, CLI/App Server capability and existing Rux code.
 
-Treat ChatGPT Codex desktop `26.810.52044` as the first-release interaction baseline. `新对话`, the project-level new-task action, and `Cmd/Ctrl+N` must enter a focused blank Task directly instead of opening a Rux-specific setup modal. The Composer owns separate `添加文件和更多`, Agent, approval-mode, model, voice, and send controls. Codex and Claude Code Runs that expose provider-native approvals must start immediately and ask only for the concrete command, file, network, or tool action; never place a coarse whole-Run Workspace-write preflight in front of those Engines. Imported view-only Tasks remain visibly read-only and use the existing `复制为新任务` action instead of a custom strip below the Composer.
+Do not expose a feature merely because Runtime supports it. V1 Renderer must not show Rux-specific Agents, Claude Code, Rux Native, custom Providers, model switching/routing, Board, Improvement Center, handoff, custom sync or any historical navigation unless the current reference Codex client visibly exposes an equivalent flow.
 
-Keep the bottom Composer in the task layout rather than covering the transcript with fixed guessed padding. The timeline must reserve the Composer's real rendered height, and scrolling to the latest item must leave the final message, Changes card, feedback actions, and connection errors fully visible above the input surface.
+## Confirmed Current Decisions
 
-Keep sidebar task history compact and single-line. The default showcase task should open in a credible completed state rather than looking permanently busy; running, stopped, and waiting states should appear only when the task lifecycle actually calls for them. Preserve sidebar, review, and draft preferences across launches without automatically reopening a terminal session.
+- The current ChatGPT Codex reference does not support user model switching.
+- Remove or hide Composer model selectors, default-model settings, manual model IDs, model-catalog refresh and Auto routing UI.
+- Codex owns internal model resolution. Show actual model and usage only when and where the reference client shows equivalent read-only evidence.
+- New chat actions open a focused blank Task directly; do not add a Rux setup modal.
+- Product, Workspace selection and account/login remain distinct actions.
+- Normal v1 startup and settings are Codex-only. Historical non-Codex data may remain readable only when doing so does not reintroduce a normal creation or configuration path.
 
-Treat navigation Project and execution WorkingCopy as separate concepts. Already authorized roots with the same canonical Git common dir share one Project heading and Board, while each Task continues to show and use its fixed Workspace/worktree and branch for Changes, Context, Terminal, Run and Native Session operations. `看板` and `工作副本` are labelled Project rows; discovering external worktrees is explicit and metadata-only, and authorization remains confirmation-gated.
+## Evidence Before UI Decisions
 
-Keep Board state, Run state and Improvement state visibly distinct. Board automation may advance an untouched Task card only to `进行中` or `待验收`; only the user moves work to `已完成`. Improvement candidates must show evidence, benefit, risk, scope, evaluation truth and approval actions. Publishing creates an immutable Rux-managed asset version for new Tasks only, never rewrites an existing Task or silently expands permissions.
+For each visible parity change, capture or receive evidence for the exact target state:
 
-Keep the Projects rail visually flat and quiet like Codex Desktop: project headings and task rows use compact single-line rhythm, the selected task uses one soft neutral fill without an accent stripe, nesting guides stay subtle, and the footer—not a dot or badge in every heading—communicates the current Workspace. Expansion chevrons may appear on hover/focus so the resting list remains uncluttered.
+- ChatGPT client build/version;
+- macOS/Windows platform and account/region gates;
+- viewport and window state;
+- entry action and complete click path;
+- stable screenshots for default, active, loading, empty, error and recovery states that matter.
 
-A Workspace starter Task keeps its placeholder title only before the first message. On first send, derive a compact single-line title from the normalized user prompt so persisted and resumed task history never continues to look like an unused “start new task” row.
+If Computer Use cannot capture the target ChatGPT/Codex window, record the blocker and rely on user-provided same-version evidence. Do not substitute an older screenshot or generic documentation and call it exact parity.
 
-Keep the sidebar footer actions explicit and separate. The `当前项目` row owns the native workspace picker, while the bottom-most full-width `账户与登录` row opens Agent and Provider connection management without implying that a Rux cloud account is required. Do not run a status inspection merely because the app or connection surface opens; inspect installed official CLIs and their non-sensitive status only after the user explicitly clicks the detection action. In the Projects list, clicking a project heading only expands or collapses its tasks; switching happens when a task inside that project is opened. Keep `打开项目…` as a separate labelled action. Do not hide account access behind an icon-only control or overload the account row with project switching.
+## Renderer Composition
 
-Official CLI logout is a consequential account action. Show it only for a detected connected CLI Provider, require a user confirmation that names the affected Agent, delegate to the exact official logout subcommand, and retain existing Tasks/history while making future Runs unavailable until explicit login/detection. Never remove CLI credential files directly or treat logout as Rux Native credential deletion.
+- Match the reference sidebar, top bar, focused transcript, bottom Composer and on-demand overlays exactly enough that hierarchy, density and interaction are recognizably the same.
+- Avoid a permanent IDE-style multi-panel layout unless the current reference uses it.
+- Keep Composer height in normal layout so final content remains visible above it.
+- Keep task history compact and use real lifecycle states; completed content must not look permanently busy.
+- Preserve hover, focus, selection, loading, disabled and error treatments from the reference.
+- Important flows must not rely on ambiguous icon-only controls when the reference provides labels.
+- Do not add decorative categories, settings, metrics or explanatory cards absent from the target.
 
-Keep the account menu focused on authentication and Rux settings. Do not add social invitation actions or decorative pet controls.
+## Core Paths
 
-Keep model selection honest and compact. The primary Composer selector may show Engine default, official catalog models, and verified history for the current Connection; advanced manual IDs belong in the disclosed run settings. Show source/verification state there, and warn without silently replacing a saved catalog model that disappears after refresh.
+### Startup And Projects
 
-Keep Auto routing evidence attached to the immutable Run. Agent editing may choose only current Engine catalog or same-Connection verified-history models for simple/complex candidates and the allowlist. Transcript turns show the actual model, Auto classification, and reported total or `Token 未报告`; the Run surface owns the full reason, fallback and sourced Token breakdown. A Native Session that does not declare per-Run model switching must keep its model or require a new Task.
+- Clean startup must match the target's empty/recent-project behavior and must not preload showcase content.
+- `新对话`, project-level new chat and the target keyboard shortcut create the same kind of blank task as the reference.
+- Project headings, task rows, search, pin/archive and project switching follow the current target's disclosure and ordering.
+- `打开项目…` remains a direct, labelled action when present in the reference.
 
-Keep Connection management distinct from Agent selection, but make the path obvious. Mark the current Task's pinned Agent as `当前使用`; a connected Agent row may create a new Task with that Agent preselected. Never present a future-task default as though it were the current selection, and never rewrite an existing Task, Agent Revision, Provider Connection, or Native Session. Existing Tasks with messages or Runs continue to require the explicit new-Task/context-handoff path when changing Agent.
+### Composer And Runs
 
-Treat Rux Native Custom Header values as credentials. The account surface may accept new values and display only saved Header names; it must never refill, return, log, export, or persist plaintext values in Renderer-visible state. Replacing or clearing Headers uses the same fresh impact-preview confirmation as API Key replacement, and user headers cannot override Rux-managed transport headers.
+- Match the target's attachment/more, fixed Codex identity, permission, voice, send, stop and queued-input behavior.
+- Do not expose Agent or model selection.
+- Provider-native approvals start the Run and ask only for the concrete command, file, network or tool action.
+- Match the target's streaming, plan, tool activity, collapsed rows, errors, feedback and return-to-latest behavior.
 
-Rux Native supports OpenAI Responses, OpenAI Chat Completions, and Anthropic Messages Connections. Anthropic authentication and version headers are Rux-managed and cannot be overridden. Because Chat Completions and Messages have no provider-native resumable Session identifier, continue a Task by sending a bounded user/assistant history projection from that same Rux Task; do not label that local reconstruction as a provider-native Session or silently mix another Task, Agent Revision, Engine, or Connection into it.
+### Changes, Environment And Terminal
 
-Keep Native Session recovery explicit and reviewable. Show recovery actions only after a real resume failure, retain the attempted Codex Thread or Claude Session identifier and error, and offer retrying that same Session or creating a blank new Task. Never make a fresh Session look like a successful resume. Keep Engine, Revision, Connection, model state, permission mode, and Session visible in the on-demand Run surface rather than adding a permanent panel.
+- Changes must be backed by Runtime Git state and immutable Run evidence, not display-only fixtures.
+- Match the reference's diff scope, file operations, review controls and recovery behavior.
+- Environment modes, Worktrees, Cloud/Remote, Context sources and branches enter v1 only when verified in the target surface.
+- Terminal opens and closes like the reference and is not automatically restored after restart unless the reference does so.
 
-Keep external Session discovery and import explicit and metadata-first. `导入 Agent 会话` is a labelled Workspace action; opening its surface performs no provider call, only its visible search action may invoke `session.discover`, and full content is read only after the user selects a current-Workspace Session. Show current-Workspace, unassigned, authorization-required, and migration-suggested metadata as distinct states. Do not expose raw `session.list`, `session.read`, or resume-check methods to Renderer, and do not show sessions assigned to another authorized Workspace. Import confirmation must create or update the Task, Projection, immutable Projection Revision, and Native Session binding in one Main-owned SQLite transaction. Repeated imports use the global Session identity and must not duplicate Tasks. `仅导入查看` remains locally read-only; `导入并继续` requires a fresh resume check and retains the pinned Engine, official CLI Connection, Agent Revision, Workspace, and native Session id. Never imply background or two-way sync, and never mutate the provider-native Session during import.
+### Account And Settings
 
-Keep imported Session refresh explicit, diff-first, and versioned. Only the visible Task action may request a refresh. Stable-ID additions may append into a new current Projection Revision; modifications, deletions, moves, synthetic/unstable identifiers, and uncertain fingerprint matches must leave the current Projection unchanged and present a candidate diff. Rebuild and old-Revision restore require explicit confirmation, preserve Rux-owned Task, Run, approval, and handoff data, append non-secret audit evidence, and never write to the provider-native Session.
+- Match the target's Codex authentication states and settings categories.
+- Opening the account surface must not silently contact unrelated Providers or inspect secrets.
+- Login/logout uses the official Codex boundary and preserves local task history.
+- Do not show default-model, model catalog, Auto routing, custom Provider, Board, Improvement or local metrics settings unless verified in the current target.
 
-Keep Context Handoff reviewable and confirmation-gated. Facts may come only from selected persisted Task messages, the latest persisted Run and its Run-owned Git patch, incomplete Plan items, Workspace, and immutable source Revision. Never use Changes/Context showcase data or inferred evidence. Resolve the target Agent, Connection, and latest Revision in Main. Preview must not create a Task or target Native Session; confirmed commit creates a new Task with no Run/Session, stores one immutable snapshot, and adds bidirectional relations without modifying the source record. Optional narrative text is user-editable and may be generated only by an explicit source-Agent action. That action uses the pinned source Revision in an isolated, tool-disabled invocation: Codex Threads must be ephemeral and Claude Code Sessions must disable persistence. Keep the generated provenance separate from facts, and never forward its isolated Run events into ordinary Task history.
+## Visual Acceptance
 
-Keep local Session data management Main-owned and impact-previewed. Show Workspace usage without background expiry or pressure cleanup. `解除关联` retains the local binding, Projection, Revisions, and Rux records but disables refresh and continuation until explicit re-import. `删除导入内容` removes only provider-derived messages and Projection data; `删除 Task` removes all selected Rux records. Task and Workspace scope must share these semantics, show estimated reclaimable size and unaffected Native Sessions, and require a fresh fingerprinted preview plus explicit confirmation. Export only after a sensitive-content warning, use the native save dialog, support Markdown/JSON and current/all Revision scopes, exclude credentials, and never call a Provider delete or archive operation.
+- Use the same viewport, state and content for reference and implementation screenshots.
+- Compare the images together; screenshots captured at different states are not parity evidence.
+- Check sidebar width, top bar, transcript rail, Composer geometry, overlay placement, typography, colors, borders, radii, spacing and icon semantics.
+- Reject screenshots that are loading, cropped, stale, blank or show the wrong window.
+- The accepted reference may change with the ChatGPT client. Version the evidence rather than treating old anchors as permanent.
 
-Render Rux settings as a full-height two-pane surface that follows the accepted Codex settings reference: a 240 px pale navigation rail with a labelled return action and search, plus a centered white settings canvas with section headings and rounded grouped rows. Keep every enabled setting wired to a real Rux behavior, keep unavailable categories visibly disabled, and never add the Pet category from the reference.
+## Accessibility Acceptance
 
-Keep application updates Main-owned and disabled unless the signed build embeds a credential-free HTTPS Feed. Renderer may request check, download, health confirmation, and install only; it cannot choose an endpoint, bypass staged eligibility/signature/hash verification, or skip the native restart confirmation. Automatic rollback may enable downgrade only for the exact prior healthy version after two failed health windows.
+- Match visible copy and provide accurate accessible names for every important control.
+- Verify keyboard navigation, focus visibility, reading order, state announcements, target sizes, zoom/reflow and contrast on critical paths.
+- Hover-only actions must also be reachable by keyboard.
+- Do not claim WCAG compliance from screenshots alone.
 
-When implementing from a selected generated mock, treat that image as the source of truth for layout, component anatomy, density, spacing, color, typography, visible content, and hierarchy.
+## Implementation Rules
 
-For the accepted Codex desktop reference captured on 2026-08-11, preserve these desktop anchors unless the user supplies a newer reference: a 1433 × 812 logical viewport, 240 px sidebar, 46 px top bar, 736 px centered transcript/composer rail, 99 px bottom composer with a 16 px bottom inset, and a 300 px environment card floating 16 px from the right edge. Keep the reference completed-task content visibly settled, with the environment and account surfaces layered over the transcript instead of permanently shrinking it.
+- Build renderer UI in `src/` and keep Node, filesystem, PTY, process and credentials out of Renderer.
+- Use typed Preload/Main/Runtime boundaries and shared validation schemas.
+- Preserve `.openai/hosting.json`, `worker/index.js`, `scripts/prepare-sites-build.mjs` and Sites tests unless the task explicitly changes Web delivery.
+- Showcase fixtures are allowed only behind an explicit test/showcase flag and must never persist into normal state.
+- Existing compatibility components may remain dormant, but new v1 work must not depend on or expose them.
 
-Use `Rux` as the exact product name in visible application chrome, accessibility labels, approval labels, and product invitation copy. Following direct user feedback that the official Agent was otherwise indistinguishable from the product, label the built-in official CLI Agent and Engine as `Codex`, label its model default as `Codex 默认`, and keep `Rux Native` visibly separate. Internal protocol, executable, event, and persistence identifiers remain `codex`; preserve exact commands, paths, logs, diffs, approval scopes, and provider errors when truthfulness requires their technical names.
+## Verification
 
-Keep clean startup user-owned. Development, Web fallback, and packaged builds must begin with an unimported placeholder workspace unless the user previously selected a workspace or an explicit test/demo override is active. Persist the authorization source for native Workspace state; a legacy development-default path with ambiguous provenance must require a fresh user click before activation, while remaining recoverable from Recent. Do not preload showcase projects, tasks, changes, sources, account identities, or login state into the normal experience. A visual fixture may be exposed only behind an explicit `?showcase=codex` preview flag, must ignore ordinary UI preferences, and must never be persisted as user data. Do not automatically detect or synchronize CLI authentication on startup or when `账户与登录` opens. Run `auth.status` only after an explicit user detection action. Start `codex login` or `claude auth login` only after a direct user action in that surface, and treat the official CLI's successful exit as the result of that explicit login.
-
-Keep repository-wide Git actions explicit and truthful. Branch listing may begin only after the user opens or refreshes the branch surface; branch switching, staged-only commit, and push each require a direct action. RUX must never auto-stage files, create an upstream, or force-push, and push must retain a separate confirmation step. Branch comparison is read-only and must not be presented as the ordinary uncommitted Changes view. Custom Context sources accept only workspace-relative files and must pass the Runtime's path-boundary, symlink, existence, and sensitive-content checks before they are persisted on a task. Unsupported screenshot controls must be visibly disabled or labelled with their actual destination instead of pretending to complete another product action.
-
-Build app UI in `src/`. Keep `.openai/hosting.json`, `worker/index.js`, `scripts/prepare-sites-build.mjs`, and `tests/sites-worker.test.mjs` intact so the same local prototype can be handed to Sites. Before a Sites handoff, run `npm run build` and `npm run test:sites`; the build must leave `dist/client/index.html`, `dist/server/index.js`, and `dist/.openai/hosting.json`.
+- Run `npm test` for renderer behavior or boundary changes.
+- Run `npm run build:desktop` for desktop changes.
+- Run `npm run build` and `npm run test:sites` when Web/Sites is affected.
+- For visible changes, package and launch the actual desktop app, complete the real click path and save same-state comparison evidence under `design-audit/`.
+- Packaging, a passing test or an accessibility tree alone does not prove ChatGPT Codex parity.

@@ -9885,7 +9885,7 @@ select:focus-visible {
   opacity: 0.45;
 }
 
-/* Agent controls stay visible in the primary composer. */
+/* V1 keeps Codex visible as the single execution identity. */
 .codex-shell .composer-agent-button {
   display: inline-flex;
   width: auto;
@@ -9912,6 +9912,11 @@ select:focus-visible {
 }
 
 .codex-shell .composer-agent-button > svg { flex: 0 0 auto; color: #77797b; }
+
+.codex-shell .composer-agent-button.is-fixed {
+  cursor: default;
+  user-select: none;
+}
 
 .codex-shell .composer-agent-button:hover:not(:disabled),
 .codex-shell .composer-agent-button:focus-visible,
@@ -10328,6 +10333,304 @@ select:focus-visible {
   right: 1px;
 }
 
+/* Historical project-rail starting point; current ChatGPT Codex parity evidence is authoritative. */
+.codex-shell .project-header-row {
+  min-height: 32px;
+  gap: 1px;
+  border-radius: 7px;
+}
+
+.codex-shell .project-header-row:hover,
+.codex-shell .project-header-row:focus-within {
+  background: #ececea;
+}
+
+.codex-shell .project-heading {
+  min-height: 32px;
+  height: 32px;
+  gap: 8px;
+  padding: 0 7px;
+  background: transparent;
+}
+
+.codex-shell .project-heading:hover,
+.codex-shell .project-heading:focus-visible {
+  background: transparent;
+}
+
+.codex-shell .project-heading > svg:first-child {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  color: #55585a;
+  stroke-width: 1.75;
+}
+
+.codex-shell .project-heading > svg:last-child {
+  display: none;
+}
+
+.codex-shell .project-name {
+  font-size: 13.5px;
+  font-weight: 540;
+  letter-spacing: -0.006em;
+}
+
+.codex-shell .project-more-button,
+.codex-shell .project-new-task-button {
+  display: inline-flex;
+  width: 25px;
+  height: 25px;
+  flex: 0 0 25px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  color: #76787a;
+  opacity: 0;
+  transition: color 100ms ease, background 100ms ease, opacity 100ms ease;
+}
+
+.codex-shell .project-header-row:hover .project-more-button,
+.codex-shell .project-header-row:focus-within .project-more-button,
+.codex-shell .project-more-button[aria-expanded="true"],
+.codex-shell .project-header-row:hover .project-new-task-button,
+.codex-shell .project-header-row:focus-within .project-new-task-button {
+  opacity: 1;
+}
+
+.codex-shell .project-more-button:hover,
+.codex-shell .project-more-button:focus-visible,
+.codex-shell .project-new-task-button:hover,
+.codex-shell .project-new-task-button:focus-visible {
+  color: #2f3133;
+  background: rgb(255 255 255 / 0.74);
+}
+
+.codex-shell .project-task-list {
+  margin: 1px 0 3px 12px;
+  padding-left: 8px;
+}
+
+.codex-shell .project-task-list::before {
+  top: 3px;
+  bottom: 3px;
+  background: #dfdfdc;
+}
+
+.codex-shell .project-task-list .task-item,
+.codex-shell .sidebar-thread-section .task-item {
+  min-height: 31px;
+  height: 31px;
+  padding: 0 59px 0 8px;
+  border-radius: 7px;
+}
+
+.codex-shell .project-task-list .task-title,
+.codex-shell .sidebar-thread-section .task-title {
+  color: #343638;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: -0.006em;
+}
+
+.codex-shell .project-task-list .task-item.is-active,
+.codex-shell .sidebar-thread-section .task-item.is-active {
+  background: #e4e4e1;
+}
+
+.codex-shell .task-quick-actions {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  padding-left: 10px;
+  background: #ececea;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 90ms ease;
+}
+
+.codex-shell .task-item-shell:hover .task-quick-actions,
+.codex-shell .task-item-shell:focus-within .task-quick-actions,
+.codex-shell .task-item-shell.is-active .task-quick-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.codex-shell .task-item-shell.is-active .task-quick-actions {
+  background: #e4e4e1;
+}
+
+.codex-shell .task-quick-actions button {
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  color: #77797a;
+}
+
+.codex-shell .task-quick-actions button:hover:not(:disabled),
+.codex-shell .task-quick-actions button:focus-visible:not(:disabled) {
+  color: #303234;
+  background: rgb(255 255 255 / 0.78);
+}
+
+.codex-shell .task-quick-actions button:disabled {
+  opacity: 0.35;
+}
+
+.project-info-popover,
+.task-hover-card {
+  position: fixed;
+  z-index: 300;
+  box-sizing: border-box;
+  border: 1px solid #dededb;
+  border-radius: 10px;
+  background: #fff;
+  color: #303234;
+  box-shadow: 0 10px 30px rgb(28 28 30 / 0.14), 0 2px 8px rgb(28 28 30 / 0.06);
+  font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+}
+
+.project-info-popover {
+  display: flex;
+  width: 320px;
+  flex-direction: column;
+  padding: 4px;
+}
+
+.project-info-title,
+.project-info-row,
+.project-info-popover > button {
+  display: flex;
+  min-width: 0;
+  min-height: 30px;
+  align-items: center;
+  gap: 9px;
+  padding: 0 8px;
+  border-radius: 7px;
+  text-align: left;
+}
+
+.project-info-title strong {
+  min-width: 0;
+  overflow: hidden;
+  flex: 1;
+  font-size: 13.5px;
+  font-weight: 620;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-info-title > button {
+  display: inline-flex;
+  width: 25px;
+  height: 25px;
+  flex: 0 0 25px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  color: #8a8c8d;
+}
+
+.project-info-title > button:hover,
+.project-info-title > button:focus-visible,
+.project-info-title > button.is-pinned {
+  color: #3d3f41;
+  background: #f0f0ee;
+}
+
+.project-info-row,
+.project-info-popover > button {
+  color: #3f4143;
+  font-size: 12.5px;
+}
+
+.project-info-row > svg,
+.project-info-popover > button > svg,
+.project-info-title > svg {
+  flex: 0 0 auto;
+  color: #77797a;
+  stroke-width: 1.7;
+}
+
+.project-info-path span {
+  min-width: 0;
+  overflow: hidden;
+  color: #55575a;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-info-divider {
+  height: 1px;
+  margin: 0;
+  background: #e7e7e4;
+}
+
+.project-info-popover > button:hover,
+.project-info-popover > button:focus-visible {
+  background: #f0f0ee;
+}
+
+.task-hover-card {
+  display: grid;
+  width: 226px;
+  grid-template-columns: 1fr;
+  gap: 2px;
+  padding: 9px;
+  pointer-events: none;
+}
+
+.task-hover-heading,
+.task-hover-card > div:not(.task-hover-heading) {
+  display: flex;
+  min-width: 0;
+  min-height: 27px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 4px;
+}
+
+.task-hover-heading {
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.task-hover-heading strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #27292b;
+  font-size: 13px;
+  font-weight: 620;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-hover-heading small {
+  flex: 0 0 auto;
+  color: #919294;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.task-hover-card > div:not(.task-hover-heading) {
+  color: #37393b;
+  font-size: 12.5px;
+}
+
+.task-hover-card > div:not(.task-hover-heading) svg {
+  flex: 0 0 auto;
+  color: #818385;
+}
+
 .codex-shell .project-empty-action {
   min-height: 30px;
   padding: 0 8px;
@@ -10364,6 +10667,8 @@ select:focus-visible {
 .rux-permission-card i.is-selected::before { opacity: 1; transform: scale(1); }
 
 .accounts-dialog { width: min(700px, calc(100vw - 48px)); }
+.codex-account-dialog { width: min(640px, calc(100vw - 48px)); }
+.codex-account-dialog .codex-only-provider { margin-top: 2px; border: 1px solid #e6e6e3; border-radius: 12px; }
 .accounts-dialog .account-dialog-header p,
 .accounts-dialog .account-detection-card small,
 .accounts-dialog .account-provider p,
@@ -10438,7 +10743,7 @@ select:focus-visible {
   .account-agent-action-row { justify-content: flex-start; }
 }
 
-/* ChatGPT Codex 26.810.52044 composer and approval interaction anchors. */
+/* Historical composer/approval starting point; current ChatGPT Codex parity evidence is authoritative. */
 .codex-shell .composer-agent-menu {
   position: absolute;
   z-index: 83;

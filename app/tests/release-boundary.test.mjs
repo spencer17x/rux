@@ -30,7 +30,7 @@ function parsePolicy(policy) {
 test("production renderer CSP is restrictive and contains no arbitrary network source", async () => {
   const html = await readFile(path.join(root, "index.html"), "utf8");
   assert.equal(html.includes(`content="${PRODUCTION_CONTENT_SECURITY_POLICY}"`), true);
-  assert.match(html, /<title>Rux — Coding Agent Workbench<\/title>/);
+  assert.match(html, /<title>Rux<\/title>/);
 
   const policy = parsePolicy(PRODUCTION_CONTENT_SECURITY_POLICY);
   assert.deepEqual(policy["default-src"], ["'self'"]);
@@ -215,23 +215,14 @@ test("clean startup waits for explicit project and account actions", async () =>
   assert.match(detectSource, /runtime\.authStatus\(\)/);
   assert.match(detectSource, /runtime\.listAgents\(\{ refresh: true \}\)/);
   assert.doesNotMatch(detectSource, /setTasks|setDrafts|setContextState|setWorkspaceState/);
-  const accountsStart = rendererSource.indexOf("function AccountsDialog(");
-  const accountsEnd = rendererSource.indexOf("\nfunction SessionDiscoveryDialog", accountsStart);
+  const accountsStart = rendererSource.indexOf("function CodexAccountDialog(");
+  const accountsEnd = rendererSource.indexOf("\nfunction AccountsDialog", accountsStart);
   const accountsSource = rendererSource.slice(accountsStart, accountsEnd);
-  assert.match(accountsSource, /Agent 与 Provider/);
-  assert.match(accountsSource, /无需 Rux 账号/);
-  assert.match(accountsSource, /开始检测/);
+  assert.match(accountsSource, /账户与登录/);
+  assert.match(accountsSource, /官方登录与本机 Session/);
   assert.match(accountsSource, /使用 ChatGPT 登录/);
-  assert.match(accountsSource, /使用 Claude 登录/);
-  assert.match(accountsSource, /未检测/);
-  assert.match(accountsSource, /未安装/);
-  assert.match(accountsSource, /已安装 · 未连接/);
   assert.match(accountsSource, /已连接/);
-  assert.match(accountsSource, /检测错误/);
-  assert.match(accountsSource, /连接不等于当前使用/);
-  assert.match(accountsSource, />新建任务</);
-  assert.match(accountsSource, /当前使用/);
-  assert.doesNotMatch(accountsSource, /设为默认/);
+  assert.doesNotMatch(accountsSource, /Claude Code|Rux Native|检测本机 Agent|选择 Agent/);
   assert.match(rendererSource, /initialAgentId=\{newTaskAgentId\}/);
   assert.match(rendererSource, /https:\/\/developers\.openai\.com\/codex\/cli\//);
   assert.match(rendererSource, /https:\/\/docs\.anthropic\.com\/en\/docs\/claude-code\/getting-started/);
@@ -245,11 +236,10 @@ test("clean startup waits for explicit project and account actions", async () =>
   assert.match(rendererSource, /aria-label=\{`在项目 \$\{project\.name\} 中新建对话`\}/);
   assert.match(rendererSource, /onClick=\{\(\) => onCreateTaskInWorkspace\(workspace\.path\)\}/);
   assert.doesNotMatch(rendererSource, /!searchQuery && !hasUnpinnedTasks/);
-  assert.match(rendererSource, /aria-label=\{`打开项目 \$\{project\.name\} 的看板`\}/);
-  assert.match(rendererSource, /Run 成功最多自动推进到“待验收”/);
-  assert.match(rendererSource, /aria-label=\{`管理项目 \$\{project\.name\} 的工作副本`\}/);
-  assert.match(rendererSource, />改进中心</);
-  assert.match(rendererSource, /没有审批就不会改变后续 Task/);
+  const sidebarStart = rendererSource.indexOf("function Sidebar(");
+  const sidebarEnd = rendererSource.indexOf("\nfunction ActivityRow", sidebarStart);
+  const sidebarSource = rendererSource.slice(sidebarStart, sidebarEnd);
+  assert.doesNotMatch(sidebarSource, />Agents<|>改进中心<|>看板<|>工作副本<|>导入 Agent 会话</);
   assert.match(rendererSource, /Rux approved improvement assets pinned when this Task was created/);
   assert.doesNotMatch(rendererSource, /composer-interaction-lock/);
   assert.match(rendererSource, /title: "新对话"/);
@@ -424,14 +414,12 @@ test("local data cleanup and export are impact-previewed, confirmation-gated, an
   assert.doesNotMatch(mainSource, /method: "session\.(?:delete|archive)"/);
 });
 
-test("renderer keeps Agent setup actionable and resumes the selected task session", async () => {
+test("renderer keeps Codex fixed and resumes the selected task session", async () => {
   const rendererSource = await readFile(path.join(root, "src/App.jsx"), "utf8");
 
-  assert.match(rendererSource, /className=\{`composer-agent-button/);
-  assert.match(rendererSource, /role="menu" aria-label="切换 Agent"/);
-  assert.match(rendererSource, /切换后将在当前项目中创建新任务/);
-  assert.match(rendererSource, /createBlankTask\(choice, workspaceState\.active, selectedTask, existingDraft\)/);
-  assert.match(rendererSource, /canSwitchAgent=\{!workspaceState\.active\.placeholder\}/);
+  assert.match(rendererSource, /className="composer-agent-button is-fixed" aria-label="执行引擎：Codex"/);
+  assert.match(rendererSource, /const choice = agentChoices\.find\(\(item\) => item\.id === "codex" && item\.available\)/);
+  assert.doesNotMatch(rendererSource.slice(rendererSource.indexOf("function Sidebar("), rendererSource.indexOf("\nfunction ActivityRow")), />Agents<|>改进中心<|>导入 Agent 会话/);
   assert.match(rendererSource, /已折叠 \{message\.unsupportedContent\.total\} 个导入事件/);
   assert.match(rendererSource, /composer-connect-button/);
   assert.match(rendererSource, /className="composer-agent-warning"/);

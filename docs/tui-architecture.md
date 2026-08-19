@@ -2,6 +2,8 @@
 
 更新时间：2026-08-17 · Runtime protocol v17
 
+> Compatibility status: the Rust TUI is not part of the Rux v1 ChatGPT Codex desktop parity surface. It may remain buildable while historical Runtime contracts are removed or migrated, but its commands and feature set do not define v1 product requirements.
+
 ## Product shape
 
 The TUI follows a Grok Build-style keyboard rhythm while keeping Rux semantics: a single transcript, bottom composer, compact status line, contextual completion, persisted Task picker, blocking scoped permission decision, and on-demand evidence. It is a client of the same language-neutral JSONL Runtime Host as Desktop, not a second agent implementation.
@@ -50,7 +52,7 @@ Run `rux-tui --help` for explicit Host, Node, Workspace, state-root, Agent, mode
 
 Acceptance requires Rust unit tests, real child-process JSONL transport, stable 80×24 TestBackend snapshots, a real PTY journey, Clippy with warnings denied, Host protocol compatibility, and packaged discovery of the matching Host. Platform installer acceptance remains separate from compilation.
 
-## Parity boundary
+## Compatibility boundary
 
 The TUI supports real Runs, persisted history, immutable Agent Profile creation/update/deletion, official CLI Provider login/status/logout, model selection, Native Session continuation, explicit external Session discovery/preview/import/refresh/rebuild/revision restore, deterministic Context Handoff with an optional isolated source-Agent summary, confirmation-gated local-data cleanup/export, Workspace and Run-owned Changes review/restore, Context selection, branches/compare/staged-only commit/guarded push, permission lifecycle and evidence.
 

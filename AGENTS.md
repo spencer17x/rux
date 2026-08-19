@@ -1,25 +1,27 @@
-# RUX Repository Instructions
+# Rux Repository Instructions
 
 ## Product Goal
 
-RUX is a desktop workbench for using, observing, and controlling coding agents. The product should turn opaque agent runs into an experience that is visible, controllable, reviewable, and recoverable. The desktop app is the first client; a Grok Build-style TUI should eventually consume the same Runtime protocol.
+Rux v1 is a functionally equivalent implementation of the Codex workspace in the current ChatGPT desktop client, with `Rux` as the product name. It has no independent first-release product roadmap.
 
-The near-term product is a coding-agent workbench, not a generic chat shell. Prioritize workspace-aware tasks, run visibility, permissions, changes, context, terminal access, and adapter interoperability.
+The single product contract is `docs/product-requirements.md`. Current target-client evidence defines what exists, how it behaves, and what must remain absent. User-provided current-client observations outrank generic documentation and repository history. OpenAI official documentation is used to verify semantics and current capability candidates, not to invent UI that the reference client does not expose.
+
+Rux-specific multi-Agent orchestration, Claude Code, Rux Native, custom Providers, model switching/routing, Agent builders, Project Board, Improvement Center, controlled evolution, cross-Agent handoff, custom cloud sync and other historical concepts are not v1 product features unless the current reference Codex client visibly provides an equivalent flow. Dormant compatibility code and historical data may remain until a separately reviewed removal migration, but normal v1 UI and creation paths must not expose or create those objects.
 
 ## Instruction Scope
 
-This file applies to the whole repository. More specific `AGENTS.md` files add directory-level requirements. In particular, `app/AGENTS.md` contains the detailed desktop UI and prototype rules and must be followed for work under `app/`.
+This file applies to the whole repository. `app/AGENTS.md` adds desktop renderer and visual-parity requirements for work under `app/`.
 
 ## Repository Map
 
 - `app/`: Electron + React desktop application and browser fallback.
-- `app/src/electron/`: Electron Main, Utility Process Runtime, CLI adapters, authentication, and terminal integration.
-- `app/src/shared/protocol.ts`: shared Runtime request, response, event, and validation contract.
+- `app/src/electron/`: Electron Main, Utility Process Runtime, Codex adapter, authentication and terminal integration.
+- `app/src/shared/protocol.ts`: shared Runtime request, response, event and validation contract.
 - `app/src/App.jsx` and `app/src/styles.css`: primary desktop renderer and visual system.
-- `app/tests/`: authentication-boundary and Sites compatibility tests.
-- `docs/product-requirements.md`: product positioning and MVP scope.
-- `docs/desktop-architecture.md`: current process boundaries, protocol, and implementation status.
-- `design-audit/`: accepted UX evidence and audit notes. Keep screenshots paired with their written findings.
+- `app/tests/`: desktop, Runtime, authentication, persistence, Git, release-boundary and Sites tests.
+- `docs/product-requirements.md`: the only v1 product requirements and parity contract.
+- `docs/desktop-architecture.md`: current desktop process boundaries and implementation status.
+- `design-audit/`: visual evidence and audit notes; keep accepted screenshots paired with findings.
 
 ## Development Commands
 
@@ -27,109 +29,86 @@ Run commands from `app/` unless stated otherwise.
 
 ```bash
 npm install
-npm run dev          # Electron development app
-npm run dev:web      # Browser fallback only
-npm test             # Typecheck, auth tests, and Sites tests
-npm run build        # Web/Sites and desktop builds
+npm run dev
+npm run dev:web
+npm test
+npm run build
 npm run build:desktop
-npm run package      # Unsigned current-platform app bundle
+npm run package
 ```
 
 On macOS arm64, the packaged app is `app/release/mac-arm64/Rux.app`. Packaging is not a substitute for launching and checking the resulting app.
 
+## Parity Discipline
+
+- Treat the current ChatGPT desktop Codex surface as the source of truth for navigation, controls, default state, terminology, density, layout, loading, errors and recovery.
+- Record the reference client version, platform, account/region gates, viewport and click path for release evidence.
+- Do not infer desktop UI from CLI commands, App Server methods, feature flags or dormant Rux code.
+- Absence is part of parity. If the reference surface does not expose a control, Rux v1 must not expose it.
+- The current confirmed reference does not expose user model switching. Do not show model selectors, default-model settings, manual model IDs, model catalog refresh or Auto routing UI. Actual model/usage may appear only where the reference client shows equivalent read-only evidence.
+- Use `Rux` for product branding while preserving exact technical names in commands, paths, logs, diffs, Provider errors and protocol evidence.
+- Do not claim complete parity without same-version, same-state visual and interaction evidence.
+
 ## Architecture Guardrails
 
-- Keep the Renderer sandboxed: no Node integration and no direct filesystem, process, PTY, or credential access.
-- Expose the smallest possible API through the sandboxed Preload and typed IPC.
-- Keep privileged agent, CLI, PTY, and filesystem work in the Utility Process Runtime.
-- Main Process owns native window lifecycle, external-link policy, workspace authorization, and IPC routing; it should not become an agent runtime.
-- Validate request envelopes in Main and method parameters in Runtime with the shared Zod schemas.
-- When adding a Runtime method, update the shared protocol, Runtime handler, renderer client/fallback, tests, and architecture documentation together.
-- Keep workspace paths explicitly authorized. Switching workspace must dispose the previous Runtime, PTY sessions, and active runs.
-- Preserve the Web fallback and Sites packaging files unless the task explicitly removes that delivery path.
-
-## Desktop Product And UI
-
-- Stay visually close to the Codex desktop app: pale flat sidebar, one focused task transcript, restrained disclosure, prominent bottom composer, and on-demand Changes/Context/Run surfaces.
-- Prefer clear task-oriented navigation over an IDE-style permanent multi-panel layout.
-- Keep task history compact and use real lifecycle states. Do not make completed showcase content look permanently busy.
-- Do not ship ambiguous icon-only entry points for important flows. Workspace switching and account authentication must remain separate, visibly labelled actions.
-- The bottom-most sidebar account row must open `账户与登录`; the `当前项目` row owns the native workspace picker. Project headings only expand or collapse task history, while opening a task activates its workspace. Keep `打开项目…` as a separate labelled action.
-- Preserve existing UI, draft, sidebar, and review preferences across launches, but do not automatically restore a terminal session.
-- Treat user-provided screenshots or a selected mock as the source of truth for layout, density, typography, color, and hierarchy.
+- Keep Renderer sandboxed: no Node integration and no direct filesystem, process, PTY or credential access.
+- Expose the smallest possible typed API through Preload.
+- Keep privileged Codex, CLI, PTY, Git and filesystem work in the Utility Process Runtime.
+- Main owns native window lifecycle, external-link policy, workspace authorization, native dialogs, persistence and IPC routing; it must not become the agent runtime.
+- Validate request envelopes in Main and method parameters in Runtime with shared schemas.
+- When adding a Runtime method, update protocol, Runtime handler, renderer client/fallback, tests and architecture documentation together.
+- Keep Workspace paths explicitly authorized. Switching Workspace must dispose the previous Runtime, PTYs and active Runs.
+- Preserve Web fallback and Sites packaging unless the task explicitly removes that delivery path.
 
 ## Authentication And Credential Safety
 
-- RUX delegates authentication to the official local CLIs. Use `claude auth login/status` for Claude Code and `codex login/status` for ChatGPT/Codex.
-- Never implement a copied Claude.ai OAuth client, read CLI credential files, scrape Keychain items, copy tokens, log tokens, or expose tokens to the Renderer.
-- Renderer-visible authentication data is limited to installation state, connection state, normalized auth method, CLI version, executable path, and non-sensitive detail text.
-- Do not persist OAuth tokens or authorization output in RUX state. Browser authorization, credential storage, and refresh remain owned by the official CLI.
-- Treat real OAuth authorization, logout, and credential replacement as consequential user actions. Unit-test the process boundary with fake CLIs; do not mutate the developer's real login state during routine verification.
-- Claude subscription OAuth is only delegated to the user's local official Claude Code CLI. A hosted third-party service must use Anthropic Console API keys or a supported cloud-provider setup instead.
+- Delegate ChatGPT/Codex authentication to the official Codex boundary. Do not implement copied OAuth clients.
+- Never read CLI credential files, scrape Keychain, copy tokens, log tokens or expose secrets to Renderer.
+- Renderer-visible authentication data is limited to installation/connection state, normalized auth method, CLI version, executable path and sanitized detail.
+- Do not persist OAuth tokens or authorization output in Rux state.
+- Real login, logout and credential replacement are consequential user actions. Unit-test with fake boundaries; do not mutate the developer's real login during routine verification.
+- Dormant non-Codex credential code must remain unreachable from v1 UI and must not contact Providers in the background.
 
-## Accepted Agent And Session Direction
+## Session, Workspace And Git Safety
 
-- The Desktop MVP is local-first and does not require a RUX cloud account. Keep the bottom `账户与登录` entry, but make its primary purpose Agent and Provider connection management rather than implying a separate RUX login prerequisite.
-- Model an Agent as a named execution configuration that binds an official Engine, a non-secret Provider Connection reference, a default model, instructions, permissions, Skills, and Tools. Each save creates an immutable Agent Revision. A Task pins its creation-time Revision; later Agent edits affect new Tasks only, and adopting a newer Revision requires the explicit context-handoff/new-Task flow. The composer selects an Agent first and then a compatible model.
-- Keep official-CLI-owned API key, Base URL, cloud-provider, and custom-model configuration isolated from RUX. RUX Native is now a separate optional Engine for Responses-compatible API Connections and must never import or copy CLI credentials.
-- Persist and resume conversations started in RUX through their provider-native session identifiers.
-- Existing Codex and Claude Code conversations are later-scope, user-triggered, Workspace-scoped imports. Discover metadata first, never scan and copy all histories on startup, and do not parse undocumented credential or transcript formats when an official interface exists.
-- Continuing a linked conversation keeps its Agent Engine and Provider Connection. Changing Agent, Engine, or Provider creates a new Task and native session through an explicit context-handoff flow; do not rewrite the original conversation.
-- A cross-Agent context handoff consists of a deterministic fact bundle plus an optional, visibly labeled Agent-generated summary. Let the user preview, edit, and remove content, and require explicit confirmation before sending anything to the target Agent or creating its native session. Persist the confirmed handoff as an immutable, source-linked snapshot.
-- Refresh linked external sessions only on explicit user action. Append and deduplicate additions; show modifications, deletions, reorderings, or uncertain matches as a diff without overwriting the current projection. A user-confirmed rebuild must first preserve the old projection as an immutable revision and must never remove RUX-owned Run, approval, Task, or handoff records.
-- Keep imported content and projection revisions locally until the user removes them; do not silently expire data. Support scoped export, unlink, imported-content removal, and Task/Workspace cleanup with an impact preview and explicit confirmation. Local deletion must never mutate the provider-native session, and exports must exclude credentials while warning about potentially sensitive conversation content.
-- Assign an external native session to the most specific authorized Workspace containing its canonical `cwd`, using real-path, component-boundary checks in Main/Runtime. Do not duplicate a session across parent and child Workspaces. Sessions with missing or ambiguous paths remain metadata-only and unassigned until the user explicitly chooses an authorized Workspace; paths outside all authorized roots require Workspace authorization first. Use Engine, Connection reference, and native session id as the global session identity.
-- Source model catalogs from supported Engine interfaces. When a catalog is unavailable, offer the Engine default, models previously verified for that Engine/Connection, and an advanced manual model id. Treat manual models as unverified until a successful Engine-run; do not mark them unavailable for network, authentication, quota, or transient service failures. Never scrape CLI configuration or use CLI credentials to call the Provider directly. RUX Native may call its explicitly configured Provider interface only after the user's Connection test or Run action; never infer unreported model capabilities.
-- Add Auto model routing as a post-P1 capability without weakening Task or Session identity. An immutable Agent Revision owns the simple-task model, complex-task model, routing strategy, fallback policy, and allowlist; each Run resolves exactly one actual model before execution and persists the decision, evidence, and Engine-reported usage. Auto may switch only among compatible catalog or previously verified models on the same Engine and non-secret Connection, and only when the Engine declares per-Run model selection compatible with the current Native Session. It must never silently cross Agent, Engine, Connection, or allowlist boundaries. Start with an explainable deterministic simple/complex classifier; any future model-based router must record its separate usage and provenance.
-- Show the actual model and token usage for every Assistant turn/Run. Prefer normalized Engine/Provider usage for input, cached input, output, reasoning, and total tokens. When exact usage is absent, show `未报告`; estimates must be visibly labeled and must not be presented as billing truth. Auto routing rationale and any allowlisted fallback remain reviewable in the Run surface.
-- RUX Native Provider Connections are implemented as an initial P2-E1 slice. Store API keys only as OS-encrypted ciphertext through Main-owned `safeStorage`; Runtime receives decrypted credentials only in memory through Renderer-inaccessible sync requests. Ordinary Renderer state and IPC responses receive only the non-secret Connection metadata. Never fall back to plaintext persistence, import CLI credentials, embed secrets in Base URLs, or test a Connection without an explicit user action. Deleting local credentials does not revoke the key at the Provider.
-- Do not describe session import as real-time two-way sync. The native session remains the execution source and RUX stores a local normalized projection.
+- Persist and resume Rux-created Codex conversations through official native Session identifiers.
+- A failed resume preserves the attempted Session and error evidence; never silently start a new Session and label it resumed.
+- Assign each Task to an explicitly authorized Workspace and validate canonical real paths with component boundaries.
+- Changes and Run evidence must be repository-backed. Do not make display fixtures look like real workspace state.
+- Repository mutations require direct user actions. Never auto-stage, force-push or invent an upstream.
+- Preserve task history, drafts and UI preferences across launches, but do not automatically restore a Terminal session.
+
+## Compatibility Code
+
+The repository contains substantial pre-reset compatibility infrastructure. It is engineering debt, not a v1 requirement.
+
+- Do not add new dependencies on dormant multi-Agent, Provider, Board, Improvement, handoff, custom sync or model-routing flows.
+- Do not restore their navigation or settings merely because tests or stores still exist.
+- Preserve historical user data until an explicit migration includes impact preview, export/retention semantics and verification.
+- Security tests for dormant code may remain while the code remains reachable internally; they do not define product scope.
 
 ## Change Discipline
 
-- Inspect the existing implementation and nearby patterns before editing.
-- Preserve user-owned or unrelated changes in a dirty worktree. Do not reset, discard, stage, commit, or push unless explicitly requested.
-- Keep changes scoped to the requested behavior. Fix adjacent defects only when they block the requested flow or create a direct correctness issue.
-- Update durable product decisions in the nearest applicable `AGENTS.md`.
-- Keep documentation truthful about what is real, mocked, or display-only.
+- Inspect nearby implementation and patterns before editing.
+- Preserve unrelated user changes in a dirty worktree. Do not reset, discard, stage, commit or push unless explicitly requested.
+- Keep changes scoped. Fix adjacent issues only when they block the requested path or directly violate parity.
+- Record durable parity decisions in the nearest `AGENTS.md` and update `docs/product-requirements.md` when the product contract changes.
+- Keep documentation truthful about what is implemented, dormant, mocked, gated or unverified.
 
 ## Verification And Acceptance
 
-- Run `npm test` for every Runtime, protocol, authentication, or renderer behavior change.
-- Run `npm run build:desktop` for desktop changes and `npm run build` when Sites/Web compatibility is in scope.
-- Run `npm run package` when handing off an updated desktop bundle.
-- For visible desktop changes, launch the actual packaged app and verify the complete click path at desktop size. A browser fallback screenshot alone is insufficient.
-- For UX acceptance, capture stable before/after screenshots, reject loading-state evidence, and record the flow under `design-audit/` when the task calls for an audit.
-- Verify important controls through both visible copy and accessibility names. Do not claim complete accessibility compliance from screenshots alone.
-- Do not claim OAuth success merely because a button exists. Confirm read-only CLI status in the packaged app; only perform a real authorization flow when the user explicitly chooses it.
+- Run `npm test` for Runtime, protocol, authentication, persistence or renderer behavior changes.
+- Run `npm run build:desktop` for desktop changes and `npm run build` when Web/Sites compatibility is in scope.
+- Run `npm run package` for a release-candidate handoff.
+- For visible desktop changes, launch the actual packaged app and verify the complete click path at desktop size.
+- Capture stable before/after screenshots at the same viewport and target-client state; reject loading or stale evidence.
+- Verify important controls through visible copy and accessibility names. Screenshots alone do not prove complete accessibility compliance.
+- Do not claim OAuth, Session recovery, approval or parity success merely because a button or test fixture exists.
 
-## Current Product Truth
+## Current Implementation Truth
 
-- The initial Project Board and controlled-improvement slice is implemented. Main derives stable logical Project and WorkingCopy identities from canonical Git common-dir/worktree metadata, groups already authorized working roots in one sidebar Project, and exposes explicit metadata-only worktree discovery plus confirmation-gated authorization. A Main-owned fail-closed Board Store keeps one derived card per Task, requirement cards and links, four human workflow states, manual/automatic transition provenance, settings disable-with-data-retention, and Run rules that advance only to `in-progress` or `review`, never automatically to `done`.
-- Runtime protocol v17 adds confirmation-gated Git worktree creation. Desktop Main first switches to an already-authorized repository-root Runtime, Runtime validates an absolute nonexistent target, branch format/occupancy and Git metadata boundaries, and runs structured no-shell `git worktree add`; Main then revalidates the resulting Project identity before authorizing and activating the new WorkingCopy. The TUI exposes the same method through exact preview/confirm commands.
-- The Improvement Center, managed asset, and initial controlled-evolution slice is implemented. Main-owned local stores derive redacted evidence, deduplicate candidates, accept project-rule/Skill/Workflow/Agent-instruction proposals, and require confirmation plus credential/permission/scope gates before immutable publication. New ordinary Tasks pin then-active non-Agent assets; Agent-instruction publication/rollback is append-only and stale-safe. Isolated A/B evaluation runs baseline/candidate and holdout cases in ephemeral tool-free Codex or non-persistent tool-disabled Claude sessions, applies a deterministic output grader, blocks the latest failed evaluation, and treats same-model review as advisory. Background review defaults on but cannot contact a Provider until the user configures an evaluator, prior cases and daily/Project Token budgets; optional USD caps use per-evaluation reservations, while idle, AC-power and pause policies are Main-enforced. Evaluation model, latency, reported/unreported usage, cost and budget accounting remain separate from Task Runs.
-- Improvement assets have a two-phase export boundary. Codex Skill/Workflow export follows the official `SKILL.md` and repository/user `.agents/skills` contract; Rux export uses a native selected directory. Main binds a bounded full-file diff, target path, before/after hashes and expiry into an in-memory preview, then rechecks active asset identity, path containment, symlink components and target drift before atomic write. Unverified Engine formats fail closed and remain Rux-managed.
-- Pure conversation Runs no longer wait for a redundant after-Run Git tree capture. Runtime records a deterministic unchanged Run patch unless an edit, command, or workspace invalidation indicates possible mutation; mutation-capable Runs still perform authoritative Run-owned comparison. This removes the post-response loading delay for message-only Runs without weakening file evidence.
-
-- Claude Code runs use the real local CLI adapter and normalized stream-json events.
-- Task, Message, and Run event history is persisted per authorized Workspace in a Main-owned SQLite store; orphaned running records are restored as stopped/interrupted.
-- RUX includes a real `rux-native` Adapter for OpenAI Responses, OpenAI Chat Completions, and Anthropic Messages Connections. All support explicit `/models` discovery, streaming, bounded file tools, normalized usage, and on macOS a structured no-shell command tool inside a restrictive `sandbox-exec` policy. Responses persists provider-native response ids; stateless Chat Completions and Anthropic reconstruct bounded same-Task user/assistant history without mislabeling it as a native Session. Custom Header values are OS-encrypted with the API Key, remain Main/Runtime-only, and cannot override Rux-managed transport headers including Anthropic authentication/version headers. Native OAuth has a compliance contract in `docs/rux-native-oauth-contract.md`, but no Provider login is exposed until official desktop OAuth terms and a RUX Client registration exist.
-- The initial Provider Adapter support, network security, and cross-version migration contract is documented in `docs/provider-adapter-support-and-security.md`. Native public endpoints require HTTPS, exact loopback hosts may use HTTP, Base URLs cannot contain credentials/query/fragment, and Provider redirects fail closed. A corrupt or future-version Native Provider Store is preserved and cannot be overwritten.
-- Rux Settings includes a local-only success dashboard derived from persisted Task/Run facts and Main-owned cross-launch aggregate events. It contains no telemetry transport and must keep missing evidence unreported; uploading metrics requires a separate disclosed data contract and explicit user consent.
-- Cross-launch local product events are Main-owned in `local-product-events.json` and expose only aggregate counts to Renderer. The allowlist excludes prompts, messages, paths, native Session ids and credentials; subject identity is one-way hashed. There is no telemetry transport. Uploading or broadening dimensions requires a separate disclosed data contract and explicit consent.
-- Optional cross-device sync remains unimplemented and off. Its accepted privacy, client-side encryption, device-key, immutable-version, branch-conflict, deletion/retention, consent, and delivery-gate baseline is `docs/optional-cloud-sync-contract.md`. Do not add a transport or broaden local data scope without satisfying that contract.
-- The account surface manages Rux Native, Codex, and Claude Code Connections. It never inspects CLI login state on startup or panel open. Explicit CLI logout is confirmation-gated and delegated only to `codex logout` or `claude auth logout`; Rux never deletes CLI credential files itself. Rux Native supports metadata edit, explicit Key replacement and credential deletion through Main-owned, fingerprinted Agent/Task impact previews; stale previews are rejected. API keys remain OS-encrypted and Renderer-inaccessible, and Providers are contacted only on explicit test or Run. CLI-owned credentials remain CLI-owned.
-- Rux Native credential diagnostics are user-triggered and Main-owned. They may expose only the selected safeStorage backend, availability, counts, non-secret Connection labels and sanitized detail. Confirmed rewrapping must preflight every ciphertext, preserve a ciphertext-only backup, write atomically, and never send plaintext to Renderer.
-- Custom Agent saves append immutable Revisions. Existing Tasks and Runs stay fixed to their original Revision; when a newer Revision exists, the Renderer offers only an explicit blank new Task fixed to the latest Revision. It does not copy messages, Runs, Context, or native Session state, and deleting a Definition retains historical Revisions.
-- Codex model discovery uses official App Server `model/list`. The UI exposes catalog source and refresh time; manual models become verified only after a successful Run and verified history is isolated by Engine and non-secret Connection reference. Only explicit missing/incompatible model errors mark a model unavailable.
-- Auto model routing remains implemented in protocol v17. Immutable Agent Revisions own simple/complex candidates, strategy, fallback and same-Connection allowlists; Desktop and stdio Runtime resolve and persist one explainable `RunModelDecision` before execution. Transcript/Run surfaces show the actual model and normalized Engine/Provider Token Usage. Catalog-removal fallback stays inside the allowlist, and a Native Session without declared per-Run model switching is blocked with a fixed-model/new-Task path.
-- Codex Threads and Claude Sessions started by RUX are persisted as normalized Native Session Links. Resume requires the same Engine, non-secret Connection reference, Agent Revision, and Workspace. A failed native resume preserves its attempted Session and error evidence, never silently starts a fresh Session, and offers only retrying that Session or creating a blank new Task.
-- Desktop is single-instance per user-data directory, and Desktop/stdio Runtime permit only one active writer lease per Native Session. A conflict fails with `NATIVE_SESSION_WRITE_CONFLICT`; it must not queue or merge writes silently. External-client writers remain detectable only through explicit refresh/diff, so imported Sessions keep visible read-only, refresh and explicit branch exits.
-- Existing Codex and Claude Code Sessions can now be explicitly discovered by Workspace, selected for bounded normalized preview, and imported into a Main-owned Task Store transaction. Global identity is deduplicated. When a more specific authorized Workspace becomes available, an explicit audited migration moves the same Task and Projection identity without copying it or mutating the provider-native Session. View imports are read-only; continue imports repeat attribution and resume checks and keep the original Engine, official CLI Connection, built-in Agent Revision, Workspace, and native Session id. Refresh, rebuild, restore, cleanup and export remain explicit, versioned local operations with impact confirmation and no Provider mutation.
-- Context Handoff previews a deterministic bundle from selected persisted Task messages, the latest persisted Run, Run-owned Git patch evidence, incomplete plan items, Workspace, and source Revision. Main resolves the target Agent and latest immutable Revision; Renderer cannot supply a Connection or Revision. Confirmation atomically creates a blank-session target Task with the reviewed bundle as its first message, stores an immutable snapshot, and writes bidirectional source/target relations without changing the source Task or invoking the target Agent. An explicit action can ask the pinned source Agent to generate the optional narrative in an isolated, tool-disabled invocation: Codex uses an ephemeral Thread and Claude Code disables Session persistence. The editable result carries Main-validated provenance, remains separate from facts, and never becomes a source Task Run or Native Session Link.
-- The P0 Desktop Release Candidate has passed an isolated packaged-app journey from clean startup through explicit Agent detection, first Run, restart/resume of the same native Session, Terminal non-restoration, and Workspace switching. The first message sent from a Workspace starter Task replaces its placeholder title with a compact normalized prompt title.
-- Normal Desktop Changes and Context are repository-backed through Runtime Git snapshots, immutable Run-owned patches, and validated Context snapshots. Native file/command tools emit a transient Workspace invalidation so Renderer re-reads authoritative Changes during the Run and selected Context after file writes. Showcase fixtures remain isolated behind the explicit `?showcase=codex` Web preview flag and are never normal product state.
+- The Electron app, sandboxed Renderer, Main, Utility Process Runtime, official Codex session path, local Task/Run persistence, Git Changes, Context and Terminal are real.
+- The current renderer still contains parity gaps, including user-facing model controls and disabled/legacy surfaces.
+- Dormant compatibility modules and tests still exist for historical Rux features; they are not v1 product commitments.
 - macOS packages are currently unsigned and require Developer ID signing and notarization before distribution.
-- Signed application updates are Main-owned and explicit. Build-time `update-config.json` enables only credential-free HTTPS feeds; `electron-updater` owns staged eligibility, package hash and platform signature validation. Download and install require user actions and install has a native confirmation. A new version must survive the health window; after two unhealthy launches Rux accepts only an exact previous-version package from the signed rollback feed. Unsigned/local packages ship with updates disabled.
-- Runtime protocol v17 exposes confirmation-gated stdio methods for explicit Session import/refresh/revision, Context Handoff, local-data lifecycle/export, Git branches, structured worktree creation and Run-owned Changes. The Rust TUI consumes those methods for the Desktop-equivalent workflows that do not require Electron Main secrets. Rux Native credential management remains Desktop-only because `safeStorage` decryption is never delegated to the standalone Host.
-- The protocol-v17 macOS QA package retains the previously passed native Workspace, explicit CLI detection, real Codex dialogue, model/Token and fail-closed update paths while adding Project/WorkingCopy and confirmed worktree creation. It remains an ad-hoc QA bundle, not a signed production release.
+- The implementation must not be described as functionally identical to current ChatGPT Codex until the parity contract's evidence gates pass.

@@ -5,7 +5,7 @@
   "author": "Rux",
   "type": "module",
   "main": "./out/main/main.js",
-  "description": "Rux desktop workbench for observable and controllable coding agents",
+  "description": "Open-source, local-first recreation of Codex Desktop",
   "scripts": {
     "dev": "electron-vite dev",
     "dev:web": "vite",

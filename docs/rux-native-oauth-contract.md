@@ -1,5 +1,7 @@
 # Rux Native OAuth 合规合同
 
+> 兼容代码安全记录，不属于 Rux v1 产品需求，也不允许恢复 Rux Native 或 OAuth 产品入口。v1 唯一产品合同为 `docs/product-requirements.md`。
+
 更新时间：2026-08-17
 
 ## 当前产品结论

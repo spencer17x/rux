@@ -1,26 +1,20 @@
 # RUX
 
-**RUX** 是一个统一使用、观察和控制 Coding Agent 的开发者工作台。
+**Rux** 是当前 ChatGPT 桌面客户端中 Codex 工作区的开源、本地优先功能一致实现。
 
-名称可以解释为 **Runtime User Experience**：RUX 将原本黑盒式的 Agent Run，转化为可见、可控、可审查、可恢复的开发体验。
+第一版只有一个产品目标：在同平台、同账户能力和同客户端版本下，复刻 Codex 的用户入口、工作流、状态、错误恢复和视觉层级；除 `Rux` 品牌外不增加自有产品功能。
 
-暂定口号：
-
-> One workspace. Every coding agent.
-
-RUX 当前处于可运行的 Desktop + TUI 内测阶段。Desktop 采用 Electron + React，并把高权限能力隔离在独立 Utility Process；Grok Build 交互取向的 Rust TUI 通过同一个独立 JSONL Runtime Host 使用 Claude Code、Codex、Git、Context、自定义 Agent 与共享 Task Store。
+Desktop 采用 Electron + React，并把高权限 Codex、Git、文件和 Terminal 能力隔离在独立 Utility Process。仓库仍含历史兼容模块与 Rust TUI，但它们不是 v1 产品表面，也不定义第一版需求。
 
 ## 产品文档
 
 - [产品需求文档](docs/product-requirements.md)
-- [交付路线与验收矩阵](docs/delivery-roadmap-and-acceptance.md)
 - [桌面端架构](docs/desktop-architecture.md)
 - [TUI 架构](docs/tui-architecture.md)
-- [2026-08-10 发布候选证据](docs/release-evidence-2026-08-10.md)
 
 ## 桌面应用
 
-Codex App 交互取向的桌面工作台位于 [`app/`](app/)。它覆盖 Workspace、Task、Run、Activity、Changes、Context、自定义 Agent 与集成终端；Claude Code 和 Codex 都走真实本机 CLI。生产包不暴露 Demo Agent，OAuth 只委托官方 CLI，不读取或复制 Token。
+桌面应用位于 [`app/`](app/)。当前实现已覆盖 Codex 本地 Workspace、Task、Run、审批、Changes、Context、原生 Session 恢复和集成 Terminal，但尚未通过完整的当前 ChatGPT Codex parity 门禁。OAuth 只委托官方 Codex 边界，Rux 不读取或复制 Token。
 
 ```bash
 cd app
@@ -33,7 +27,9 @@ npm run package   # 生成当前平台应用包，并把 Runtime Host/TUI 一起
 
 macOS 构建产物位于 `app/release/mac-arm64/Rux.app`；包内 TUI 位于 `Contents/Resources/bin/rux-tui`，可自动连接同包 Runtime Host。当前应用仍是 ad-hoc 签名，正式公开分发前必须完成 Developer ID、Hardened Runtime、公证、Stapling 与 Gatekeeper 验收。
 
-## TUI
+## 兼容 TUI
+
+TUI 是现有工程兼容客户端，不属于 ChatGPT Codex 桌面一致性的 v1 产品范围。
 
 ```bash
 cd tui

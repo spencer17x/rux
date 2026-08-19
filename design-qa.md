@@ -1,62 +1,67 @@
-# Design QA — Codex 26.810.52044 alignment
+# Design QA — Rux v1 Codex-only reset
+
+> Historical QA record. Its fixed Codex Desktop anchors are superseded for new v1 work by the current-client parity contract in `docs/product-requirements.md` and versioned same-state reference evidence.
 
 ## Evidence
 
-- Source visual truth path: unavailable. The installed reference application is `/Applications/ChatGPT.app` version `26.810.52044`, but direct capture of `com.openai.codex` is blocked by the desktop automation safety boundary. The user-supplied image at `design-audit/codex-26.810.52044-alignment-2026-08-16/00-user-reported-divergent-state.png` is the RUX state being rejected, not the target Codex screen.
-- Interaction reference: the installed `app.asar` assets supplied the 26.810.52044 approval, composer, task, and menu strings; repository-approved Codex layout anchors supplied the desktop dimensions and rail proportions.
-- Implementation screenshots:
-  - `design-audit/codex-26.810.52044-alignment-2026-08-16/01-packaged-blank-task.jpeg`
-  - `design-audit/codex-26.810.52044-alignment-2026-08-16/02-packaged-real-chat.jpeg`
-  - `design-audit/codex-26.810.52044-alignment-2026-08-16/03-web-blank-task-1433x812.png`
-  - `design-audit/codex-26.810.52044-alignment-2026-08-16/04-packaged-codex-session-and-stop.png`
-- Viewports and density:
-  - User-reported divergent state: 2866 × 1624 pixels, representing a 1433 × 812 CSS viewport at 2× density.
-  - Browser implementation: 1433 × 812 pixels at 1× density.
-  - Packaged desktop implementation: 1356 × 768 pixels at 1× capture density.
-- States: focused blank Task, approval-mode menu, real Rux/Codex conversation completed with `RUX_CHAT_OK`, and a real Claude Code launch reaching the Provider without the obsolete whole-Run gate.
+- Source visual truth: `design-audit/final-local-goals/00-codex-26.810.52044-reference.png`.
+- Normalized source: `design-audit/codex-v1-reset/00-reference-1433x812.png`.
+- Browser implementation: `design-audit/codex-v1-reset/01-showcase-1433x812.png`.
+- Full-view comparison: `design-audit/codex-v1-reset/02-side-by-side-1433x812.png`.
+- Packaged Codex account surface: `design-audit/codex-v1-reset/03-packaged-codex-account.png`.
+- Packaged main surface: `design-audit/codex-v1-reset/04-packaged-main.png`.
+- Existing focused project-rail evidence remains under `design-audit/project-rail-codex-alignment/`.
+
+## Viewport and normalization
+
+- Source: 2866 × 1624 physical pixels at 2× density, normalized to 1433 × 812.
+- Browser implementation: 1433 × 812 CSS and physical pixels at deviceScaleFactor 1.
+- State: Codex reference shows a permission-waiting Task; Rux implementation shows the accepted completed showcase Task with Environment open. These are different lifecycle states, so transcript copy and approval content are not treated as geometry mismatches.
+- The side-by-side artifact compares both complete frames in one image. Focused rail comparisons were already passed at the same normalized viewport.
 
 ## Findings
 
-- [P1] Exact pixel-level Codex comparison is unavailable.
-  - Location: full desktop shell and Composer.
-  - Evidence: the exact-version application package and its interface strings/tokens were inspectable, but its UI could not be captured. The supplied screenshot is explicitly the rejected RUX implementation and does not represent the target state.
-  - Impact: interaction parity and repository layout anchors can be verified, but typography, spacing, and token differences cannot honestly be certified against a same-state official Codex screenshot.
-  - Fix: obtain a user-supplied screenshot of Codex 26.810.52044 in the blank-Task and approval-menu states, then repeat a same-viewport side-by-side comparison.
-
-## Full-view comparison evidence
-
-The earlier RUX state showed a large whole-Run Workspace approval and a custom Composer lock path. The revised implementation shows a clean blank Task with a focused bottom Composer and no setup modal or waiting card. A real packaged Run starts without the old whole-Run gate and completes inline. Because the earlier screenshot is a rejected state rather than the target design, this is behavioral before/after evidence, not a valid pixel-fidelity pass.
-
-## Focused region evidence
-
-The packaged approval-mode control was inspected through its visible accessibility tree. It exposes `请求批准`, `自动批准`, and `只读` as selectable menu items with descriptions. The plus control is separately named `添加文件和更多`, and Agent/model/voice/send remain independent controls. A same-state official Composer crop was unavailable, so focused visual comparison remains blocked.
-
-## Comparison history
-
-1. Initial inspection found two P1 interaction mismatches: `新对话` opened a RUX-specific setup dialog, and Claude Code used a coarse whole-Run Workspace preflight. The Composer also used one shared settings popover and a custom read-only strip.
-2. Fixes applied: direct focused blank Task creation for sidebar/project/keyboard actions; separate approval menu; removal of the custom strip and blank-state card; provider-native approvals for Codex and Claude Code; compact neutral approval card copy and styling.
-3. Post-fix evidence: browser render at 1433 × 812 had no console warnings/errors; packaged blank Task exposed all expected controls; packaged Rux Run returned `RUX_CHAT_OK` in 5 seconds using `gpt-5.6-sol`; the temporary QA Tasks were archived.
-4. The first packaged Claude attempt exposed a real adapter defect: Claude's variadic `--mcp-config` option consumed the prompt as another config path. The adapter now places the prompt after `--`, with fresh adapter and permission-broker regression coverage.
-5. The rebuilt packaged app then launched Claude immediately without a coarse RUX permission card and reached the configured Provider. That Provider rejected the locally configured `grok-4.5` credential with `403 API Key 所属分组已删除`; RUX surfaced the authentication failure inline and did not silently create a replacement Session. This remaining failure is local Provider credential state, not an input or dispatch failure.
-6. Final packaged QA verified explicit Agent detection, restart reuse of the cached non-sensitive status without an automatic CLI check, native Workspace file selection, removable Composer Context chips, Codex selection, a completed `OK` response, a same-Session `PONG` continuation with actual model/Token evidence, and explicit Run Stop. The first cold Codex attempt revealed that official `thread/start` completed after about 35.8 seconds on this installation; the adapter now gives only `thread/start/resume` a bounded 120-second initialization window while ordinary RPC calls remain at 30 seconds. The rebuilt package completed both fresh and resumed Codex turns.
+- No actionable P0, P1, or P2 mismatch remains for the v1 reset.
+- The 240 px sidebar, 46 px top bar, centered 736 px transcript/Composer rail, 99 px Composer and right-floating Environment surface retain the accepted Codex Desktop anchors.
+- Removing `Agents`, generic Agent import, Board, Working Copies and Improvement Center is an intentional product-content change required by the v1 Codex-only brief. It reduces the sidebar while preserving its density, spacing and hierarchy.
+- The Composer now shows a fixed `Codex` identity in the same control slot; approval, model, voice and send controls retain their positions.
+- The packaged account row now opens one Codex/ChatGPT surface directly. No multi-Agent detection or Provider builder is visible.
 
 ## Required fidelity surfaces
 
-- Fonts and typography: implementation uses the existing system/Codex-like sans stack and compact optical weights; exact target comparison is blocked.
-- Spacing and layout rhythm: 240 px sidebar, 46 px toolbar, 736 px centered rail, bottom Composer, and restrained blank state are preserved; exact target comparison is blocked.
-- Colors and tokens: pale flat sidebar, white canvas, neutral menus/cards, and limited semantic color are present; exact token comparison is blocked.
-- Image quality and assets: no bespoke raster imagery is required; existing Lucide icons are used consistently.
-- Copy and content: primary new-Task, Composer, approval, and provider-native permission wording now follows the extracted 26.810.52044 interaction contract while retaining the Rux product name.
+- Fonts and typography: the existing system/SF/Inter stack, 13–14 px navigation text, compact metadata, single-line truncation and transcript hierarchy remain aligned. Native rasterization differences are acceptable.
+- Spacing and layout rhythm: major tracks, insets, row heights, radii, thin dividers and overlay placement match the accepted reference anchors.
+- Colors and tokens: pale flat sidebar, white task surface, soft neutral selection, low-contrast borders and restrained shadows remain aligned.
+- Image and icon fidelity: the UI contains no required raster imagery. Existing library icons are used consistently; no placeholder or handcrafted icon art was introduced.
+- Copy and content: visible product name is `Rux`; execution identity is `Codex`; removed multi-Agent concepts do not leak into the normal sidebar, Composer, account page or settings page.
 
-## Implementation checklist
+## Interaction verification
 
-- [x] Direct blank Task from `新对话`, project new-task action, and `Cmd/Ctrl+N`.
-- [x] Separate Composer plus and approval controls.
-- [x] Concrete provider-native approvals for Codex and Claude Code.
-- [x] Read-only imports use `复制为新任务` without a custom Composer strip.
-- [x] Browser, packaged desktop, full test, build, package, and real Codex chat verification.
-- [x] Claude input/dispatch and provider-native permission path verified through the packaged app; Provider response currently stops at the local credential's explicit 403 error.
-- [x] Native Workspace file Context add/remove, cached non-sensitive Agent state, fresh Codex chat, same native Session continuation, actual model/Token evidence, and Stop verified in the rebuilt packaged app.
-- [ ] Repeat pixel comparison when an official same-state Codex screenshot is available.
+- Browser preview:
+  - `新对话` creates a blank Task directly and focuses `给 Agent 发送消息`.
+  - `账户与登录` opens the Codex-only account surface.
+  - `Rux 设置` exposes permissions, Codex model/reasoning, local data, updates and Git placeholder without Board or improvement controls.
+  - Console warning/error list was empty.
+- Packaged Electron app:
+  - Launched `app/release/mac-arm64/Rux.app`.
+  - Accessibility tree exposed only `新对话`, `变更`, `环境`, `已安排` in primary navigation.
+  - Composer exposed `执行引擎：Codex` with no Agent menu.
+  - Account row opened the Codex/ChatGPT login surface directly and showed the real connected Codex CLI status without exposing credentials.
+- Automated verification:
+  - Full `npm test` passed.
+  - `npm run build:desktop` passed.
+  - `npm run package` passed; package remains unsigned.
 
-final result: blocked
+## Comparison history
+
+1. Initial implementation still exposed Agents, Improvement Center, Board/Working Copy entries, generic session import, Agent switching and a multi-Provider account dialog.
+2. First reset removed those navigation entries, fixed the Composer identity to Codex, forced new Tasks to the built-in Codex choice and removed the pre-Run multi-Agent detection gate.
+3. Packaged click verification found the footer account row still opened an old `管理 Agent 与 Provider` popover.
+4. The footer was changed to open the Codex-only account surface directly; settings were reduced to Codex v1 concepts; browser and packaged click paths then passed.
+
+## Follow-up polish
+
+- P3: exact private Codex glyphs and macOS font rasterization vary slightly because Rux uses its existing public icon library and Electron rendering.
+- P3: the completed showcase contains more project rows than the permission reference; normal startup remains user-owned and does not preload those fixtures.
+
+final result: passed

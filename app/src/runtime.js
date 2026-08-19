@@ -138,7 +138,7 @@ export function createMockRuntime() {
         adapters: [
           { id: "mock", name: "Rux Demo", available: true, version: "web-preview" },
           { id: "claude-code", name: "Claude Code", available: false, detail: "仅桌面应用可用" },
-          { id: "codex", name: "Codex", available: false, detail: "仅桌面应用可用" },
+          { id: "codex", name: "Codex", available: new URLSearchParams(window.location.search).get("showcase") === "codex", detail: "仅桌面应用可真实运行" },
         ],
       };
     },
