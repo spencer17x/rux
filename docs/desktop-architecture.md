@@ -1,7 +1,7 @@
 # Rux v1 Desktop Architecture
 
 > Baseline: current ChatGPT desktop Codex parity contract
-> Protocol: existing v17 compatibility contract; product surface follows `docs/product-requirements.md`
+> Protocol: v18; product surface follows `docs/product-requirements.md`
 
 ## 1. Architecture goal
 

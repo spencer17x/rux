@@ -83,6 +83,7 @@ import {
   improvementExportCommitParamsSchema,
   improvementEvaluateParamsSchema,
   improvementEvaluationRecordSchema,
+  clipboardImageSaveParamsSchema,
   type DesktopInfo,
   type NativeProviderConnectionImpactPreview,
   type NativeProviderConnectionImpactPreviewParams,
@@ -104,6 +105,7 @@ import {
   type ImprovementExportTarget,
   type ImprovementEvaluationRecord,
   type ImprovementEvaluateParams,
+  type LocalImageAttachment,
 } from "../shared/protocol";
 import { failClosedTimeout, runtimeRequestPolicy } from "./runtime-request-policy.ts";
 
@@ -944,6 +946,37 @@ function registerIpcHandlers(): void {
       }
       return workspaceRelativePath.split(sep).join("/");
     });
+  });
+
+  ipcMain.handle(IPC_CHANNELS.clipboardImageSave, (event, input: unknown): LocalImageAttachment => {
+    assertTrustedRenderer(event);
+    const workspace = requireWorkspaceState().active;
+    if (workspace.placeholder) throw new Error("请先选择一个项目");
+    requireAuthorizedWorkspaceId(workspace.id);
+    const parsed = clipboardImageSaveParamsSchema.parse(input);
+    const bytes = Buffer.from(parsed.dataBase64, "base64");
+    if (!bytes.length || bytes.length > 20 * 1024 * 1024) throw new Error("粘贴图片必须小于 20 MB");
+    const validHeader = parsed.mimeType === "image/png"
+      ? bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
+      : parsed.mimeType === "image/jpeg"
+        ? bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff
+        : parsed.mimeType === "image/gif"
+          ? ["GIF87a", "GIF89a"].includes(bytes.subarray(0, 6).toString("ascii"))
+          : bytes.subarray(0, 4).toString("ascii") === "RIFF" && bytes.subarray(8, 12).toString("ascii") === "WEBP";
+    if (!validHeader) throw new Error("剪贴板内容与声明的图片格式不匹配");
+    const extension = { "image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp" }[parsed.mimeType];
+    const id = randomUUID();
+    const bucket = createHash("sha256").update(realpathSync(workspace.path)).digest("hex").slice(0, 24);
+    const directory = resolve(app.getPath("userData"), "clipboard-images", bucket);
+    mkdirSync(directory, { recursive: true, mode: 0o700 });
+    const path = resolve(directory, `${id}${extension}`);
+    writeFileSync(path, bytes, { flag: "wx", mode: 0o600 });
+    return {
+      id,
+      name: parsed.name ? basename(parsed.name) : `pasted-image${extension}`,
+      mimeType: parsed.mimeType,
+      path,
+    };
   });
 
   ipcMain.handle(IPC_CHANNELS.workspaceActivate, async (event, input: unknown): Promise<WorkspaceState> => {

@@ -183,6 +183,8 @@ test("logs in through the fake Codex CLI, resumes one thread, and edits only the
 
 test("performs the initialize/thread/start/turn/start handshake and streams rich events", async (t) => {
   const fake = fakeServer(t, "stream");
+  const pastedImage = join(fake.directory, "pasted.png");
+  writeFileSync(pastedImage, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
   const collector = eventCollector();
   const adapter = new CodexAppServerAdapter(fake.directory, collector.emit, fake.options);
   t.after(() => adapter.dispose());
@@ -195,6 +197,7 @@ test("performs the initialize/thread/start/turn/start handshake and streams rich
     reasoningEffort: "high",
     permissionMode: "acceptEdits",
     profileId: "profile-1",
+    imagePaths: [pastedImage],
   });
   assert.deepEqual(started, {
     runId: "run-stream",
@@ -224,11 +227,10 @@ test("performs the initialize/thread/start/turn/start handshake and streams rich
   assert.equal(clientMessages[2].params.model, "fake-model");
   assert.equal("effort" in clientMessages[2].params, false);
   assert.equal("reasoningEffort" in clientMessages[2].params, false);
-  assert.deepEqual(clientMessages[3].params.input, [{
-    type: "text",
-    text: "Inspect the repository",
-    text_elements: [],
-  }]);
+  assert.deepEqual(clientMessages[3].params.input, [
+    { type: "text", text: "Inspect the repository", text_elements: [] },
+    { type: "localImage", path: pastedImage },
+  ]);
   assert.equal(clientMessages[3].params.model, "fake-model");
   assert.equal(clientMessages[3].params.effort, "high");
 

@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const RUX_PROTOCOL_VERSION = 17 as const;
+export const RUX_PROTOCOL_VERSION = 18 as const;
 
 export const IPC_CHANNELS = {
   request: "rux:runtime:request",
@@ -9,6 +9,7 @@ export const IPC_CHANNELS = {
   workspaceState: "rux:workspace:state",
   workspaceChoose: "rux:workspace:choose",
   workspaceChooseFiles: "rux:workspace:choose-files",
+  clipboardImageSave: "rux:clipboard-image:save",
   workspaceActivate: "rux:workspace:activate",
   workspaceOpen: "rux:workspace:open",
   taskStateLoad: "rux:task-state:load",
@@ -605,8 +606,38 @@ export interface RunStartParams {
   agentRevisionId: string;
   providerConnectionId?: string;
   contextFiles?: string[];
+  imagePaths?: string[];
   conversationHistory?: Array<{ role: "user" | "assistant"; content: string }>;
 }
+
+export const clipboardImageMimeTypes = ["image/png", "image/jpeg", "image/gif", "image/webp"] as const;
+export type ClipboardImageMimeType = (typeof clipboardImageMimeTypes)[number];
+
+export interface ClipboardImageSaveParams {
+  dataBase64: string;
+  mimeType: ClipboardImageMimeType;
+  name?: string;
+}
+
+export interface LocalImageAttachment {
+  id: string;
+  name: string;
+  mimeType: ClipboardImageMimeType;
+  path: string;
+}
+
+export const clipboardImageSaveParamsSchema = z.object({
+  dataBase64: z.string().min(1).max(28_000_000).regex(/^[A-Za-z0-9+/]+={0,2}$/),
+  mimeType: z.enum(clipboardImageMimeTypes),
+  name: z.string().trim().min(1).max(240).optional(),
+}).strict();
+
+export const localImageAttachmentSchema = z.object({
+  id: z.string().min(1).max(120),
+  name: z.string().min(1).max(240),
+  mimeType: z.enum(clipboardImageMimeTypes),
+  path: z.string().min(1).max(4_096),
+}).strict();
 
 export const nativeSessionKinds = ["codex-thread", "claude-session", "rux-response", "mock-session"] as const;
 export type NativeSessionKind = (typeof nativeSessionKinds)[number];
@@ -1617,6 +1648,7 @@ export interface PersistedTaskMessage {
   adapter?: RunAdapter;
   profileId?: string;
   agentRevisionId?: string;
+  images?: LocalImageAttachment[];
 }
 
 export interface PersistedPlanStep {
@@ -2284,6 +2316,7 @@ export interface RuxDesktopApi {
   getWorkspaceState(): Promise<WorkspaceState>;
   chooseWorkspace(): Promise<WorkspaceState | null>;
   chooseContextFiles(): Promise<string[]>;
+  saveClipboardImage(params: ClipboardImageSaveParams): Promise<LocalImageAttachment>;
   activateWorkspace(path: string): Promise<WorkspaceState>;
   openWorkspaceLocation(target?: WorkspaceOpenTarget): Promise<WorkspaceOpenResult>;
   loadTaskState(workspaceId?: string): Promise<WorkspaceTaskState>;
@@ -2419,11 +2452,15 @@ export const runStartParamsSchema = z.object({
   agentRevisionId: z.string().min(1).max(240),
   providerConnectionId: z.string().min(1).max(240).optional(),
   contextFiles: z.array(z.string().min(1).max(4_096)).max(500).default([]),
+  imagePaths: z.array(z.string().min(1).max(4_096)).max(10).default([]),
   conversationHistory: z.array(z.object({
     role: z.enum(["user", "assistant"]),
     content: z.string().min(1).max(100_000),
   }).strict()).max(200).optional(),
 }).strict().superRefine((params, context) => {
+  if (params.imagePaths.length && params.adapter !== "codex") {
+    context.addIssue({ code: "custom", path: ["imagePaths"], message: "Image attachments require the Codex adapter" });
+  }
   if (!params.profileId) {
     const builtInAdapter = builtInAgentRevisionAdapter(params.agentRevisionId);
     if (builtInAdapter !== params.adapter) {
@@ -3330,6 +3367,7 @@ export const persistedTaskMessageSchema = z.object({
   adapter: z.enum(runAdapters).optional(),
   profileId: z.string().min(1).max(120).optional(),
   agentRevisionId: z.string().min(1).max(240).optional(),
+  images: z.array(localImageAttachmentSchema).max(10).optional(),
 }).strict();
 
 export const persistedPlanStepSchema = z.object({

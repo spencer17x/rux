@@ -13,6 +13,9 @@ Do not expose a feature merely because Runtime supports it. V1 Renderer must not
 - The authoritative 2026-08-19 screenshots live under `design-audit/chatgpt-codex-current-2026-08-19/` at 2866 × 1624.
 - The current ChatGPT Codex reference exposes a Composer model/reasoning selector such as `5.6 Sol 中`; preserve and align it.
 - Match the screenshot navigation (`新对话`, `拉取请求`, `站点`, `已安排`, `插件`), bottom account popover, full settings taxonomy, quick-tools menu, right Environment panel and bottom Terminal dock.
+- Direct feedback captured on 2026-08-19 requires the model menu to load the real Codex catalog on demand and distinguish every model/effort option; a one-item menu is a failure state, not parity.
+- Composer paste accepts PNG/JPEG/GIF/WebP clipboard images, previews removable thumbnails, persists them through a Main-owned bounded attachment path, and sends them as official App Server `localImage` inputs.
+- The bottom Terminal and right Environment/Review surfaces are mutually exclusive. Terminal supports real add/select/close tab interactions; opening Review from quick tools opens Changes, not Environment.
 - New chat actions open a focused blank Task directly; do not add a Rux setup modal.
 - Product, Workspace selection and account/login remain distinct actions.
 - Normal v1 startup and settings are Codex-only. Historical non-Codex data may remain readable only when doing so does not reintroduce a normal creation or configuration path.

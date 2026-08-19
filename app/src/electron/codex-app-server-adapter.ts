@@ -82,6 +82,7 @@ export interface CodexAppServerStartParams {
   sessionId?: string;
   profileId?: string;
   agentRevisionId?: string;
+  imagePaths?: string[];
   /** Internal one-shot work that must not be materialized in provider history. */
   ephemeral?: boolean;
 }
@@ -543,7 +544,10 @@ export class CodexAppServerAdapter {
 
       const rawTurnResult = await this.request("turn/start", {
         threadId,
-        input: [{ type: "text", text: params.prompt, text_elements: [] }],
+        input: [
+          { type: "text", text: params.prompt, text_elements: [] },
+          ...(params.imagePaths ?? []).map((path) => ({ type: "localImage", path })),
+        ],
         ...(params.model ? { model: params.model } : {}),
         ...(params.reasoningEffort ? { effort: params.reasoningEffort } : {}),
       });

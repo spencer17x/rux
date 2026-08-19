@@ -46,6 +46,8 @@ import {
   type WorkspaceOpenResult,
   type WorkspaceOpenTarget,
   type WorkspaceTaskState,
+  type ClipboardImageSaveParams,
+  type LocalImageAttachment,
   type BoardLoadParams,
   type BoardMutationParams,
   type BoardSnapshot,
@@ -84,6 +86,10 @@ const api: RuxDesktopApi = {
 
   chooseContextFiles(): Promise<string[]> {
     return ipcRenderer.invoke(IPC_CHANNELS.workspaceChooseFiles) as Promise<string[]>;
+  },
+
+  saveClipboardImage(params: ClipboardImageSaveParams): Promise<LocalImageAttachment> {
+    return ipcRenderer.invoke(IPC_CHANNELS.clipboardImageSave, params) as Promise<LocalImageAttachment>;
   },
 
   activateWorkspace(path: string): Promise<WorkspaceState> {

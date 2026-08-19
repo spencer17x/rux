@@ -253,7 +253,7 @@ test("clean startup waits for explicit project and account actions", async () =>
   assert.match(rendererSource, /ruxAdapterLabel\(run\.adapter\)/);
   assert.match(rendererSource, /ruxAdapterLabel\(request\.provider\)/);
   assert.match(rendererSource, /ruxAdapterLabel\(inspectedRun\.agentSnapshot\.backend\)/);
-  assert.match(rendererSource, /modelOptions\.map\(\(model\) => <option value=\{model\} key=\{model\}>\{modelVisualLabel\(model\)\}<\/option>\)/);
+  assert.match(rendererSource, /displayModelOptions\.map\(\(model\) => <button/);
   assert.match(rendererSource, /showcaseMode \? \{\} : readUiPreferences\(\)/);
   assert.match(rendererSource, /agentDetectionCacheKey = "rux\.agent-detection\.v1"/);
   assert.match(rendererSource, /sanitizeAgentDetectionCache/);
@@ -297,6 +297,38 @@ test("composer file context uses a native workspace-bounded picker", async () =>
   assert.match(rendererSource, /window\.rux\.chooseContextFiles\(\)/);
   assert.match(rendererSource, /runtime\.contextSnapshot\(requested\)/);
   assert.match(rendererSource, /aria-label=\{`移除文件 Context：\$\{path\}`\}/);
+});
+
+test("composer clipboard images are bounded, persisted by Main, and sent as Codex localImage inputs", async () => {
+  const protocolSource = await readFile(path.join(root, "src/shared/protocol.ts"), "utf8");
+  const preloadSource = await readFile(path.join(root, "src/electron/preload.ts"), "utf8");
+  const mainSource = await readFile(path.join(root, "src/electron/main.ts"), "utf8");
+  const rendererSource = await readFile(path.join(root, "src/App.jsx"), "utf8");
+  const codexSource = await readFile(path.join(root, "src/electron/codex-app-server-adapter.ts"), "utf8");
+
+  assert.match(protocolSource, /clipboardImageSave: "rux:clipboard-image:save"/);
+  assert.match(protocolSource, /imagePaths: z\.array\(z\.string\(\)\.min\(1\)\.max\(4_096\)\)\.max\(10\)/);
+  assert.match(preloadSource, /saveClipboardImage\(params: ClipboardImageSaveParams\)/);
+  assert.match(mainSource, /clipboardImageSaveParamsSchema\.parse\(input\)/);
+  assert.match(mainSource, /bytes\.length > 20 \* 1024 \* 1024/);
+  assert.match(mainSource, /writeFileSync\(path, bytes, \{ flag: "wx", mode: 0o600 \}\)/);
+  assert.match(rendererSource, /onPaste=\{\(event\) =>/);
+  assert.match(rendererSource, /window\.rux\.saveClipboardImage/);
+  assert.match(rendererSource, /contextFiles: taskSnapshot\.contextFiles \|\| \[\],\s+imagePaths,/);
+  assert.match(codexSource, /type: "localImage", path/);
+});
+
+test("composer loads a real model menu and bottom/right panels are mutually exclusive", async () => {
+  const rendererSource = await readFile(path.join(root, "src/App.jsx"), "utf8");
+  const terminalSource = await readFile(path.join(root, "src/TerminalView.jsx"), "utf8");
+  assert.match(rendererSource, /role="listbox" aria-label="可用模型"/);
+  assert.match(rendererSource, /void onRequestModelCatalog\?\.\(\)/);
+  assert.match(rendererSource, /runtime\.listAgentModels\(\{ adapter: "codex", limit: 100/);
+  assert.match(rendererSource, /if \(!terminalOpen\) setInspectorOpen\(false\)/);
+  assert.match(rendererSource, /setTerminalOpen\(false\);\s+setInspectorTab\("environment"\)/);
+  assert.match(rendererSource, /className="terminal-new-tab"[^>]+onClick=\{addTab\}/);
+  assert.match(terminalSource, /const onSessionChangeRef = useRef\(onSessionChange\)/);
+  assert.match(terminalSource, /\}, \[\]\);/);
 });
 
 test("Session Connectors use supported provider interfaces without credential or transcript parsing", async () => {

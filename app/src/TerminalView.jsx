@@ -64,7 +64,9 @@ function createFallbackShell(terminal) {
 export function TerminalView({ onSessionChange, onEscape }) {
   const containerRef = useRef(null);
   const onEscapeRef = useRef(onEscape);
+  const onSessionChangeRef = useRef(onSessionChange);
   onEscapeRef.current = onEscape;
+  onSessionChangeRef.current = onSessionChange;
 
   useEffect(() => {
     const container = containerRef.current;
@@ -113,7 +115,7 @@ export function TerminalView({ onSessionChange, onEscape }) {
 
         if (event.type === "terminal.exit" && event.terminalId === terminalId) {
           terminal.writeln(`\r\n\x1b[2m[process exited with code ${event.exitCode}]\x1b[0m`);
-          onSessionChange?.("exited");
+          onSessionChangeRef.current?.("exited");
         }
       });
 
@@ -134,7 +136,7 @@ export function TerminalView({ onSessionChange, onEscape }) {
         }
 
         terminalId = session.terminalId;
-        onSessionChange?.(session.shell);
+        onSessionChangeRef.current?.(session.shell);
         for (const event of pendingEvents) {
           if (event.terminalId === terminalId) terminal.write(event.data);
         }
@@ -142,10 +144,10 @@ export function TerminalView({ onSessionChange, onEscape }) {
         terminal.focus();
       }).catch((error) => {
         terminal.writeln(`\x1b[31mUnable to start Rux terminal: ${error.message}\x1b[0m`);
-        onSessionChange?.("error");
+        onSessionChangeRef.current?.("error");
       });
     } else {
-      onSessionChange?.("preview");
+      onSessionChangeRef.current?.("preview");
       inputDisposable = createFallbackShell(terminal);
     }
 
@@ -171,7 +173,7 @@ export function TerminalView({ onSessionChange, onEscape }) {
       }
       terminal.dispose();
     };
-  }, [onSessionChange]);
+  }, []);
 
   return <div className="terminal-surface" ref={containerRef} data-testid="terminal-surface" />;
 }

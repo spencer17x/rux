@@ -55,6 +55,7 @@ function normalizeRunArguments(options, emit) {
       agentRevisionId: options?.agentRevisionId || builtInAgentRevisionId(adapter),
       providerConnectionId: options?.providerConnectionId,
       contextFiles: options?.contextFiles,
+      imagePaths: options?.imagePaths,
       conversationHistory: options?.conversationHistory,
     },
     emit,
@@ -148,7 +149,12 @@ export function createMockRuntime() {
     },
 
     async listAgentModels() {
-      return { adapter: "codex", source: "engine-catalog", fetchedAt: new Date().toISOString(), models: [], nextCursor: null };
+      const models = showcasePreview ? [
+        { id: "gpt-5.6-sol", model: "gpt-5.6-sol", displayName: "GPT-5.6 Sol", description: "Highest capability", isDefault: true, defaultReasoningEffort: "medium", supportedReasoningEfforts: [{ reasoningEffort: "medium", description: "Balanced" }, { reasoningEffort: "high", description: "Deeper" }] },
+        { id: "gpt-5.6-terra", model: "gpt-5.6-terra", displayName: "GPT-5.6 Terra", description: "Balanced", isDefault: false, defaultReasoningEffort: "medium", supportedReasoningEfforts: [{ reasoningEffort: "medium", description: "Balanced" }] },
+        { id: "gpt-5.6-luna", model: "gpt-5.6-luna", displayName: "GPT-5.6 Luna", description: "Fast", isDefault: false, defaultReasoningEffort: "medium", supportedReasoningEfforts: [{ reasoningEffort: "medium", description: "Balanced" }] },
+      ] : [];
+      return { adapter: "codex", source: "engine-catalog", fetchedAt: new Date().toISOString(), models, nextCursor: null };
     },
 
     async discoverSessions() {
@@ -602,6 +608,7 @@ function createDesktopRuntime(api) {
         agentRevisionId: normalized.options.agentRevisionId,
         providerConnectionId: normalized.options.providerConnectionId,
         ...(normalized.options.contextFiles?.length ? { contextFiles: normalized.options.contextFiles } : {}),
+        ...(normalized.options.imagePaths?.length ? { imagePaths: normalized.options.imagePaths } : {}),
         ...(normalized.options.conversationHistory?.length ? { conversationHistory: normalized.options.conversationHistory } : {}),
       }).catch((error) => {
         const emit = activeRuns.get(runId);

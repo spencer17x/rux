@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, realpathSync, statSync } from "node:fs";
-import { basename, isAbsolute, relative, resolve } from "node:path";
+import { basename, isAbsolute, relative, resolve, sep } from "node:path";
 import * as pty from "node-pty";
 import { AgentProfileStore } from "./agent-profile-store";
 import { AuthManager } from "./auth-manager";
@@ -220,6 +220,28 @@ const sessions = new SessionConnectorService([
 const gitChanges = new GitChangesService(workspaceRoot);
 const authManager = new AuthManager(workspaceRoot);
 const workspaceId = createHash("sha256").update(workspaceRoot).digest("hex").slice(0, 12);
+const clipboardImageRoot = resolve(
+  process.env.RUX_STATE_ROOT ?? workspaceRoot,
+  "clipboard-images",
+  createHash("sha256").update(workspaceRoot).digest("hex").slice(0, 24),
+);
+
+function validateClipboardImagePaths(paths: string[]): string[] {
+  if (!paths.length) return [];
+  if (!existsSync(clipboardImageRoot)) throw new Error("粘贴图片目录不可用，请重新粘贴图片");
+  const root = realpathSync(clipboardImageRoot);
+  return paths.map((path) => {
+    if (!isAbsolute(path) || !existsSync(path)) throw new Error("粘贴图片路径无效，请重新粘贴图片");
+    const resolvedPath = realpathSync(path);
+    const child = relative(root, resolvedPath);
+    if (!child || child === ".." || child.startsWith(`..${sep}`) || isAbsolute(child)) {
+      throw new Error("粘贴图片不属于当前 Rux 工作区会话");
+    }
+    const stat = statSync(resolvedPath);
+    if (!stat.isFile() || stat.size <= 0 || stat.size > 20 * 1024 * 1024) throw new Error("粘贴图片文件无效或超过 20 MB");
+    return resolvedPath;
+  });
+}
 const sessionAttributions = new SessionAttributionStore(resolve(
   process.env.RUX_STATE_ROOT ?? workspaceRoot,
   "rux-session-attribution.sqlite3",
@@ -576,7 +598,7 @@ async function launchPreparedRun(params: RunStartParams): Promise<{
         ? codex.start(params)
         : params.adapter === "rux-native"
           ? nativeProvider.start(nativeRunParamsForLaunch(params))
-        : startMockRun({ ...params, modelMode: params.modelMode ?? "fixed", contextFiles: params.contextFiles ?? [] }));
+        : startMockRun({ ...params, modelMode: params.modelMode ?? "fixed", contextFiles: params.contextFiles ?? [], imagePaths: params.imagePaths ?? [] }));
   } catch (error) {
     runGitBaselines.delete(params.runId);
     throw error;
@@ -812,7 +834,8 @@ async function handleRequest(input: unknown): Promise<void> {
         result = await runIsolatedImprovementEvaluation(workspaceRoot, request.params, (revisionId) => profiles().getRevision(revisionId));
         break;
       case "run.start": {
-        const params = runStartParamsSchema.parse(request.params);
+        const parsed = runStartParamsSchema.parse(request.params);
+        const params = { ...parsed, imagePaths: validateClipboardImagePaths(parsed.imagePaths) };
         if (gitMutationInProgress || gitMutationPending > 0) {
           throw new GitMutationBusyError("Agent Run start is blocked during a Git mutation");
         }

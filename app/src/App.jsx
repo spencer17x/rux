@@ -223,6 +223,25 @@ function ruxVisibleText(value) {
   return value;
 }
 
+function clipboardFileBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error || new Error("无法读取剪贴板图片"));
+    reader.onload = () => {
+      const result = String(reader.result || "");
+      const comma = result.indexOf(",");
+      if (comma < 0) reject(new Error("剪贴板图片编码无效"));
+      else resolve(result.slice(comma + 1));
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function localImageSource(path) {
+  if (/^(?:blob:|data:|https?:)/i.test(path)) return path;
+  return `file://${encodeURI(path)}`;
+}
+
 function ruxAgentLabel(value) {
   if (typeof value !== "string" || !value) return "Rux";
   return ruxVisibleText(value).replace(/\bRUX\b/g, "Rux").replace(/\brux Agent\b/gi, "Rux");
@@ -1554,6 +1573,9 @@ function Message({ message, agent, run }) {
 
   return (
     <article className="user-message">
+      {message.images?.length ? <div className="message-image-grid">
+        {message.images.map((image) => <img key={image.id} src={localImageSource(image.path)} alt={image.name} />)}
+      </div> : null}
       <MessageBody text={message.text} />
       <div className="message-author">You <span>{message.time}</span></div>
     </article>
@@ -1917,7 +1939,7 @@ function TaskTimeline({ task, streamingMessages = [], changes, onOpenChanges, on
   );
 }
 
-function Composer({ task, draft, onDraft, onSend, onAgentChange, onModelChange, onReasoningEffortChange, onPermissionChange, onOpenAccounts, onChooseContextFiles, onRemoveContextFile, contextBusy = false, interactionLockReason = "", focusRef, agentChoices, codexModels, codexCatalog, canRun = true, canSwitchAgent = true }) {
+function Composer({ task, draft, onDraft, onSend, onAgentChange, onModelChange, onReasoningEffortChange, onPermissionChange, onOpenAccounts, onChooseContextFiles, onRemoveContextFile, onPasteImages, pendingImages = [], onRemoveImage, onRequestModelCatalog, modelCatalogLoading = false, contextBusy = false, interactionLockReason = "", focusRef, agentChoices, codexModels, codexCatalog, canRun = true, canSwitchAgent = true }) {
   const [optionsOpen, setOptionsOpen] = useState("");
   const [dictating, setDictating] = useState(false);
   const [manualModel, setManualModel] = useState(task.model || "");
@@ -1930,7 +1952,7 @@ function Composer({ task, draft, onDraft, onSend, onAgentChange, onModelChange, 
     || (selectedAgentChoice?.agentRevisionId === task.agentRevisionId ? selectedAgentChoice.autoModelPolicy : undefined);
   const selectedAgentAvailable = Boolean(selectedAgentChoice?.available);
   const submit = () => {
-    if (!isActive && selectedAgentAvailable && draft.trim()) onSend();
+    if (!isActive && selectedAgentAvailable && (draft.trim() || pendingImages.length)) onSend();
   };
   const modelOptions = Array.from(new Set([
     task.model,
@@ -1947,12 +1969,22 @@ function Composer({ task, draft, onDraft, onSend, onAgentChange, onModelChange, 
   const permissionVisualLabel = permissionOptions.find((option) => option.id === task.permissionMode)?.label || "请求批准";
   const modelVisualLabel = (model) => {
     const value = String(model || "");
-    if (/5\.6/i.test(value)) return "5.6 Sol 中";
     if (/^(codex|rux) default$/i.test(value)) return "Codex 中";
+    const catalogEntry = (codexModels || []).find((item) => item.model === value || item.id === value);
+    if (catalogEntry) {
+      const name = String(catalogEntry.displayName || catalogEntry.model).replace(/^GPT-/i, "");
+      const effort = task.reasoningEffort || catalogEntry.defaultReasoningEffort;
+      return `${name}${effort ? ` ${reasoningEffortLabel(effort)}` : ""}`;
+    }
+    if (/5\.6[-_ ]?luna/i.test(value)) return "5.6 Luna 中";
+    if (/5\.6[-_ ]?terra/i.test(value)) return "5.6 Terra 中";
+    if (/5\.6/i.test(value)) return "5.6 Sol 中";
     if (/sonnet/i.test(value)) return "Sonnet 中";
     if (/opus/i.test(value)) return "Opus 中";
     return ruxModelLabel(value.replace(/^GPT-/i, "")) || "默认模型";
   };
+  const displayModelOptions = modelOptions.filter((model, index, items) =>
+    items.findIndex((candidate) => modelVisualLabel(candidate) === modelVisualLabel(model)) === index);
 
   useEffect(() => {
     if (!optionsOpen) return undefined;
@@ -1983,6 +2015,12 @@ function Composer({ task, draft, onDraft, onSend, onAgentChange, onModelChange, 
   return (
     <div className="composer-dock">
       <div className="composer-shell" ref={composerRef}>
+        {pendingImages.length ? <div className="composer-image-attachments" aria-label="待发送图片">
+          {pendingImages.map((image) => <figure key={image.id}>
+            <img src={localImageSource(image.path)} alt={image.name} />
+            <button type="button" onClick={() => onRemoveImage(image.id)} aria-label={`移除图片 ${image.name}`}><X size={13} /></button>
+          </figure>)}
+        </div> : null}
         <textarea
           ref={(node) => {
             textareaRef.current = node;
@@ -1990,6 +2028,15 @@ function Composer({ task, draft, onDraft, onSend, onAgentChange, onModelChange, 
           }}
           value={draft}
           onChange={(event) => onDraft(event.target.value)}
+          onPaste={(event) => {
+            const files = [...event.clipboardData.items]
+              .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
+              .map((item) => item.getAsFile())
+              .filter(Boolean);
+            if (!files.length) return;
+            event.preventDefault();
+            void onPasteImages(files);
+          }}
           onKeyDown={(event) => {
             if (event.key === "Enter" && !event.shiftKey) {
               event.preventDefault();
@@ -2009,20 +2056,26 @@ function Composer({ task, draft, onDraft, onSend, onAgentChange, onModelChange, 
           </div>
           <div className="composer-submit-area">
             <CircleDashed size={18} className={isActive ? "status-running" : "composer-context-status"} aria-label={isActive ? "运行中" : "上下文就绪"} />
-            <select
+            <button
+              type="button"
               className="composer-model-select"
               aria-label="选择模型"
-              value={task.model}
-              onChange={(event) => onModelChange(event.target.value)}
+              aria-haspopup="listbox"
+              aria-expanded={optionsOpen === "model"}
               disabled={!canRun || isActive}
+              onClick={() => {
+                const opening = optionsOpen !== "model";
+                setOptionsOpen(opening ? "model" : "");
+                if (opening) void onRequestModelCatalog?.();
+              }}
             >
-              {modelOptions.map((model) => <option value={model} key={model}>{modelVisualLabel(model)}</option>)}
-            </select>
+              <span>{modelVisualLabel(task.model)}</span><ChevronDown size={13} />
+            </button>
             <button type="button" className={`composer-mic-button ${dictating ? "is-active" : ""}`} aria-label="语音输入" aria-pressed={dictating} disabled={!canRun || isActive} onClick={() => { setDictating((active) => !active); textareaRef.current?.focus(); }}><Mic size={19} /></button>
             <button
               type="button"
               className="send-button"
-              disabled={!canRun || !selectedAgentAvailable || isActive || !draft.trim()}
+              disabled={!canRun || !selectedAgentAvailable || isActive || (!draft.trim() && !pendingImages.length)}
               onClick={submit}
               aria-label="发送"
             >
@@ -2062,6 +2115,20 @@ function Composer({ task, draft, onDraft, onSend, onAgentChange, onModelChange, 
                 <span><b>{option.label}</b><small>{option.description}</small></span>
               </button>
             ))}
+          </div>
+        ) : null}
+        {optionsOpen === "model" ? (
+          <div className="composer-model-menu" role="listbox" aria-label="可用模型">
+            {modelCatalogLoading ? <div className="composer-model-loading" role="status"><LoaderCircle size={14} className="status-running" />正在加载模型…</div> : null}
+            {displayModelOptions.map((model) => <button
+              type="button"
+              role="option"
+              aria-selected={model === task.model}
+              className={model === task.model ? "is-selected" : ""}
+              key={model}
+              onClick={() => { onModelChange(model); setOptionsOpen(""); }}
+            ><span className="composer-model-check">{model === task.model ? <Check size={14} /> : null}</span><span>{modelVisualLabel(model)}</span></button>)}
+            {!modelCatalogLoading && codexCatalog.error ? <div className="composer-model-error" role="alert">{codexCatalog.error}</div> : null}
           </div>
         ) : null}
         {false && optionsOpen === "agent" ? (
@@ -2110,6 +2177,7 @@ function TaskHeader({
   onExpandSidebar,
   sidebarCollapsed,
   onToggleTerminal,
+  onOpenReview,
   terminalOpen,
   onToggleRun,
   onToggleInspector,
@@ -2317,7 +2385,7 @@ function TaskHeader({
             <SlidersHorizontal size={18} />
           </button>
           {quickToolsOpen ? <div className="quick-tools-menu" role="menu" aria-label="快捷工具">
-            <button type="button" role="menuitem" onClick={() => { setQuickToolsOpen(false); onToggleInspector(); }}><FilePlus2 size={17} /><span>审阅</span><kbd>⌃⇧G</kbd></button>
+            <button type="button" role="menuitem" onClick={() => { setQuickToolsOpen(false); onOpenReview(); }}><FilePlus2 size={17} /><span>审阅</span><kbd>⌃⇧G</kbd></button>
             <button type="button" role="menuitem" onClick={() => { setQuickToolsOpen(false); onToggleTerminal(); }}><SquareTerminal size={17} /><span>终端</span><kbd>⌃`</kbd></button>
             <button type="button" role="menuitem"><Globe2 size={17} /><span>浏览器</span><kbd>⌘T</kbd></button>
             <button type="button" role="menuitem" onClick={() => { setQuickToolsOpen(false); onOpenWorkspace("finder"); }}><Folder size={17} /><span>文件</span><kbd>⌘P</kbd></button>
@@ -3195,22 +3263,43 @@ function Inspector({ open, onClose, tab, onTab, selectedFile, onSelectFile, work
 }
 
 function TerminalPanel({ open, onClose }) {
-  const [shellName, setShellName] = useState("connecting");
+  const [tabs, setTabs] = useState(() => [{ id: `terminal-${Date.now()}`, label: "connecting" }]);
+  const [activeTabId, setActiveTabId] = useState(() => tabs[0].id);
+
+  const addTab = () => {
+    const tab = { id: `terminal-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, label: "connecting" };
+    setTabs((items) => [...items, tab]);
+    setActiveTabId(tab.id);
+  };
+
+  const closeTab = (tabId) => {
+    setTabs((items) => {
+      const next = items.filter((item) => item.id !== tabId);
+      if (!next.length) {
+        window.requestAnimationFrame(onClose);
+        return [{ id: `terminal-${Date.now()}`, label: "connecting" }];
+      }
+      if (activeTabId === tabId) setActiveTabId(next.at(-1).id);
+      return next;
+    });
+  };
 
   if (!open) return null;
   return (
     <section className="terminal-panel" aria-label="集成终端">
       <div className="terminal-header">
         <div className="terminal-tabs">
-          <button type="button" className="is-active"><SquareTerminal size={14} /><span>{shellName === "connecting" ? "Terminal" : shellName}</span><X size={13} /></button>
-          <button type="button" className="terminal-new-tab" aria-label="新建终端"><Plus size={16} /></button>
+          {tabs.map((tab) => <div className={`terminal-tab ${tab.id === activeTabId ? "is-active" : ""}`} key={tab.id}><button type="button" onClick={() => setActiveTabId(tab.id)}><SquareTerminal size={14} /><span>{tab.label === "connecting" ? "Terminal" : tab.label}</span></button><button type="button" className="terminal-tab-close" aria-label={`关闭终端 ${tab.label}`} onClick={() => closeTab(tab.id)}><X size={13} /></button></div>)}
+          <button type="button" className="terminal-new-tab" aria-label="新建终端" onClick={addTab}><Plus size={16} /></button>
         </div>
         <div className="terminal-actions">
           <button type="button" aria-label="关闭终端" onClick={onClose}><X size={15} /></button>
         </div>
       </div>
       <div className="terminal-body terminal-body-xterm">
-        <TerminalView onSessionChange={setShellName} onEscape={onClose} />
+        {tabs.map((tab) => <div className={`terminal-tab-panel ${tab.id === activeTabId ? "is-active" : ""}`} key={tab.id} aria-hidden={tab.id !== activeTabId}>
+          <TerminalView onSessionChange={(label) => setTabs((items) => items.map((item) => item.id === tab.id ? { ...item, label } : item))} onEscape={onClose} />
+        </div>)}
       </div>
     </section>
   );
@@ -4592,6 +4681,7 @@ export function App() {
     }
     return {};
   });
+  const [pendingImagesByTask, setPendingImagesByTask] = useState({});
   const runtimeRef = useRef(null);
   const cancellationsRef = useRef(new Map());
   const runTokensRef = useRef(new Map());
@@ -4797,6 +4887,7 @@ export function App() {
     [codexSettings, selectedTaskId, workspaceState.active, workspaceTasks],
   );
   const draft = drafts[selectedTask.id] || "";
+  const pendingImages = pendingImagesByTask[selectedTask.id] || [];
   const setDraft = (value) => {
     setDrafts((items) => {
       const current = items[selectedTask.id] || "";
@@ -4809,6 +4900,41 @@ export function App() {
       }
       return { ...items, [selectedTask.id]: nextValue };
     });
+  };
+
+  const addPastedImages = async (files) => {
+    const supported = files.filter((file) => ["image/png", "image/jpeg", "image/gif", "image/webp"].includes(file.type));
+    if (!supported.length) return;
+    const remaining = Math.max(0, 10 - pendingImages.length);
+    if (!remaining) {
+      setTaskActionError("每条消息最多可附加 10 张图片。");
+      return;
+    }
+    setTaskActionError("");
+    try {
+      const saved = await Promise.all(supported.slice(0, remaining).map(async (file, index) => {
+        if (file.size > 20 * 1024 * 1024) throw new Error(`${file.name || `图片 ${index + 1}`} 超过 20 MB`);
+        if (!window.rux) {
+          const dataBase64 = await clipboardFileBase64(file);
+          return { id: `preview-${Date.now()}-${index}`, name: file.name || `pasted-image-${index + 1}`, mimeType: file.type, path: `data:${file.type};base64,${dataBase64}` };
+        }
+        return window.rux.saveClipboardImage({
+          dataBase64: await clipboardFileBase64(file),
+          mimeType: file.type,
+          name: file.name || undefined,
+        });
+      }));
+      setPendingImagesByTask((state) => ({ ...state, [selectedTask.id]: [...(state[selectedTask.id] || []), ...saved] }));
+    } catch (error) {
+      setTaskActionError(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const removePastedImage = (imageId) => {
+    setPendingImagesByTask((state) => ({
+      ...state,
+      [selectedTask.id]: (state[selectedTask.id] || []).filter((image) => image.id !== imageId),
+    }));
   };
 
   useEffect(() => {
@@ -4951,7 +5077,7 @@ export function App() {
 
   async function loadCodexModels() {
     const runtime = runtimeRef.current;
-    if (!runtime || !codexConnected) return;
+    if (!runtime || codexCatalog.loading) return;
     setCodexCatalog((state) => ({ ...state, loading: true, error: "" }));
     try {
       const collected = [];
@@ -5417,7 +5543,7 @@ export function App() {
     return { ok: true, runtime, selectedAgentChoice };
   };
 
-  const launchRun = (taskId, prompt, taskSnapshot, messageId, prepared) => {
+  const launchRun = (taskId, prompt, taskSnapshot, messageId, prepared, imagePaths = []) => {
     const preflight = prepared || runPreflight(taskSnapshot, prompt);
     if (!preflight.ok) {
       setTaskActionError(preflight.error);
@@ -5470,6 +5596,7 @@ export function App() {
         agentRevisionId: taskSnapshot.agentRevisionId,
         providerConnectionId: taskSnapshot.providerConnection.id,
         contextFiles: taskSnapshot.contextFiles || [],
+        imagePaths,
         ...(adapter === "rux-native" ? { conversationHistory: conversationHistoryForRun(taskSnapshot, prompt) } : {}),
       }, (event) => receiveRunEvent(taskId, token, event));
     } catch (error) {
@@ -5551,8 +5678,10 @@ export function App() {
   };
 
   const sendMessage = async () => {
-    const prompt = draft.trim();
-    if (!prompt || runValidationBusy) return;
+    const images = pendingImagesByTask[selectedTask.id] || [];
+    const writtenPrompt = draft.trim();
+    if ((!writtenPrompt && !images.length) || runValidationBusy) return;
+    const prompt = writtenPrompt || "请查看附加图片并按图片内容完成任务。";
     const preflight = runPreflight(selectedTask, prompt);
     if (!preflight.ok) {
       setTaskActionError(preflight.error);
@@ -5565,14 +5694,15 @@ export function App() {
     setTasks((items) => items.map((task) => task.id === taskId ? {
       ...task,
       ...(task.id === `workspace-${task.workspaceId}` && !task.messages.length && !(task.runs || []).length
-        ? { title: taskTitleFromPrompt(prompt) }
+        ? { title: taskTitleFromPrompt(writtenPrompt || images[0]?.name || "图片任务") }
         : {}),
       updatedAt: "现在",
       updatedAtIso: createdAt,
       messages: [...task.messages, {
         id: messageId,
         role: "user",
-        text: prompt,
+        text: writtenPrompt,
+        ...(images.length ? { images: images.map(({ id, name, mimeType, path }) => ({ id, name, mimeType, path })) } : {}),
         time: "现在",
         createdAt,
       }],
@@ -5582,7 +5712,8 @@ export function App() {
       delete next[taskId];
       return next;
     });
-    launchRun(taskId, prompt, taskSnapshot, messageId, preflight);
+    setPendingImagesByTask((state) => ({ ...state, [taskId]: [] }));
+    launchRun(taskId, prompt, taskSnapshot, messageId, preflight, images.map((image) => image.path).filter((path) => !path.startsWith("blob:")));
   };
 
   const toggleRun = () => {
@@ -5609,13 +5740,14 @@ export function App() {
       return;
     }
 
-    const prompt = [...selectedTask.messages].reverse().find((message) => message.role === "user")?.text;
+    const latestUserMessage = [...selectedTask.messages].reverse().find((message) => message.role === "user");
+    const prompt = latestUserMessage?.text || (latestUserMessage?.images?.length ? "请查看附加图片并按图片内容完成任务。" : "");
     if (!prompt) {
       composerInputRef.current?.focus();
       setTaskActionError("请先在输入框中描述你想完成的任务。");
       return;
     }
-    launchRun(selectedTask.id, prompt, selectedTask);
+    launchRun(selectedTask.id, prompt, selectedTask, undefined, undefined, (latestUserMessage?.images || []).map((image) => image.path));
   };
 
   const createTask = (prompt, choice, permissionMode, contextFiles = []) => {
@@ -7170,6 +7302,7 @@ export function App() {
       setTaskActionError("请先打开项目，再查看环境信息。");
       return;
     }
+    setTerminalOpen(false);
     setInspectorTab("environment");
     setInspectorOpen(true);
   };
@@ -7179,6 +7312,7 @@ export function App() {
       setTaskActionError("请先打开项目，再查看代码变更。");
       return;
     }
+    setTerminalOpen(false);
     if (typeof path === "string") setSelectedFile(path);
     setInspectorTab("changes");
     setInspectorOpen(true);
@@ -7314,8 +7448,12 @@ export function App() {
             sidebarCollapsed={sidebarCollapsed}
             onToggleTerminal={() => {
               if (workspaceState.active.placeholder) void chooseWorkspace();
-              else setTerminalOpen((value) => !value);
+              else {
+                if (!terminalOpen) setInspectorOpen(false);
+                setTerminalOpen((value) => !value);
+              }
             }}
+            onOpenReview={() => openChanges()}
             terminalOpen={terminalOpen}
             onToggleRun={toggleRun}
             onToggleInspector={() => {
@@ -7378,6 +7516,11 @@ export function App() {
             agentChoices={taskAgentChoices}
             codexModels={codexCatalog.models}
             codexCatalog={codexCatalog}
+            modelCatalogLoading={codexCatalog.loading}
+            onRequestModelCatalog={loadCodexModels}
+            pendingImages={pendingImages}
+            onPasteImages={addPastedImages}
+            onRemoveImage={removePastedImage}
             canRun={!composerInteractionLockReason && !runValidationBusy}
             canSwitchAgent={!workspaceState.active.placeholder}
           />
