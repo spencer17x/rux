@@ -199,9 +199,13 @@ test("clean startup waits for explicit project and account actions", async () =>
   assert.match(rendererSource, /window\.rux \|\| !showcaseMode/);
   assert.match(rendererSource, /workspaceState\.recent\.filter\(\(workspace\) => !workspace\.placeholder\)/);
   assert.doesNotMatch(rendererSource, /SuperZ|<span className="account-avatar">SU<\/span>/);
-  assert.match(rendererSource, /const accountLabel = codexConnected \|\| showcaseMode \? "ChatGPT" : "登录 ChatGPT"/);
+  assert.match(rendererSource, /const accountLabel = syncedChatGptConnected && chatGptAccount\.email/);
   assert.doesNotMatch(rendererSource, /剩余 29%/);
   assert.doesNotMatch(rendererSource, /显示宠物|<span>宠物<\/span>/);
+  assert.match(rendererSource, /同步 ChatGPT/);
+  assert.match(rendererSource, /runtime\.syncChatGptAccount\(\)/);
+  assert.match(rendererSource, /setChatGptAccount\(snapshot\)/);
+  assert.doesNotMatch(rendererSource, /chatGptAccount.*uiPreferences|uiPreferences.*chatGptAccount/);
   assert.match(rendererStyles, /\.codex-shell \.account-popover \{ right: auto; bottom: 44px; left: 9px; width: 224px; height: auto; min-height: 0;/);
   assert.match(rendererStyles, /\.codex-shell \.account-popover > button \{ min-height: 28px;/);
   assert.match(rendererSource, /task\.id === `workspace-\$\{task\.workspaceId\}` && !task\.messages\.length/);
@@ -213,7 +217,7 @@ test("clean startup waits for explicit project and account actions", async () =>
   assert.equal(hydrateSource.includes("runtime.authStatus()"), false);
   assert.match(hydrateSource, /window\.rux \? Promise\.resolve\(\{ adapters: cachedAgentDetection\?\.adapters \|\| fallbackAdapters \}\) : runtime\.listAgents\(\)/);
   const openAccountsStart = rendererSource.indexOf("const openAccounts = () =>");
-  const openAccountsEnd = rendererSource.indexOf("const detectProviders = async", openAccountsStart);
+  const openAccountsEnd = rendererSource.indexOf("const syncChatGptAccount = async", openAccountsStart);
   assert.doesNotMatch(rendererSource.slice(openAccountsStart, openAccountsEnd), /authStatus|listAgents|login\(/);
   const detectStart = rendererSource.indexOf("const detectProviders = async");
   const detectEnd = rendererSource.indexOf("const loginWithProvider = async", detectStart);

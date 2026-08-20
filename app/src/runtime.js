@@ -148,6 +148,14 @@ export function createMockRuntime() {
       return webAuthState();
     },
 
+    async syncChatGptAccount() {
+      return {
+        status: showcasePreview ? "connected" : "unsupported",
+        ...(showcasePreview ? { accountType: "chatgpt", planType: "plus", usedPercent: 71, remainingPercent: 29 } : {}),
+        syncedAt: new Date().toISOString(),
+      };
+    },
+
     async listAgentModels() {
       const models = showcasePreview ? [
         { id: "gpt-5.6-sol", model: "gpt-5.6-sol", displayName: "GPT-5.6 Sol", description: "Highest capability", isDefault: true, defaultReasoningEffort: "medium", supportedReasoningEfforts: [{ reasoningEffort: "medium", description: "Balanced" }, { reasoningEffort: "high", description: "Deeper" }] },
@@ -466,6 +474,10 @@ function createDesktopRuntime(api) {
 
     authStatus() {
       return api.request("auth.status", {});
+    },
+
+    syncChatGptAccount() {
+      return api.request("auth.chatgpt.sync", {});
     },
 
     login(provider) {

@@ -18,6 +18,7 @@ Do not expose a feature merely because Runtime supports it. V1 Renderer must not
 - The bottom Terminal and right Environment/Review surfaces are mutually exclusive. Terminal supports real add/select/close tab interactions; opening Review from quick tools opens Changes, not Environment.
 - The account footer and popover must use truthful Codex connection copy. Do not present `账户与登录` as a user identity or hard-code usage percentages; at the 1433 × 812 reference viewport the compact 224 px menu is anchored 9 px from the left and 44 px from the bottom without clipping its profile or logout rows.
 - Direct user feedback on 2026-08-20 removes the Pets surface from Rux v1: do not show `显示宠物` in the account menu or `宠物` in Settings.
+- ChatGPT account state sync is explicit and user-triggered. The Runtime may expose the bounded `account/read` email/plan and rate-limit summary returned by the official App Server only for the current in-memory UI; never read credential files, expose tokens, persist the email, or refresh in the background.
 - New chat actions open a focused blank Task directly; do not add a Rux setup modal.
 - Product, Workspace selection and account/login remain distinct actions.
 - Normal v1 startup and settings are Codex-only. Historical non-Codex data may remain readable only when doing so does not reintroduce a normal creation or configuration path.

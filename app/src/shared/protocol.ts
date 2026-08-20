@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const RUX_PROTOCOL_VERSION = 18 as const;
+export const RUX_PROTOCOL_VERSION = 19 as const;
 
 export const IPC_CHANNELS = {
   request: "rux:runtime:request",
@@ -59,6 +59,7 @@ export const runtimeMethods = [
   "runtime.ping",
   "runtime.shutdown",
   "auth.status",
+  "auth.chatgpt.sync",
   "auth.login",
   "auth.logout",
   "auth.cancel",
@@ -189,6 +190,33 @@ export interface AuthState {
   providers: AuthProviderInfo[];
   checkedAt: string;
 }
+
+export const chatGptAccountSyncStatuses = ["connected", "signed-out", "unsupported"] as const;
+export type ChatGptAccountSyncStatus = (typeof chatGptAccountSyncStatuses)[number];
+
+export interface ChatGptAccountSyncResult {
+  status: ChatGptAccountSyncStatus;
+  accountType?: string;
+  email?: string;
+  planType?: string;
+  usedPercent?: number;
+  remainingPercent?: number;
+  windowDurationMins?: number;
+  resetsAt?: number;
+  syncedAt: string;
+}
+
+export const chatGptAccountSyncResultSchema = z.object({
+  status: z.enum(chatGptAccountSyncStatuses),
+  accountType: z.string().min(1).max(64).optional(),
+  email: z.string().min(3).max(320).optional(),
+  planType: z.string().min(1).max(64).optional(),
+  usedPercent: z.number().min(0).max(100).optional(),
+  remainingPercent: z.number().min(0).max(100).optional(),
+  windowDurationMins: z.number().nonnegative().max(525_600).optional(),
+  resetsAt: z.number().int().nonnegative().optional(),
+  syncedAt: z.string().datetime(),
+});
 
 export interface AuthLoginParams {
   provider: AuthProviderId;
@@ -1890,6 +1918,10 @@ export interface RuntimeRequestMap {
   "auth.status": {
     params: Record<string, never>;
     result: AuthState;
+  };
+  "auth.chatgpt.sync": {
+    params: Record<string, never>;
+    result: ChatGptAccountSyncResult;
   };
   "auth.login": {
     params: AuthLoginParams;

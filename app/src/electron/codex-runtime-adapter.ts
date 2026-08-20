@@ -3,6 +3,7 @@ import type {
   AgentAdapterInfo,
   AgentModelListParams,
   AgentModelListResult,
+  ChatGptAccountSyncResult,
   PermissionDecideParams,
   PermissionDecision,
   PermissionRequest,
@@ -104,6 +105,10 @@ export class CodexRuntimeAdapter {
 
   listModels(params: AgentModelListParams): Promise<AgentModelListResult> {
     return this.adapter.listModels(params);
+  }
+
+  syncChatGptAccount(): Promise<ChatGptAccountSyncResult> {
+    return this.adapter.syncChatGptAccount();
   }
 
   listThreads(cursor: string | null | undefined, limit: number, signal?: AbortSignal): Promise<unknown> {

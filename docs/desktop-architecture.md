@@ -1,7 +1,7 @@
 # Rux v1 Desktop Architecture
 
 > Baseline: current ChatGPT desktop Codex parity contract
-> Protocol: v18; product surface follows `docs/product-requirements.md`
+> Protocol: v19; product surface follows `docs/product-requirements.md`
 
 ## 1. Architecture goal
 
@@ -23,6 +23,7 @@ flowchart LR
 
 - Renders the Codex-aligned project rail, one focused Task, Composer and on-demand panels.
 - Holds transient drafts, selection and streaming presentation state.
+- Keeps user-triggered ChatGPT account snapshots in memory only; `auth.chatgpt.sync` delegates `account/read` and rate-limit reads to the official Codex App Server and never persists account email or tokens.
 - Has no Node integration and cannot read files, credentials, processes or PTYs directly.
 - Sends only schema-valid product intents through Preload.
 

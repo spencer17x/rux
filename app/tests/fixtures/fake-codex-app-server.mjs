@@ -445,6 +445,29 @@ lines.on("line", (line) => {
     return;
   }
   if (message.method === "initialized") return;
+  if (message.method === "account/read") {
+    send({
+      id: message.id,
+      result: {
+        account: { type: "chatgpt", email: "rux-user@example.com", planType: "pro" },
+        requiresOpenaiAuth: true,
+      },
+    });
+    return;
+  }
+  if (message.method === "account/rateLimits/read") {
+    send({
+      id: message.id,
+      result: {
+        rateLimits: {
+          limitId: "codex",
+          planType: "pro",
+          primary: { usedPercent: 37, windowDurationMins: 300, resetsAt: 1_800_000_000 },
+        },
+      },
+    });
+    return;
+  }
   if (message.method === "model/list") {
     if (!message.params?.cursor) modelCatalogCycles += 1;
     const secondPage = message.params?.cursor === "models-page-2";

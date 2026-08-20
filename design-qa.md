@@ -5,6 +5,7 @@
 - Source visual truth: `design-audit/account-menu-fix-2026-08-20/02-reference-account-menu.png`.
 - User-reported broken state: `design-audit/account-menu-fix-2026-08-20/01-user-reported-broken.png`.
 - Browser-rendered implementation: `design-audit/account-menu-fix-2026-08-20/03-browser-account-menu-fixed.png`.
+- Synced account state: `design-audit/chatgpt-account-sync-2026-08-20/01-browser-synced.png`.
 - Side-by-side comparison input: `design-audit/account-menu-fix-2026-08-20/05-side-by-side-account-menu.png`.
 
 ## Viewport and normalization
@@ -22,8 +23,8 @@ No actionable P0, P1, or P2 findings remain in the account footer and account-me
 - Spacing and layout rhythm: the menu is 224 px wide, begins at x = 9 px, ends at y = 768 px, and uses natural content height, so neither the profile row nor logout row is clipped after removing the Pets row.
 - Colors and visual tokens: white translucent surface, grey border, subtle elevation, muted icons/status and neutral footer background align with the reference treatment.
 - Image and icon fidelity: the flow contains no raster imagery. Existing Lucide icons remain consistent in size, stroke and alignment; the initials avatar is a native UI element rather than a substituted image asset.
-- Copy and content: the former `账户与登录` pseudo-identity and fabricated `剩余 29%` were removed. Connected state now truthfully shows `ChatGPT` and `已连接`; signed-out state shows `登录 ChatGPT` and `未登录`. A personal display name is intentionally not invented or extracted from credentials.
-- Accessibility and interaction: the trigger exposes expanded state; the popover is a named menu; profile, usage, invite, settings and logout are separate named menu items. Profile opens the account dialog and Settings opens the settings surface. The removed Pets feature is absent from both this menu and Settings.
+- Copy and content: the former `账户与登录` pseudo-identity and fabricated static usage were removed. Before synchronization the UI shows only verified connection state; after the explicit action it shows the official App Server email when available, plan-backed account state, real remaining quota and synchronization time.
+- Accessibility and interaction: the trigger exposes expanded state; the popover is a named menu; sync, profile, usage, invite, settings and logout are separate named menu items. The sync item exposes busy state and keeps failures in an alert. Profile opens the account dialog and Settings opens the settings surface. The removed Pets feature is absent from both this menu and Settings.
 - Responsive resilience: the menu uses natural content height with a bounded viewport maximum; compact rows fit the target viewport without forced overflow, while shorter viewports retain scrolling.
 
 ## Comparison history
@@ -37,7 +38,8 @@ No actionable P0, P1, or P2 findings remain in the account footer and account-me
 
 - Browser interactions: account menu open/close, profile → account dialog, account dialog close, and Settings navigation.
 - Browser console after interactions: no errors or warnings.
-- Packaged `Rux.app`: the prior account-menu build launched successfully; this follow-up removes the Pets row and is covered by the renderer boundary assertion and rebuilt desktop package.
+- One-click sync browser path: `同步 ChatGPT` changed the Usage row from connection state to `剩余 29%` and displayed the synchronization time without closing the menu.
+- Packaged `Rux.app`: launched against the real local Codex boundary. One explicit click completed without error, exposed an official account email, updated Usage to a real remaining percentage, showed a synchronization timestamp, and kept the removed Pets entry absent. The private email was not copied into QA artifacts.
 - `npm test`: passed.
 - `npm run build:desktop`: passed.
 - `npm run package`: passed; package remains unsigned because no Developer ID identity is configured.

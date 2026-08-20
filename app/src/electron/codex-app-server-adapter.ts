@@ -6,12 +6,13 @@ import type {
   AgentModelListParams,
   AgentModelListResult,
   AgentAdapterInfo,
+  ChatGptAccountSyncResult,
   PermissionMode,
   ReasoningEffort,
   RunActivity,
   RuntimeEvent,
 } from "../shared/protocol.ts";
-import { agentModelListResultSchema } from "../shared/protocol.ts";
+import { agentModelListResultSchema, chatGptAccountSyncResultSchema } from "../shared/protocol.ts";
 import { createVerificationEvidence, redactSensitiveText } from "./verification-evidence.ts";
 import {
   forceKillChildProcessGroup,
@@ -450,6 +451,52 @@ export class CodexAppServerAdapter {
       fetchedAt: new Date().toISOString(),
       models,
       ...(Object.hasOwn(rawResult, "nextCursor") ? { nextCursor: rawResult.nextCursor } : {}),
+    });
+  }
+
+  async syncChatGptAccount(): Promise<ChatGptAccountSyncResult> {
+    if (this.disposed) throw new Error("Rux service is disposed");
+    await this.ensureInitialized();
+    const rawAccountResult = await this.request("account/read", { refreshToken: false });
+    if (!isRecord(rawAccountResult)) throw new Error("Rux service account/read returned an invalid response");
+    const account = isRecord(rawAccountResult.account) ? rawAccountResult.account : undefined;
+    const accountType = stringValue(account?.type);
+    if (!account) {
+      return chatGptAccountSyncResultSchema.parse({ status: "signed-out", syncedAt: new Date().toISOString() });
+    }
+    if (accountType !== "chatgpt") {
+      return chatGptAccountSyncResultSchema.parse({
+        status: "unsupported",
+        ...(accountType ? { accountType } : {}),
+        syncedAt: new Date().toISOString(),
+      });
+    }
+
+    const email = stringValue(account.email)?.slice(0, 320);
+    const accountPlanType = stringValue(account.planType)?.slice(0, 64);
+    let rateLimits: JsonRecord | undefined;
+    try {
+      const rawRateLimits = await this.request("account/rateLimits/read", {});
+      if (isRecord(rawRateLimits)) rateLimits = isRecord(rawRateLimits.rateLimits) ? rawRateLimits.rateLimits : undefined;
+    } catch {
+      // Account identity remains useful when the optional rate-limit surface is unavailable.
+    }
+    const primary = isRecord(rateLimits?.primary) ? rateLimits.primary : undefined;
+    const usedPercent = numberValue(primary?.usedPercent);
+    const windowDurationMins = numberValue(primary?.windowDurationMins);
+    const resetsAt = numberValue(primary?.resetsAt);
+    const planType = stringValue(rateLimits?.planType)?.slice(0, 64) ?? accountPlanType;
+    return chatGptAccountSyncResultSchema.parse({
+      status: "connected",
+      accountType,
+      ...(email ? { email } : {}),
+      ...(planType ? { planType } : {}),
+      ...(usedPercent !== undefined && usedPercent >= 0 && usedPercent <= 100
+        ? { usedPercent, remainingPercent: 100 - usedPercent }
+        : {}),
+      ...(windowDurationMins !== undefined ? { windowDurationMins } : {}),
+      ...(resetsAt !== undefined ? { resetsAt } : {}),
+      syncedAt: new Date().toISOString(),
     });
   }
 

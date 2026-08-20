@@ -687,6 +687,9 @@ async function handleRequest(input: unknown): Promise<void> {
       case "auth.status":
         result = authManager.status();
         break;
+      case "auth.chatgpt.sync":
+        result = await codex.syncChatGptAccount();
+        break;
       case "auth.login": {
         const params = authLoginParamsSchema.parse(request.params);
         result = await authManager.login(params.provider);

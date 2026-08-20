@@ -65,6 +65,7 @@ On macOS arm64, the packaged app is `app/release/mac-arm64/Rux.app`. Packaging i
 - Delegate ChatGPT/Codex authentication to the official Codex boundary. Do not implement copied OAuth clients.
 - Never read CLI credential files, scrape Keychain, copy tokens, log tokens or expose secrets to Renderer.
 - Renderer-visible authentication data is limited to installation/connection state, normalized auth method, CLI version, executable path and sanitized detail.
+- A direct user-triggered ChatGPT sync may additionally expose the bounded email, plan and rate-limit summary returned by official App Server account methods. Keep that snapshot in memory only; never persist it or refresh it in the background.
 - Do not persist OAuth tokens or authorization output in Rux state.
 - Real login, logout and credential replacement are consequential user actions. Unit-test with fake boundaries; do not mutate the developer's real login during routine verification.
 - Dormant non-Codex credential code must remain unreachable from v1 UI and must not contact Providers in the background.

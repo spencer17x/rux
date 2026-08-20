@@ -999,6 +999,7 @@ function Sidebar({
   onOpenAccounts,
   onOpenSettings,
   onLogout,
+  onSyncChatGpt,
   onOpenAgents,
   onOpenSessionDiscovery,
   onOpenEnvironment,
@@ -1010,6 +1011,10 @@ function Sidebar({
   onDismissTaskActionError,
   accountLabel,
   accountConnected,
+  accountUsageLabel,
+  accountSyncing,
+  accountSyncError,
+  accountSyncedAt,
   collapsed,
 }) {
   const [searchOpen, setSearchOpen] = useState(false);
@@ -1395,10 +1400,12 @@ function Sidebar({
               <span className="account-avatar account-initials">{String(accountLabel || "Rux").trim().slice(0, 2).toUpperCase()}</span><strong>{accountLabel}</strong>
             </button>
             <div className="account-popover-separator" />
-            <button type="button" role="menuitem" onClick={() => { setAccountMenuOpen(false); onOpenAccounts(); }}><Activity size={17} /><span>使用情况</span><small>{accountConnected ? "已连接" : "未登录"}</small></button>
+            <button type="button" role="menuitem" disabled={accountSyncing} onClick={() => void onSyncChatGpt?.()}><RefreshCw size={17} className={accountSyncing ? "status-running" : ""} /><span>{accountSyncing ? "正在同步" : "同步 ChatGPT"}</span><small>{accountSyncedAt || "手动"}</small></button>
+            <button type="button" role="menuitem" onClick={() => { setAccountMenuOpen(false); onOpenAccounts(); }}><Activity size={17} /><span>使用情况</span><small>{accountUsageLabel}</small></button>
             <button type="button" role="menuitem"><Share2 size={17} /><span>邀请好友</span></button>
             <button type="button" role="menuitem" onClick={() => { setAccountMenuOpen(false); onOpenSettings(); }}><Settings size={17} /><span>设置</span><kbd>⌘,</kbd></button>
             <button type="button" role="menuitem" onClick={() => { setAccountMenuOpen(false); onLogout?.(); }}><LogOut size={17} /><span>{accountConnected ? "退出登录" : "登录"}</span></button>
+            {accountSyncError ? <p className="account-popover-error" role="alert">{accountSyncError}</p> : null}
           </div>
         ) : null}
       </div>
@@ -4653,6 +4660,9 @@ export function App() {
   const [improvementState, setImprovementState] = useState({ open: false, loading: false, error: "", notice: "", projectId: "", summary: null, exportPreview: null });
   const [authState, setAuthState] = useState(() => cachedAgentDetection?.authState || null);
   const [authChecking, setAuthChecking] = useState(false);
+  const [chatGptAccount, setChatGptAccount] = useState(null);
+  const [chatGptSyncing, setChatGptSyncing] = useState(false);
+  const [chatGptSyncError, setChatGptSyncError] = useState("");
   const [runValidationBusy, setRunValidationBusy] = useState(false);
   const [authLoginProvider, setAuthLoginProvider] = useState(null);
   const [authLogoutProvider, setAuthLogoutProvider] = useState(null);
@@ -6757,6 +6767,23 @@ export function App() {
     setAuthError("");
   };
 
+  const syncChatGptAccount = async () => {
+    const runtime = runtimeRef.current;
+    if (!runtime || chatGptSyncing) return;
+    setChatGptSyncing(true);
+    setChatGptSyncError("");
+    try {
+      const snapshot = await runtime.syncChatGptAccount();
+      setChatGptAccount(snapshot);
+      const nextAuthState = await runtime.authStatus().catch(() => null);
+      if (nextAuthState) setAuthState((current) => mergeAuthState(current, nextAuthState));
+    } catch (error) {
+      setChatGptSyncError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setChatGptSyncing(false);
+    }
+  };
+
   const openSessionDiscovery = () => {
     if (workspaceState.active.placeholder) {
       void chooseWorkspace();
@@ -7339,7 +7366,24 @@ export function App() {
     }
   };
 
-  const accountLabel = codexConnected || showcaseMode ? "ChatGPT" : "登录 ChatGPT";
+  const syncedChatGptConnected = chatGptAccount?.status === "connected";
+  const accountLabel = syncedChatGptConnected && chatGptAccount.email
+    ? chatGptAccount.email
+    : codexConnected || showcaseMode || syncedChatGptConnected
+      ? "ChatGPT"
+      : "登录 ChatGPT";
+  const accountUsageLabel = chatGptSyncing
+    ? "同步中"
+    : chatGptSyncError
+      ? "同步失败"
+      : chatGptAccount?.remainingPercent !== undefined
+        ? `剩余 ${Math.round(chatGptAccount.remainingPercent)}%`
+        : codexConnected || showcaseMode || syncedChatGptConnected
+          ? "已连接"
+          : "未登录";
+  const accountSyncedAt = chatGptAccount?.syncedAt
+    ? new Date(chatGptAccount.syncedAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })
+    : "";
   const composerInteractionLockReason = !appReady
     ? "工作台仍在初始化，完成后即可编辑。"
     : selectedTask.importedSession?.status === "unlinked"
@@ -7398,6 +7442,7 @@ export function App() {
         onOpenAccounts={openAccounts}
         onOpenSettings={openSettings}
         onLogout={() => void logoutWithProvider("chatgpt")}
+        onSyncChatGpt={syncChatGptAccount}
         onOpenAgents={() => { setAgentsOpen(true); setSidebarOpen(false); setAgentProfileError(""); if (codexConnected) void loadCodexModels(); }}
         onOpenSessionDiscovery={openSessionDiscovery}
         onOpenEnvironment={openEnvironment}
@@ -7408,7 +7453,11 @@ export function App() {
         taskActionError={taskActionError}
         onDismissTaskActionError={() => setTaskActionError("")}
         accountLabel={accountLabel}
-        accountConnected={codexConnected || showcaseMode}
+        accountConnected={codexConnected || showcaseMode || syncedChatGptConnected}
+        accountUsageLabel={accountUsageLabel}
+        accountSyncing={chatGptSyncing}
+        accountSyncError={chatGptSyncError}
+        accountSyncedAt={accountSyncedAt}
         collapsed={sidebarCollapsed}
       />
 

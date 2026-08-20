@@ -101,6 +101,36 @@ test("cold Codex thread initialization uses a bounded long timeout", () => {
   assert.equal(codexAppServerRequestTimeoutMs("thread/start", 1_234), 1_234);
 });
 
+test("syncs ChatGPT account and rate-limit state only through official App Server methods", async (t) => {
+  const fake = fakeServer(t, "account-sync");
+  const adapter = new CodexAppServerAdapter(fake.directory, () => undefined, fake.options);
+  t.after(() => adapter.dispose());
+
+  const synced = await adapter.syncChatGptAccount();
+  assert.deepEqual({ ...synced, syncedAt: "<timestamp>" }, {
+    status: "connected",
+    accountType: "chatgpt",
+    email: "rux-user@example.com",
+    planType: "pro",
+    usedPercent: 37,
+    remainingPercent: 63,
+    windowDurationMins: 300,
+    resetsAt: 1_800_000_000,
+    syncedAt: "<timestamp>",
+  });
+  assert.equal(Number.isNaN(Date.parse(synced.syncedAt)), false);
+  const requests = transcriptMessages(fake.transcript)
+    .filter((entry) => entry.direction === "client")
+    .map((entry) => entry.message);
+  assert.deepEqual(requests.map((message) => message.method), [
+    "initialize",
+    "initialized",
+    "account/read",
+    "account/rateLimits/read",
+  ]);
+  assert.deepEqual(requests[2].params, { refreshToken: false });
+});
+
 async function waitUntil(predicate, timeoutMs = 3_000) {
   const startedAt = Date.now();
   while (!predicate()) {
