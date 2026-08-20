@@ -180,6 +180,7 @@ test("workspace opening validates the requested desktop target without launching
 test("clean startup waits for explicit project and account actions", async () => {
   const mainSource = await readFile(path.join(root, "src/electron/main.ts"), "utf8");
   const rendererSource = await readFile(path.join(root, "src/App.jsx"), "utf8");
+  const rendererStyles = await readFile(path.join(root, "src/styles.css"), "utf8");
   const webRuntimeSource = await readFile(path.join(root, "src/runtime.js"), "utf8");
 
   const defaultWorkspaceStart = mainSource.indexOf("function defaultWorkspacePath()");
@@ -198,6 +199,11 @@ test("clean startup waits for explicit project and account actions", async () =>
   assert.match(rendererSource, /window\.rux \|\| !showcaseMode/);
   assert.match(rendererSource, /workspaceState\.recent\.filter\(\(workspace\) => !workspace\.placeholder\)/);
   assert.doesNotMatch(rendererSource, /SuperZ|<span className="account-avatar">SU<\/span>/);
+  assert.match(rendererSource, /const accountLabel = codexConnected \|\| showcaseMode \? "ChatGPT" : "登录 ChatGPT"/);
+  assert.doesNotMatch(rendererSource, /剩余 29%/);
+  assert.doesNotMatch(rendererSource, /显示宠物|<span>宠物<\/span>/);
+  assert.match(rendererStyles, /\.codex-shell \.account-popover \{ right: auto; bottom: 44px; left: 9px; width: 224px; height: auto; min-height: 0;/);
+  assert.match(rendererStyles, /\.codex-shell \.account-popover > button \{ min-height: 28px;/);
   assert.match(rendererSource, /task\.id === `workspace-\$\{task\.workspaceId\}` && !task\.messages\.length/);
   assert.match(rendererSource, /title: taskTitleFromPrompt\(prompt\)/);
 

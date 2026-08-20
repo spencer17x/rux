@@ -1395,8 +1395,7 @@ function Sidebar({
               <span className="account-avatar account-initials">{String(accountLabel || "Rux").trim().slice(0, 2).toUpperCase()}</span><strong>{accountLabel}</strong>
             </button>
             <div className="account-popover-separator" />
-            <button type="button" role="menuitem" onClick={() => { setAccountMenuOpen(false); onOpenAccounts(); }}><Activity size={17} /><span>使用情况</span><small>剩余 29%</small></button>
-            <button type="button" role="menuitem"><Sparkles size={17} /><span>显示宠物</span></button>
+            <button type="button" role="menuitem" onClick={() => { setAccountMenuOpen(false); onOpenAccounts(); }}><Activity size={17} /><span>使用情况</span><small>{accountConnected ? "已连接" : "未登录"}</small></button>
             <button type="button" role="menuitem"><Share2 size={17} /><span>邀请好友</span></button>
             <button type="button" role="menuitem" onClick={() => { setAccountMenuOpen(false); onOpenSettings(); }}><Settings size={17} /><span>设置</span><kbd>⌘,</kbd></button>
             <button type="button" role="menuitem" onClick={() => { setAccountMenuOpen(false); onLogout?.(); }}><LogOut size={17} /><span>{accountConnected ? "退出登录" : "登录"}</span></button>
@@ -4251,7 +4250,6 @@ function CodexSettingsDialog({ open, connected, catalog, settings, boardEnabled,
               <button type="button"><Mic size={16} /><span>语音</span></button>
               <button type="button"><SlidersHorizontal size={16} /><span>配置</span></button>
               <button type="button"><Sparkles size={16} /><span>个性化</span></button>
-              <button type="button"><CircleDot size={16} /><span>宠物</span></button>
               <button type="button"><Zap size={16} /><span>键盘快捷键</span></button>
               <button type="button"><Activity size={16} /><span>使用情况和计费</span></button>
               <button type="button" onClick={onOpenAccounts}><AtSign size={16} /><span>账户</span><ArrowRight size={13} /></button>
@@ -7341,7 +7339,7 @@ export function App() {
     }
   };
 
-  const accountLabel = "账户与登录";
+  const accountLabel = codexConnected || showcaseMode ? "ChatGPT" : "登录 ChatGPT";
   const composerInteractionLockReason = !appReady
     ? "工作台仍在初始化，完成后即可编辑。"
     : selectedTask.importedSession?.status === "unlinked"
@@ -7410,7 +7408,7 @@ export function App() {
         taskActionError={taskActionError}
         onDismissTaskActionError={() => setTaskActionError("")}
         accountLabel={accountLabel}
-        accountConnected={codexConnected}
+        accountConnected={codexConnected || showcaseMode}
         collapsed={sidebarCollapsed}
       />
 
