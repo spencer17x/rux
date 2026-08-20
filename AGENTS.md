@@ -73,6 +73,7 @@ On macOS arm64, the packaged app is `app/release/mac-arm64/Rux.app`. Packaging i
 ## Session, Workspace And Git Safety
 
 - Persist and resume Rux-created Codex conversations through official native Session identifiers.
+- Imported external conversations are copied into editable Rux Tasks. Never resume or write the source Session after import; create a new Rux-owned Session on first continuation and keep legacy read-only/link statuses non-blocking and unreachable from normal creation UI.
 - A failed resume preserves the attempted Session and error evidence; never silently start a new Session and label it resumed.
 - Assign each Task to an explicitly authorized Workspace and validate canonical real paths with component boundaries.
 - Changes and Run evidence must be repository-backed. Do not make display fixtures look like real workspace state.

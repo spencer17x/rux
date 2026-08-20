@@ -87,7 +87,7 @@ test("latest compatible Session ignores newer incompatible history", () => {
   assert.equal(latestCompatibleSessionLink(fixedTask)?.nativeSessionId, "thread-1");
 });
 
-test("an imported continue Task resumes its pinned native Session before it has any Runs", () => {
+test("an imported Task never resumes the source Session and later resumes only its Rux-owned Session", () => {
   const imported = task({
     runs: [],
     importedSession: {
@@ -102,8 +102,9 @@ test("an imported continue Task resumes its pinned native Session before it has 
       lastReadAt: "2026-08-12T00:00:00.000Z",
     },
   });
-  assert.equal(latestCompatibleSessionLink(imported)?.nativeSessionId, "thread-1");
-  assert.equal(latestCompatibleSessionLink({ ...imported, importedSession: { ...imported.importedSession, mode: "view" } }), undefined);
+  assert.equal(latestCompatibleSessionLink(imported), undefined);
+  const ruxOwned = { ...link, nativeSessionId: "thread-rux-owned" };
+  assert.equal(latestCompatibleSessionLink({ ...imported, runs: [run({ sessionId: "thread-rux-owned", sessionLink: ruxOwned })] })?.nativeSessionId, "thread-rux-owned");
 });
 
 test("resume failure is explicit and remains tied to the attempted Session", () => {

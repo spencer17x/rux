@@ -50,6 +50,7 @@ function normalizeRunArguments(options, emit) {
       modelSource: options?.modelSource,
       modelVerificationStatus: options?.modelVerificationStatus,
       reasoningEffort: options?.reasoningEffort,
+      serviceTier: options?.serviceTier,
       sessionId: options?.sessionId,
       profileId: options?.profileId,
       agentRevisionId: options?.agentRevisionId || builtInAgentRevisionId(adapter),
@@ -158,9 +159,9 @@ export function createMockRuntime() {
 
     async listAgentModels() {
       const models = showcasePreview ? [
-        { id: "gpt-5.6-sol", model: "gpt-5.6-sol", displayName: "GPT-5.6 Sol", description: "Highest capability", isDefault: true, defaultReasoningEffort: "medium", supportedReasoningEfforts: [{ reasoningEffort: "medium", description: "Balanced" }, { reasoningEffort: "high", description: "Deeper" }] },
-        { id: "gpt-5.6-terra", model: "gpt-5.6-terra", displayName: "GPT-5.6 Terra", description: "Balanced", isDefault: false, defaultReasoningEffort: "medium", supportedReasoningEfforts: [{ reasoningEffort: "medium", description: "Balanced" }] },
-        { id: "gpt-5.6-luna", model: "gpt-5.6-luna", displayName: "GPT-5.6 Luna", description: "Fast", isDefault: false, defaultReasoningEffort: "medium", supportedReasoningEfforts: [{ reasoningEffort: "medium", description: "Balanced" }] },
+        { id: "gpt-5.6-sol", model: "gpt-5.6-sol", displayName: "GPT-5.6 Sol", description: "Highest capability", isDefault: true, defaultReasoningEffort: "medium", supportedReasoningEfforts: [{ reasoningEffort: "low", description: "Lighter" }, { reasoningEffort: "medium", description: "Balanced" }, { reasoningEffort: "high", description: "Deeper" }, { reasoningEffort: "xhigh", description: "Extended" }], serviceTiers: [{ id: "priority", name: "Fast", description: "1.5× speed, higher usage" }], defaultServiceTier: "default" },
+        { id: "gpt-5.6-terra", model: "gpt-5.6-terra", displayName: "GPT-5.6 Terra", description: "Balanced", isDefault: false, defaultReasoningEffort: "medium", supportedReasoningEfforts: [{ reasoningEffort: "medium", description: "Balanced" }], serviceTiers: [], defaultServiceTier: "default" },
+        { id: "gpt-5.6-luna", model: "gpt-5.6-luna", displayName: "GPT-5.6 Luna", description: "Fast", isDefault: false, defaultReasoningEffort: "medium", supportedReasoningEfforts: [{ reasoningEffort: "medium", description: "Balanced" }], serviceTiers: [], defaultServiceTier: "default" },
       ] : [];
       return { adapter: "codex", source: "engine-catalog", fetchedAt: new Date().toISOString(), models, nextCursor: null };
     },
@@ -357,7 +358,8 @@ export function createMockRuntime() {
           permissionMode: "acceptEdits",
           model: normalized.options.model,
           modelMode: normalized.options.modelMode,
-          reasoningEffort: normalized.options.reasoningEffort,
+        reasoningEffort: normalized.options.reasoningEffort,
+        serviceTier: normalized.options.serviceTier,
           profileId: normalized.options.profileId,
           agentRevisionId: normalized.options.agentRevisionId,
           contextFiles: normalized.options.contextFiles || [],

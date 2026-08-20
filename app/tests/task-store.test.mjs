@@ -942,7 +942,7 @@ test("imports an external Session atomically, normalizes content, and deduplicat
   };
   try {
     const store = createTaskStore(databasePath, () => savedAt);
-    const first = store.importExternalSession({ workspaceId: "workspace-a", workspaceBranch: "main", preview, mode: "continue" });
+    const first = store.importExternalSession({ workspaceId: "workspace-a", workspaceBranch: "main", preview, mode: "copy" });
     assert.equal(first.created, true);
     assert.equal(first.task.importedSession.sessionLink.nativeSessionId, "thread-import-1");
     assert.match(first.task.messages[1].text, /\[工具调用: shell\]/);
@@ -951,7 +951,7 @@ test("imports an external Session atomically, normalizes content, and deduplicat
     const state = store.load("workspace-a");
     state.tasks[0].messages.push({ id: "rux-owned", role: "user", text: "local note", time: "现在", createdAt: savedAt });
     store.save(state);
-    const repeated = store.importExternalSession({ workspaceId: "workspace-a", workspaceBranch: "main", preview, mode: "continue" });
+    const repeated = store.importExternalSession({ workspaceId: "workspace-a", workspaceBranch: "main", preview, mode: "copy" });
     assert.equal(repeated.created, false);
     assert.equal(repeated.revision.id, first.revision.id);
     assert.equal(store.load("workspace-a").tasks.length, 1);
@@ -977,7 +977,7 @@ test("imports an external Session atomically, normalizes content, and deduplicat
   }
 });
 
-test("allows an unavailable native Session only as a persistent read-only Projection", async () => {
+test("imports an unavailable native Session as an editable Rux-owned copy", async () => {
   const temporaryRoot = await mkdtemp(join(tmpdir(), "rux-session-import-readonly-"));
   const databasePath = join(temporaryRoot, "state.sqlite3");
   const preview = {
@@ -989,17 +989,14 @@ test("allows an unavailable native Session only as a persistent read-only Projec
   };
   try {
     const store = createTaskStore(databasePath, () => savedAt);
-    assert.throws(
-      () => store.importExternalSession({ workspaceId: "workspace-a", workspaceBranch: "main", preview, mode: "continue" }),
-      (error) => error.code === "SESSION_RESUME_UNAVAILABLE",
-    );
-    const imported = store.importExternalSession({ workspaceId: "workspace-a", workspaceBranch: "main", preview, mode: "view" });
-    assert.equal(imported.binding.status, "native-unavailable");
-    assert.equal(imported.task.importedSession.mode, "view");
+    const imported = store.importExternalSession({ workspaceId: "workspace-a", workspaceBranch: "main", preview, mode: "copy" });
+    assert.equal(imported.binding.status, "copied");
+    assert.equal(imported.task.importedSession.mode, "copy");
+    assert.equal(imported.task.status, "waiting");
     store.close();
     const reopened = createTaskStore(databasePath, () => savedAt);
     assert.equal(reopened.load("workspace-a").tasks[0].messages[0].text, "still local");
-    assert.equal(reopened.load("workspace-a").tasks[0].importedSession.status, "native-unavailable");
+    assert.equal(reopened.load("workspace-a").tasks[0].importedSession.status, "copied");
     reopened.close();
   } finally {
     await rm(temporaryRoot, { recursive: true, force: true });
@@ -1151,8 +1148,8 @@ test("previews and executes scoped local data lifecycle without mutating the Nat
     assert.equal(store.load("workspace-a").tasks[0].importedSession.status, "unlinked");
     assert.equal(store.listSessionRevisions("workspace-a", imported.task.id).revisions.length, 1, "unlink retains Projection revisions");
 
-    const relinked = store.importExternalSession({ workspaceId: "workspace-a", workspaceBranch: "main", preview, mode: "continue" });
-    assert.equal(relinked.binding.status, "linked");
+    const relinked = store.importExternalSession({ workspaceId: "workspace-a", workspaceBranch: "main", preview, mode: "copy" });
+    assert.equal(relinked.binding.status, "copied");
     const state = store.load("workspace-a");
     state.tasks[0].messages.push({ id: "rux-local-note", role: "user", text: "Rux-owned note", time: "现在", createdAt: savedAt });
     state.tasks[0].runs.push({

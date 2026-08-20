@@ -282,14 +282,14 @@ test("standalone JSONL Runtime runs Codex and custom Agent profiles over stdio",
       activeWorkspaceId: createHash("sha256").update(realpathSync(workspace)).digest("hex").slice(0, 12),
       nativeSessionId: "thread-discovered-1",
       limit: 50,
-      mode: "continue",
+      mode: "copy",
     },
   })}\n`);
   const imported = await waitFor(messages, (message) =>
     message.kind === "response" && message.id === "session-import");
   assert.equal(imported.ok, true);
   assert.equal(imported.result.created, true);
-  assert.equal(imported.result.task.importedSession.mode, "continue");
+  assert.equal(imported.result.task.importedSession.mode, "copy");
   assert.equal(imported.result.task.importedSession.sessionLink.nativeSessionId, "thread-discovered-1");
 
   child.stdin.write(`${JSON.stringify({ kind: "request", id: "task-load-imported", method: "task.state.load", params: {} })}\n`);

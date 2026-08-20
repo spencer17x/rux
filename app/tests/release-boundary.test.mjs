@@ -239,7 +239,6 @@ test("clean startup waits for explicit project and account actions", async () =>
   assert.doesNotMatch(accountsSource, /一键同步|onSync|登录 Codex|Codex 设置/);
   assert.match(rendererSource, /if \(value === "codex"\) return "Codex"/);
   assert.match(rendererSource, /aria-label="Rux 推理强度"/);
-  assert.match(rendererSource, /这是仅查看的导入会话，原会话的模型、权限和消息不会在这里修改/);
   assert.match(rendererSource, /const createBlankTask = \(choice, workspace = workspaceState\.active, sourceTask = selectedTask, initialDraft = "", boardSource = null\) =>/);
   assert.match(rendererSource, /else startEditableConversation\(\);/);
   assert.match(rendererSource, /className="project-new-task-button"/);
@@ -255,6 +254,10 @@ test("clean startup waits for explicit project and account actions", async () =>
   assert.match(rendererSource, /title: "新对话"/);
   assert.match(rendererSource, /messages: \[\],\s+plan: \[\],\s+activity: \[\],\s+runs: \[\]/);
   assert.match(rendererSource, /placeholder=\{interactionLockReason \? "当前会话不可编辑" : "随心输入"\}/);
+  assert.match(rendererSource, /onImport\("copy"\)/);
+  assert.match(rendererSource, /已导入为 Rux 独立副本/);
+  assert.match(rendererSource, /importedCopyPrompt\(taskSnapshot, prompt\)/);
+  assert.doesNotMatch(rendererSource, /仅导入查看|导入并继续|本地只读投影|这是仅查看的导入会话/);
   assert.match(rendererSource, /aria-label="添加文件和更多"[^>]+disabled=\{!canRun \|\| isActive\}/);
   assert.match(rendererSource, /role="menu" aria-label="如何批准 Rux 操作"/);
   assert.match(rendererSource, /className=\{`permission-chip[^>]+disabled=\{!canRun \|\| isActive\}/);
@@ -263,7 +266,7 @@ test("clean startup waits for explicit project and account actions", async () =>
   assert.match(rendererSource, /ruxAdapterLabel\(run\.adapter\)/);
   assert.match(rendererSource, /ruxAdapterLabel\(request\.provider\)/);
   assert.match(rendererSource, /ruxAdapterLabel\(inspectedRun\.agentSnapshot\.backend\)/);
-  assert.match(rendererSource, /displayModelOptions\.map\(\(model\) => <button/);
+  assert.match(rendererSource, /displayModelOptions\.map\(\(model\) => \{/);
   assert.match(rendererSource, /showcaseMode \? \{\} : readUiPreferences\(\)/);
   assert.match(rendererSource, /agentDetectionCacheKey = "rux\.agent-detection\.v1"/);
   assert.match(rendererSource, /sanitizeAgentDetectionCache/);
@@ -328,10 +331,26 @@ test("composer clipboard images are bounded, persisted by Main, and sent as Code
   assert.match(codexSource, /type: "localImage", path/);
 });
 
-test("composer loads a real model menu and bottom/right panels are mutually exclusive", async () => {
+test("composer loads the Codex nested model menu and bottom/right panels are mutually exclusive", async () => {
   const rendererSource = await readFile(path.join(root, "src/App.jsx"), "utf8");
   const terminalSource = await readFile(path.join(root, "src/TerminalView.jsx"), "utf8");
-  assert.match(rendererSource, /role="listbox" aria-label="可用模型"/);
+  const protocolSource = await readFile(path.join(root, "src/shared/protocol.ts"), "utf8");
+  const codexSource = await readFile(path.join(root, "src/electron/codex-app-server-adapter.ts"), "utf8");
+  assert.match(rendererSource, /role="menu" aria-label="模型与运行设置"/);
+  assert.match(rendererSource, /<strong>模型<\/strong>/);
+  assert.match(rendererSource, /<strong>推理强度<\/strong>/);
+  assert.match(rendererSource, /<strong>速度<\/strong>/);
+  assert.match(rendererSource, /role="menu" aria-label="模型"/);
+  assert.match(rendererSource, /role="menu" aria-label="推理强度"/);
+  assert.match(rendererSource, /role="menu" aria-label="速度"/);
+  assert.match(rendererSource, /role="group" aria-label="高级模型设置"/);
+  assert.match(rendererSource, /aria-label="高级推理强度"/);
+  assert.match(rendererSource, /onServiceTierChange\(tier\.id\)/);
+  assert.doesNotMatch(rendererSource, /className="composer-model-menu" role="listbox"/);
+  assert.match(protocolSource, /serviceTiers: z\.array\(codexServiceTierInfoSchema\)/);
+  assert.match(protocolSource, /serviceTier: z\.string\(\)\.trim\(\)\.min\(1\)\.max\(64\)\.optional\(\)/);
+  assert.match(codexSource, /serviceTier: params\.serviceTier \?\? null/);
+  assert.match(codexSource, /\.\.\.\(params\.serviceTier \? \{ serviceTier: params\.serviceTier \} : \{\}\)/);
   assert.match(rendererSource, /void onRequestModelCatalog\?\.\(\)/);
   assert.match(rendererSource, /runtime\.listAgentModels\(\{ adapter: "codex", limit: 100/);
   assert.match(rendererSource, /if \(!terminalOpen\) setInspectorOpen\(false\)/);
@@ -379,17 +398,19 @@ test("external Session discovery is explicit, Workspace-filtered, and cannot exp
   assert.match(mainSource, /migrateImportedSessionWorkspace/);
 });
 
-test("external Session refresh is user-triggered, versioned, and mediated by Main", async () => {
+test("legacy external Session refresh remains internal and is absent from the Rux-owned copy UI", async () => {
   const rendererSource = await readFile(path.join(root, "src/App.jsx"), "utf8");
   const preloadSource = await readFile(path.join(root, "src/electron/preload.ts"), "utf8");
   const mainSource = await readFile(path.join(root, "src/electron/main.ts"), "utf8");
 
-  assert.match(rendererSource, /刷新原生会话<\/button>/);
+  const timelineStart = rendererSource.indexOf("function TaskTimeline(");
+  const timelineEnd = rendererSource.indexOf("\nfunction Composer(", timelineStart);
+  const timelineSource = rendererSource.slice(timelineStart, timelineEnd);
+  assert.doesNotMatch(timelineSource, /刷新原生会话|本地只读投影|原会话不可用/);
   assert.match(rendererSource, /确认按原生会话重建<\/button>/);
   assert.match(rendererSource, /恢复此本地版本<\/button>/);
   assert.match(rendererSource, /window\.confirm\("按原生会话重建当前本地 Projection？旧 Revision、Rux Run、审批和 Task 元数据会保留，Provider 原会话不会被修改/);
   assert.match(rendererSource, /window\.confirm\("恢复这个本地 Projection Revision？这不会修改原生会话，当前版本也会继续保留/);
-  assert.match(rendererSource, /onClick=\{onRefreshSession\}/);
   assert.match(preloadSource, /refreshSession\(params: SessionRefreshParams\)[\s\S]*ipcRenderer\.invoke\(IPC_CHANNELS\.sessionRefresh/);
   assert.match(mainSource, /ipcMain\.handle\(IPC_CHANNELS\.sessionRefresh/);
   assert.match(mainSource, /method: "session\.preview"/);
@@ -469,7 +490,7 @@ test("renderer keeps the Codex session fixed while exposing the reference model 
   assert.match(rendererSource, /onClick=\{onOpenAccounts\}>账户与登录<\/button>/);
   assert.match(rendererSource, /const preflight = runPreflight\(selectedTask, prompt\)/);
   assert.match(rendererSource, /const sessionLink = latestCompatibleSessionLink\(taskSnapshot\);\s+const sessionId = sessionLink\?\.nativeSessionId/);
-  assert.match(rendererSource, /model: requestedModel,\s+modelMode: taskSnapshot\.model === "Auto" \? "auto" : "fixed",\s+modelSource: taskSnapshot\.modelSource,\s+modelVerificationStatus: taskSnapshot\.modelVerificationStatus,\s+reasoningEffort: taskSnapshot\.reasoningEffort \|\| undefined,\s+sessionId,\s+profileId: taskSnapshot\.agentProfileId,\s+agentRevisionId:/);
+  assert.match(rendererSource, /model: requestedModel,\s+modelMode: taskSnapshot\.model === "Auto" \? "auto" : "fixed",\s+modelSource: taskSnapshot\.modelSource,\s+modelVerificationStatus: taskSnapshot\.modelVerificationStatus,\s+reasoningEffort: taskSnapshot\.reasoningEffort \|\| undefined,\s+serviceTier: taskSnapshot\.serviceTier \|\| undefined,\s+sessionId,\s+profileId: taskSnapshot\.agentProfileId,\s+agentRevisionId:/);
   assert.match(rendererSource, /runtime\.listAgentModels\(\{ adapter: "codex", limit: 100/);
   assert.match(rendererSource, /const \[drafts, setDrafts\] = useState/);
   assert.match(rendererSource, /composerInputRef\.current\?\.focus\(\)/);
@@ -609,16 +630,17 @@ test("renderer makes Native Session resume failure recoverable without silent fa
   assert.match(runtime, /modelMode: normalized\.options\.modelMode/);
 });
 
-test("Native Session writers are serialized and external-writer risk has refresh and branch exits", async () => {
+test("Native Session writers are serialized and imported copies never write the source Session", async () => {
   const main = await readFile(path.join(root, "src/electron/main.ts"), "utf8");
   const runtime = await readFile(path.join(root, "src/electron/runtime.ts"), "utf8");
   const host = await readFile(path.join(root, "src/electron/stdio-runtime.ts"), "utf8");
   const renderer = await readFile(path.join(root, "src/App.jsx"), "utf8");
+  const sessionLinks = await readFile(path.join(root, "src/session-link.js"), "utf8");
   assert.match(main, /requestSingleInstanceLock/);
   assert.match(runtime, /NATIVE_SESSION_WRITE_CONFLICT/);
   assert.match(host, /NATIVE_SESSION_WRITE_CONFLICT/);
-  assert.match(renderer, /原生会话仍可能被其他客户端写入/);
-  assert.match(renderer, /刷新原生会话/);
+  assert.match(renderer, /The original provider session must not be modified/);
+  assert.match(sessionLinks, /link\.nativeSessionId !== importedNativeSessionId/);
   assert.match(renderer, /复制为新任务/);
 });
 

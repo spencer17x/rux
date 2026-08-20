@@ -22,7 +22,7 @@ type LocalProductEvent = {
   occurredAt: string;
   subjectHash?: string;
   engine?: "codex" | "claude-code" | "rux-native" | "mock";
-  mode?: "view" | "continue" | "handoff";
+  mode?: "copy" | "view" | "continue" | "handoff";
   count?: number;
 };
 type StoredState = { version: 1; events: LocalProductEvent[] };

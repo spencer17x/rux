@@ -225,6 +225,7 @@ test("performs the initialize/thread/start/turn/start handshake and streams rich
     prompt: "Inspect the repository",
     model: "fake-model",
     reasoningEffort: "high",
+    serviceTier: "priority",
     permissionMode: "acceptEdits",
     profileId: "profile-1",
     imagePaths: [pastedImage],
@@ -255,6 +256,7 @@ test("performs the initialize/thread/start/turn/start handshake and streams rich
   assert.equal(clientMessages[2].params.approvalsReviewer, "user");
   assert.equal(clientMessages[2].params.sandbox, "workspace-write");
   assert.equal(clientMessages[2].params.model, "fake-model");
+  assert.equal(clientMessages[2].params.serviceTier, "priority");
   assert.equal("effort" in clientMessages[2].params, false);
   assert.equal("reasoningEffort" in clientMessages[2].params, false);
   assert.deepEqual(clientMessages[3].params.input, [
@@ -263,6 +265,7 @@ test("performs the initialize/thread/start/turn/start handshake and streams rich
   ]);
   assert.equal(clientMessages[3].params.model, "fake-model");
   assert.equal(clientMessages[3].params.effort, "high");
+  assert.equal(clientMessages[3].params.serviceTier, "priority");
 
   assert.equal(
     collector.events
@@ -381,6 +384,8 @@ test("lists the Codex model catalog with bounded pagination metadata", async (t)
         { reasoningEffort: "medium", description: "Balanced" },
         { reasoningEffort: "high", description: "Deeper" },
       ],
+      serviceTiers: [{ id: "priority", name: "Fast", description: "Faster responses with higher usage" }],
+      defaultServiceTier: "default",
     }]);
   assert.equal(first.nextCursor, "models-page-2");
 

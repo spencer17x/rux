@@ -1507,11 +1507,6 @@ export class TaskStore {
   importExternalSession(input: ImportExternalSessionInput): SessionImportResult {
     const workspaceId = persistedWorkspaceIdSchema.parse(input.workspaceId);
     const preview = input.preview;
-    if (input.mode === "continue" && preview.resume.status !== "available") {
-      throw Object.assign(new Error(preview.resume.reason || "该原生会话当前不可继续"), {
-        code: "SESSION_RESUME_UNAVAILABLE",
-      });
-    }
     const now = this.#now();
     const identityKey = preview.identityKey;
     const projectionId = `session-projection-${identityKey}`;
@@ -1527,9 +1522,7 @@ export class TaskStore {
       });
     }
     const agentRevisionId = builtInAgentRevisionId(adapter);
-    const status = input.mode === "continue"
-      ? "linked" as const
-      : preview.resume.status === "available" ? "read-only" as const : "native-unavailable" as const;
+    const status = "copied" as const;
     const sessionLink = {
       kind: adapter === "codex" ? "codex-thread" as const : "claude-session" as const,
       engine: adapter,
@@ -1580,7 +1573,7 @@ export class TaskStore {
         },
         taskId,
         workspaceId,
-        mode: input.mode,
+        mode: "copy",
         status,
         latestRevisionId: revision.id,
         createdAt: storedProjection?.created_at ?? now,
@@ -1589,7 +1582,7 @@ export class TaskStore {
       const binding = importedSessionBindingSchema.parse({
         identityKey,
         source: adapter === "codex" ? "codex-import" : "claude-code-import",
-        mode: input.mode,
+        mode: "copy",
         status,
         projectionId,
         currentRevisionId: revision.id,
@@ -1608,8 +1601,8 @@ export class TaskStore {
         id: taskId,
         workspaceId,
         title: preview.metadata.title?.trim() || `${adapter === "codex" ? "Codex" : "Claude Code"} 导入会话`,
-        preview: input.mode === "continue" ? "已关联原生会话，可继续运行" : "已导入本地投影，仅查看",
-        status: input.mode === "continue" ? "waiting" : "completed",
+        preview: "已导入为 Rux 独立副本，可继续运行",
+        status: "waiting",
         updatedAt: "现在",
         updatedAtIso: now,
         createdAt: storedProjection?.created_at ?? preview.metadata.createdAt ?? now,
@@ -1731,11 +1724,10 @@ export class TaskStore {
 
       const activateCandidate = diff.status === "append-only" && candidate;
       const nextRevision = activateCandidate || current;
-      const nextStatus = input.preview.resume.status === "available"
-        ? task.importedSession.mode === "continue" ? "linked" as const : "read-only" as const
-        : "native-unavailable" as const;
+      const nextStatus = "copied" as const;
       const binding = importedSessionBindingSchema.parse({
         ...task.importedSession,
+        mode: "copy",
         status: nextStatus,
         currentRevisionId: nextRevision.id,
         lastReadAt: now,

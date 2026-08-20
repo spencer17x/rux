@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const RUX_PROTOCOL_VERSION = 19 as const;
+export const RUX_PROTOCOL_VERSION = 21 as const;
 
 export const IPC_CHANNELS = {
   request: "rux:runtime:request",
@@ -258,6 +258,12 @@ export interface CodexReasoningEffortOption {
   description: string;
 }
 
+export interface CodexServiceTierInfo {
+  id: string;
+  name: string;
+  description: string;
+}
+
 export interface CodexModelInfo {
   id: string;
   model: string;
@@ -265,6 +271,8 @@ export interface CodexModelInfo {
   description: string;
   supportedReasoningEfforts: CodexReasoningEffortOption[];
   defaultReasoningEffort: ReasoningEffort;
+  serviceTiers: CodexServiceTierInfo[];
+  defaultServiceTier?: string;
   isDefault: boolean;
 }
 
@@ -628,6 +636,7 @@ export interface RunStartParams {
   modelSource?: ModelSource;
   modelVerificationStatus?: ModelVerificationStatus;
   reasoningEffort?: ReasoningEffort;
+  serviceTier?: string;
   permissionMode: PermissionMode;
   sessionId?: string;
   profileId?: string;
@@ -815,9 +824,9 @@ export interface SessionAttributionMigrateResult {
   movedTaskId?: string;
 }
 
-export const sessionImportModes = ["view", "continue"] as const;
+export const sessionImportModes = ["copy", "view", "continue"] as const;
 export type SessionImportMode = (typeof sessionImportModes)[number];
-export const importedSessionStatuses = ["linked", "read-only", "native-unavailable", "unlinked"] as const;
+export const importedSessionStatuses = ["copied", "linked", "read-only", "native-unavailable", "unlinked"] as const;
 export type ImportedSessionStatus = (typeof importedSessionStatuses)[number];
 
 export interface SessionPreviewParams extends SessionReadParams {
@@ -1762,6 +1771,7 @@ export interface PersistedRun {
   permissionMode: PermissionMode;
   model?: string;
   reasoningEffort?: ReasoningEffort;
+  serviceTier?: string;
   sessionId?: string;
   sessionLink?: NativeSessionLink;
   resumeFrom?: NativeSessionLink;
@@ -1816,6 +1826,7 @@ export interface PersistedTask {
   modelSource: ModelSource;
   modelVerificationStatus: ModelVerificationStatus;
   reasoningEffort?: ReasoningEffort;
+  serviceTier?: string;
   contextFiles?: string[];
   branch: string;
   elapsed: string;
@@ -2451,6 +2462,12 @@ export const codexReasoningEffortOptionSchema = z.object({
   description: z.string().max(2_000),
 }).strict();
 
+export const codexServiceTierInfoSchema = z.object({
+  id: z.string().trim().min(1).max(64),
+  name: z.string().trim().min(1).max(120),
+  description: z.string().max(2_000),
+}).strict();
+
 export const codexModelInfoSchema = z.object({
   id: z.string().trim().min(1).max(240),
   model: z.string().trim().min(1).max(240),
@@ -2459,6 +2476,8 @@ export const codexModelInfoSchema = z.object({
   isDefault: z.boolean(),
   defaultReasoningEffort: reasoningEffortSchema,
   supportedReasoningEfforts: z.array(codexReasoningEffortOptionSchema).max(64),
+  serviceTiers: z.array(codexServiceTierInfoSchema).max(16).default([]),
+  defaultServiceTier: z.string().trim().min(1).max(64).optional(),
 }).strict();
 
 export const agentModelListResultSchema = z.object({
@@ -3454,6 +3473,7 @@ export const persistedRunSchema = z.object({
   permissionMode: z.enum(permissionModes),
   model: z.string().max(240).optional(),
   reasoningEffort: reasoningEffortSchema.optional(),
+  serviceTier: z.string().trim().min(1).max(64).optional(),
   sessionId: z.string().max(500).optional(),
   sessionLink: nativeSessionLinkSchema.optional(),
   resumeFrom: nativeSessionLinkSchema.optional(),
@@ -3682,6 +3702,7 @@ export const persistedTaskSchema = z.object({
   modelSource: modelSourceSchema,
   modelVerificationStatus: modelVerificationStatusSchema,
   reasoningEffort: reasoningEffortSchema.optional(),
+  serviceTier: z.string().trim().min(1).max(64).optional(),
   contextFiles: z.array(z.string().min(1).max(4_096)).max(200).default([]),
   branch: z.string().max(1_000),
   elapsed: z.string().max(120),

@@ -29,6 +29,7 @@ export function sessionLinkCompatible(link, task) {
 }
 
 export function latestCompatibleSessionLink(task) {
+  const importedNativeSessionId = task?.importedSession?.sessionLink?.nativeSessionId;
   for (const run of [...(task?.runs || [])].reverse()) {
     const link = run.sessionLink || createNativeSessionLink({
       adapter: run.adapter,
@@ -37,11 +38,7 @@ export function latestCompatibleSessionLink(task) {
       workspaceId: task.workspaceId,
       sessionId: run.sessionId,
     });
-    if (sessionLinkCompatible(link, task)) return link;
-  }
-  const importedLink = task?.importedSession?.sessionLink;
-  if (task?.importedSession?.mode === "continue" && sessionLinkCompatible(importedLink, task)) {
-    return importedLink;
+    if (sessionLinkCompatible(link, task) && link.nativeSessionId !== importedNativeSessionId) return link;
   }
   return undefined;
 }

@@ -79,6 +79,7 @@ export interface CodexAppServerStartParams {
   prompt: string;
   model?: string;
   reasoningEffort?: ReasoningEffort;
+  serviceTier?: string;
   permissionMode: PermissionMode;
   sessionId?: string;
   profileId?: string;
@@ -435,6 +436,12 @@ export class CodexAppServerAdapter {
             };
           })
         : value.supportedReasoningEfforts;
+      const serviceTiers = Array.isArray(value.serviceTiers)
+        ? value.serviceTiers.map((tier, tierIndex) => {
+            if (!isRecord(tier)) throw new Error(`Rux service model/list returned an invalid service tier at ${index}:${tierIndex}`);
+            return { id: tier.id, name: tier.name, description: tier.description };
+          })
+        : [];
       return {
         id: value.id,
         model: value.model,
@@ -443,6 +450,8 @@ export class CodexAppServerAdapter {
         isDefault: value.isDefault,
         defaultReasoningEffort: value.defaultReasoningEffort,
         supportedReasoningEfforts,
+        serviceTiers,
+        ...(stringValue(value.defaultServiceTier) ? { defaultServiceTier: value.defaultServiceTier } : {}),
       };
     });
     return agentModelListResultSchema.parse({
@@ -545,6 +554,7 @@ export class CodexAppServerAdapter {
               threadId: params.sessionId,
               cwd: this.workspaceRoot,
               model: params.model ?? null,
+              serviceTier: params.serviceTier ?? null,
               approvalPolicy: policy.approvalPolicy,
               approvalsReviewer: "user",
               sandbox: policy.sandbox,
@@ -552,6 +562,7 @@ export class CodexAppServerAdapter {
           : {
               cwd: this.workspaceRoot,
               model: params.model ?? null,
+              serviceTier: params.serviceTier ?? null,
               approvalPolicy: policy.approvalPolicy,
               approvalsReviewer: "user",
               sandbox: policy.sandbox,
@@ -596,6 +607,7 @@ export class CodexAppServerAdapter {
           ...(params.imagePaths ?? []).map((path) => ({ type: "localImage", path })),
         ],
         ...(params.model ? { model: params.model } : {}),
+        ...(params.serviceTier ? { serviceTier: params.serviceTier } : {}),
         ...(params.reasoningEffort ? { effort: params.reasoningEffort } : {}),
       });
       const turnResult = isRecord(rawTurnResult) ? rawTurnResult : {};

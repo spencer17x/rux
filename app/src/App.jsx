@@ -262,8 +262,13 @@ function ruxModelLabel(value) {
 
 function codexCatalogModel(models, selection) {
   if (!Array.isArray(models) || !models.length) return undefined;
-  if (!selection || String(selection).toLowerCase() === "codex default") {
+  if (!selection || /^(codex|rux) default$/i.test(String(selection))) {
     return models.find((model) => model.isDefault) || models[0];
+  }
+  if (/^gpt-?5\.6$/i.test(String(selection))) {
+    return models.find((model) => /5\.6[-_ ]?sol/i.test(`${model.id} ${model.model} ${model.displayName}`))
+      || models.find((model) => model.isDefault)
+      || models[0];
   }
   return models.find((model) => model.model === selection || model.id === selection);
 }
@@ -272,14 +277,41 @@ function codexReasoningOptions(models, selection) {
   return codexCatalogModel(models, selection)?.supportedReasoningEfforts || [];
 }
 
+function codexModelDisplayName(model) {
+  const value = String(model?.displayName || model?.model || model || "")
+    .replace(/^GPT-/i, "")
+    .replace(/^gpt-/i, "")
+    .replace(/[-_]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return value || "Codex";
+}
+
+function codexServiceTierOptions(models, selection) {
+  const model = codexCatalogModel(models, selection);
+  const raw = Array.isArray(model?.serviceTiers) ? model.serviceTiers : [];
+  const standard = raw.find((tier) => /^(default|standard|auto)$/i.test(tier.id) || /standard|默认|标准/i.test(tier.name));
+  const options = [{ id: "", name: "标准", description: standard?.description || "默认速度" }];
+  for (const tier of raw) {
+    if (tier === standard) continue;
+    const fast = /fast|priority/i.test(tier.id) || /fast|快速/i.test(tier.name);
+    options.push({
+      id: tier.id,
+      name: fast ? "快速" : tier.name,
+      description: fast ? "1.5 倍速度，用量更多" : tier.description,
+    });
+  }
+  return options;
+}
+
 function reasoningEffortLabel(value) {
   const labels = {
     minimal: "最低",
-    low: "低",
+    low: "轻度",
     medium: "中",
     high: "高",
-    xhigh: "超高",
-    ultra: "Ultra",
+    xhigh: "极高",
+    ultra: "最高",
   };
   return labels[value] || value || "模型默认";
 }
@@ -396,6 +428,24 @@ function conversationHistoryForRun(task, prompt) {
   const last = history.at(-1);
   if (last?.role === "user" && last.content.trim() === String(prompt || "").trim()) history.pop();
   return history;
+}
+
+function importedCopyPrompt(task, prompt) {
+  if (!task.importedSession) return prompt;
+  const maximum = 80_000;
+  const records = [];
+  let size = 0;
+  for (const message of [...(task.messages || [])].reverse()) {
+    if (!["user", "assistant"].includes(message.role)) continue;
+    const content = String(message.text || "").trim().slice(0, 8_000);
+    if (!content) continue;
+    const record = `${message.role === "user" ? "User" : "Assistant"}: ${content}`;
+    if (size + record.length > maximum) break;
+    records.unshift(record);
+    size += record.length;
+  }
+  if (!records.length) return prompt;
+  return `This Rux task is an independent copy of an imported conversation. The original provider session must not be modified. Use the copied transcript below only as conversation context.\n\n<imported_conversation>\n${records.join("\n\n")}\n</imported_conversation>\n\nCurrent user request:\n${prompt}`;
 }
 
 function withoutSupersededWorkspaceStarter(tasks, workspaceId) {
@@ -609,6 +659,7 @@ function recordRuntimeEvent(task, event) {
     providerConnection: taskConnection,
     ...taskModelState,
     ...(task.reasoningEffort ? { reasoningEffort: task.reasoningEffort } : {}),
+    ...(task.serviceTier ? { serviceTier: task.serviceTier } : {}),
     contextFiles: [],
     gitRestores: [],
     startedAt: now,
@@ -806,16 +857,8 @@ function recordRuntimeEvent(task, event) {
   }
 
   nextRun = { ...nextRun, ...modelStateAfterRun(nextRun, event) };
-  const importedResumeUnavailable = event.type === "run.failed"
-    && Boolean(task.importedSession)
-    && Boolean(nextRun.resumeFailure)
-    && !nextRun.events.some((record) => record.type === "run.metadata");
-
   return {
     ...task,
-    ...(importedResumeUnavailable
-      ? { importedSession: { ...task.importedSession, status: "native-unavailable" } }
-      : {}),
     ...(event.type === "run.agent-snapshot" && event.profile.id === taskRevisionId
       ? { agentRevisionSnapshot: event.profile }
       : {}),
@@ -1675,7 +1718,7 @@ function WorkspaceChangesCard({ state, onOpenChanges, onRestoreChanges }) {
   );
 }
 
-function TaskTimeline({ task, streamingMessages = [], changes, onOpenChanges, onRestoreChanges, onOpenRun, onWaitingAction, onPermissionDecision, permissionBusy, permissionError, taskActionError, onDismissTaskActionError, agentRevisionUpdate, onCreateTaskWithLatestAgent, onRetrySession, onCreateFreshTask, onRefreshSession, onOpenSessionVersions, onOpenHandoff, onOpenLocalData, sessionSyncBusy = false, workspacePlaceholder = false }) {
+function TaskTimeline({ task, streamingMessages = [], changes, onOpenChanges, onRestoreChanges, onOpenRun, onWaitingAction, onPermissionDecision, permissionBusy, permissionError, taskActionError, onDismissTaskActionError, agentRevisionUpdate, onCreateTaskWithLatestAgent, onRetrySession, onCreateFreshTask, onOpenHandoff, onOpenLocalData, workspacePlaceholder = false }) {
   const isWaiting = task.status === "waiting";
   const isCompleted = task.status === "completed";
   const hasOutcome = task.status === "completed" || task.status === "failed";
@@ -1769,11 +1812,9 @@ function TaskTimeline({ task, streamingMessages = [], changes, onOpenChanges, on
         {task.importedSession ? (
           <section className="agent-revision-notice session-imported-notice" aria-label="导入的 Agent 会话">
             <span className="agent-revision-notice-icon"><History size={15} /></span>
-            <span><strong>{task.importedSession.status === "unlinked" ? "已解除关联，本地内容仍保留" : task.importedSession.status === "native-unavailable" ? "原会话不可用，本地投影仍可查看" : task.importedSession.mode === "continue" ? "已关联原生会话" : "本地只读投影"}</strong><small>{task.importedSession.source === "codex-import" ? "Codex 导入" : "Claude Code 导入"} · 内容保存在 Rux，本地删除不会影响 Provider 原会话。</small></span>
+            <span><strong>已导入为 Rux 独立副本</strong><small>{task.importedSession.source === "codex-import" ? "Codex 导入" : "Claude Code 导入"} · 后续消息使用 Rux 新 Session，原 Provider 会话不会被修改。</small></span>
             <div className="session-imported-actions">
               <button type="button" onClick={onOpenHandoff}><GitCompareArrows size={13} />复制为新任务</button>
-              <button type="button" onClick={onRefreshSession} disabled={sessionSyncBusy || task.importedSession.status === "unlinked"}>{sessionSyncBusy ? <LoaderCircle size={13} className="status-running" /> : <RefreshCw size={13} />}刷新原生会话</button>
-              <button type="button" onClick={onOpenSessionVersions} disabled={sessionSyncBusy}><History size={13} />版本</button>
               <button type="button" onClick={onOpenLocalData}><Database size={13} />管理本地数据</button>
             </div>
           </section>
@@ -1945,8 +1986,9 @@ function TaskTimeline({ task, streamingMessages = [], changes, onOpenChanges, on
   );
 }
 
-function Composer({ task, draft, onDraft, onSend, onAgentChange, onModelChange, onReasoningEffortChange, onPermissionChange, onOpenAccounts, onChooseContextFiles, onRemoveContextFile, onPasteImages, pendingImages = [], onRemoveImage, onRequestModelCatalog, modelCatalogLoading = false, contextBusy = false, interactionLockReason = "", focusRef, agentChoices, codexModels, codexCatalog, canRun = true, canSwitchAgent = true }) {
+function Composer({ task, draft, onDraft, onSend, onAgentChange, onModelChange, onReasoningEffortChange, onServiceTierChange, onPermissionChange, onOpenAccounts, onChooseContextFiles, onRemoveContextFile, onPasteImages, pendingImages = [], onRemoveImage, onRequestModelCatalog, modelCatalogLoading = false, contextBusy = false, interactionLockReason = "", focusRef, agentChoices, codexModels, codexCatalog, canRun = true, canSwitchAgent = true }) {
   const [optionsOpen, setOptionsOpen] = useState("");
+  const [modelMenuSection, setModelMenuSection] = useState("");
   const [dictating, setDictating] = useState(false);
   const [manualModel, setManualModel] = useState(task.model || "");
   const composerRef = useRef(null);
@@ -1957,28 +1999,38 @@ function Composer({ task, draft, onDraft, onSend, onAgentChange, onModelChange, 
   const taskAutoModelPolicy = task.agentRevisionSnapshot?.autoModelPolicy
     || (selectedAgentChoice?.agentRevisionId === task.agentRevisionId ? selectedAgentChoice.autoModelPolicy : undefined);
   const selectedAgentAvailable = Boolean(selectedAgentChoice?.available);
+  const selectedCatalogModel = codexCatalogModel(codexModels, task.model);
+  const taskUsesDefaultModel = /^(codex|rux) default$/i.test(String(task.model || ""));
+  const effectiveTaskModel = taskUsesDefaultModel && selectedCatalogModel ? selectedCatalogModel.model : task.model;
   const submit = () => {
     if (!isActive && selectedAgentAvailable && (draft.trim() || pendingImages.length)) onSend();
   };
   const modelOptions = Array.from(new Set([
-    task.model,
+    effectiveTaskModel,
     ...(taskAutoModelPolicy ? ["Auto"] : []),
     ...(selectedAgentChoice?.catalogModels || []).map((item) => item.model || item.id),
     ...(selectedAgentChoice?.verifiedModels || []).map((item) => item.model),
     ...(runtimeAdapterForTask(task) === "codex"
-      ? ["Rux default", ...(codexModels || []).map((model) => model.model)]
+      ? [...((codexModels || []).length ? [] : ["Rux default"]), ...(codexModels || []).map((model) => model.model)]
       : runtimeAdapterForTask(task) === "claude-code" ? ["Claude default"] : ["Rux prototype"]),
   ].filter(Boolean)));
   const reasoningOptions = runtimeAdapterForTask(task) === "codex"
     ? codexReasoningOptions(codexModels, task.model)
     : [];
+  const serviceTierOptions = runtimeAdapterForTask(task) === "codex"
+    ? codexServiceTierOptions(codexModels, task.model)
+    : [];
   const permissionVisualLabel = permissionOptions.find((option) => option.id === task.permissionMode)?.label || "请求批准";
   const modelVisualLabel = (model) => {
     const value = String(model || "");
-    if (/^(codex|rux) default$/i.test(value)) return "Codex 中";
+    if (/^(codex|rux) default$/i.test(value)) {
+      if (!selectedCatalogModel) return "Codex 中";
+      const effort = task.reasoningEffort || selectedCatalogModel.defaultReasoningEffort;
+      return `${codexModelDisplayName(selectedCatalogModel)}${effort ? ` ${reasoningEffortLabel(effort)}` : ""}`;
+    }
     const catalogEntry = (codexModels || []).find((item) => item.model === value || item.id === value);
     if (catalogEntry) {
-      const name = String(catalogEntry.displayName || catalogEntry.model).replace(/^GPT-/i, "");
+      const name = codexModelDisplayName(catalogEntry);
       const effort = task.reasoningEffort || catalogEntry.defaultReasoningEffort;
       return `${name}${effort ? ` ${reasoningEffortLabel(effort)}` : ""}`;
     }
@@ -1991,14 +2043,27 @@ function Composer({ task, draft, onDraft, onSend, onAgentChange, onModelChange, 
   };
   const displayModelOptions = modelOptions.filter((model, index, items) =>
     items.findIndex((candidate) => modelVisualLabel(candidate) === modelVisualLabel(model)) === index);
+  const selectedModelName = taskUsesDefaultModel
+    ? codexModelDisplayName(selectedCatalogModel || "Codex")
+    : codexModelDisplayName(selectedCatalogModel || task.model);
+  const selectedReasoning = task.reasoningEffort || selectedCatalogModel?.defaultReasoningEffort || "medium";
+  const selectedReasoningIndex = Math.max(0, reasoningOptions.findIndex((option) => option.reasoningEffort === selectedReasoning));
+  const advancedProgress = reasoningOptions.length > 1 ? `${(selectedReasoningIndex / (reasoningOptions.length - 1)) * 100}%` : "0%";
+  const selectedServiceTier = serviceTierOptions.find((tier) => tier.id === (task.serviceTier || "")) || serviceTierOptions[0];
 
   useEffect(() => {
     if (!optionsOpen) return undefined;
     const close = (event) => {
-      if (!composerRef.current?.contains(event.target)) setOptionsOpen(false);
+      if (!composerRef.current?.contains(event.target)) {
+        setOptionsOpen("");
+        setModelMenuSection("");
+      }
     };
     const closeOnEscape = (event) => {
-      if (event.key === "Escape") setOptionsOpen(false);
+      if (event.key === "Escape") {
+        if (modelMenuSection) setModelMenuSection("");
+        else setOptionsOpen("");
+      }
     };
     document.addEventListener("pointerdown", close, true);
     document.addEventListener("keydown", closeOnEscape, true);
@@ -2006,14 +2071,17 @@ function Composer({ task, draft, onDraft, onSend, onAgentChange, onModelChange, 
       document.removeEventListener("pointerdown", close, true);
       document.removeEventListener("keydown", closeOnEscape, true);
     };
-  }, [optionsOpen]);
+  }, [modelMenuSection, optionsOpen]);
 
   useEffect(() => {
     if (optionsOpen === "more") setManualModel(task.model || "");
   }, [optionsOpen, task.id, task.model]);
 
   useEffect(() => {
-    if (!canRun || isActive) setOptionsOpen(false);
+    if (!canRun || isActive) {
+      setOptionsOpen(false);
+      setModelMenuSection("");
+    }
   }, [canRun, isActive]);
 
   const missingFromCatalog = runtimeAdapterForTask(task) === "codex" && catalogModelMissing(task, codexCatalog);
@@ -2066,12 +2134,13 @@ function Composer({ task, draft, onDraft, onSend, onAgentChange, onModelChange, 
               type="button"
               className="composer-model-select"
               aria-label="选择模型"
-              aria-haspopup="listbox"
+              aria-haspopup="menu"
               aria-expanded={optionsOpen === "model"}
               disabled={!canRun || isActive}
               onClick={() => {
                 const opening = optionsOpen !== "model";
                 setOptionsOpen(opening ? "model" : "");
+                setModelMenuSection("");
                 if (opening) void onRequestModelCatalog?.();
               }}
             >
@@ -2124,17 +2193,65 @@ function Composer({ task, draft, onDraft, onSend, onAgentChange, onModelChange, 
           </div>
         ) : null}
         {optionsOpen === "model" ? (
-          <div className="composer-model-menu" role="listbox" aria-label="可用模型">
-            {modelCatalogLoading ? <div className="composer-model-loading" role="status"><LoaderCircle size={14} className="status-running" />正在加载模型…</div> : null}
-            {displayModelOptions.map((model) => <button
-              type="button"
-              role="option"
-              aria-selected={model === task.model}
-              className={model === task.model ? "is-selected" : ""}
-              key={model}
-              onClick={() => { onModelChange(model); setOptionsOpen(""); }}
-            ><span className="composer-model-check">{model === task.model ? <Check size={14} /> : null}</span><span>{modelVisualLabel(model)}</span></button>)}
-            {!modelCatalogLoading && codexCatalog.error ? <div className="composer-model-error" role="alert">{codexCatalog.error}</div> : null}
+          <div className="composer-model-popover">
+            {modelMenuSection === "advanced" ? (
+              <div className="composer-model-advanced-panel" role="group" aria-label="高级模型设置">
+                <header><button type="button" onClick={() => setModelMenuSection("")}><strong>高级</strong><ChevronRight size={15} /></button><Zap size={17} /></header>
+                <input
+                  type="range"
+                  min="0"
+                  max={Math.max(0, reasoningOptions.length - 1)}
+                  step="1"
+                  value={selectedReasoningIndex}
+                  disabled={reasoningOptions.length < 2}
+                  aria-label="高级推理强度"
+                  style={{ "--range-progress": advancedProgress }}
+                  onChange={(event) => onReasoningEffortChange(reasoningOptions[Number(event.target.value)]?.reasoningEffort || selectedReasoning)}
+                />
+                <span className="composer-model-advanced-marks" aria-hidden="true">{reasoningOptions.map((option) => <i key={option.reasoningEffort} />)}</span>
+                <small>{reasoningEffortLabel(selectedReasoning)}</small>
+              </div>
+            ) : <div className="composer-model-menu" role="menu" aria-label="模型与运行设置">
+              {modelCatalogLoading ? <div className="composer-model-loading" role="status"><LoaderCircle size={14} className="status-running" />正在加载模型…</div> : null}
+              {!modelCatalogLoading && codexCatalog.error ? <div className="composer-model-error" role="alert">{codexCatalog.error}</div> : null}
+              <button type="button" role="menuitem" className={modelMenuSection === "model" ? "is-active" : ""} aria-haspopup="menu" aria-expanded={modelMenuSection === "model"} onClick={() => setModelMenuSection("model")}>
+                <strong>模型</strong><span>{selectedModelName}</span><ChevronRight size={15} />
+              </button>
+              <button type="button" role="menuitem" className={modelMenuSection === "reasoning" ? "is-active" : ""} aria-haspopup="menu" aria-expanded={modelMenuSection === "reasoning"} onClick={() => setModelMenuSection("reasoning")} disabled={!reasoningOptions.length}>
+                <strong>推理强度</strong><span>{reasoningEffortLabel(selectedReasoning)}</span><ChevronRight size={15} />
+              </button>
+              <button type="button" role="menuitem" className={modelMenuSection === "speed" ? "is-active" : ""} aria-haspopup="menu" aria-expanded={modelMenuSection === "speed"} onClick={() => setModelMenuSection("speed")}>
+                <strong>速度</strong><span>{selectedServiceTier?.name || "标准"}</span><ChevronRight size={15} />
+              </button>
+              <div className="composer-model-divider" />
+              <button type="button" role="menuitem" className="composer-model-advanced" onClick={() => setModelMenuSection("advanced")}>
+                <strong>高级</strong><ChevronRight size={15} />
+              </button>
+            </div>}
+            {modelMenuSection === "model" ? (
+              <div className="composer-model-submenu is-model" role="menu" aria-label="模型">
+                {displayModelOptions.map((model) => {
+                  const selected = model === effectiveTaskModel;
+                  return <button type="button" role="menuitemradio" aria-checked={selected} key={model} onClick={() => { onModelChange(model); setModelMenuSection(""); }}><span>{codexModelDisplayName(codexCatalogModel(codexModels, model) || model)}</span>{selected ? <Check size={15} /> : null}</button>;
+                })}
+              </div>
+            ) : null}
+            {modelMenuSection === "reasoning" ? (
+              <div className="composer-model-submenu is-reasoning" role="menu" aria-label="推理强度">
+                {reasoningOptions.map((option) => {
+                  const selected = option.reasoningEffort === selectedReasoning;
+                  return <button type="button" role="menuitemradio" aria-checked={selected} key={option.reasoningEffort} onClick={() => { onReasoningEffortChange(option.reasoningEffort); setModelMenuSection(""); }}><span><b>{reasoningEffortLabel(option.reasoningEffort)}</b></span>{selected ? <Check size={15} /> : null}</button>;
+                })}
+              </div>
+            ) : null}
+            {modelMenuSection === "speed" ? (
+              <div className="composer-model-submenu is-speed" role="menu" aria-label="速度">
+                {serviceTierOptions.map((tier) => {
+                  const selected = tier.id === (task.serviceTier || "");
+                  return <button type="button" role="menuitemradio" aria-checked={selected} key={tier.id || "default"} onClick={() => { onServiceTierChange(tier.id); setModelMenuSection(""); }}><span><b>{tier.name}</b>{tier.description ? <small>{tier.description}</small> : null}</span>{selected ? <Check size={15} /> : null}</button>;
+                })}
+              </div>
+            ) : null}
           </div>
         ) : null}
         {false && optionsOpen === "agent" ? (
@@ -3955,7 +4072,7 @@ function SessionDiscoveryDialog({ open, workspace, engine, state, previewState, 
   const hasResults = groups.some(([key]) => state.result?.[key]?.length);
   const busy = state.status === "loading" || previewState.status === "loading" || previewState.status === "importing";
   const importedBindingFor = (item) => importedTasks.find((task) => task.importedSession?.identityKey === item.identityKey)?.importedSession;
-  const importedStatusLabel = (binding) => binding?.status === "linked" ? "已关联" : binding?.status === "unlinked" ? "已解除关联 · 可重新导入" : binding?.status === "native-unavailable" ? "原会话不可用" : binding ? "仅查看" : "";
+  const importedStatusLabel = (binding) => binding ? "已导入 Rux" : "";
   return (
     <div className="dialog-backdrop account-dialog-backdrop session-discovery-backdrop" role="presentation" onMouseDown={(event) => {
       if (event.target === event.currentTarget && !busy) onClose();
@@ -4025,15 +4142,14 @@ function SessionDiscoveryDialog({ open, workspace, engine, state, previewState, 
           {previewState.error ? <div className="account-error" role="alert"><CircleAlert size={15} /><span>{previewState.error}</span></div> : null}
           {previewState.preview ? (
             <section className="session-import-preview" aria-label="会话导入预览">
-              <header><span><strong>{previewState.preview.metadata.title || "未命名会话"}</strong><small>已读取 {previewState.preview.messages.length} 条规范化消息{previewState.preview.truncated ? "（达到本地预览上限）" : ""}</small></span><em>{previewState.preview.resume.status === "available" ? "可继续" : "仅查看"}</em></header>
-              <div className="session-import-warning"><CircleAlert size={15} /><span><strong>完整内容将复制到 Rux 本地，且可能包含敏感信息</strong><small>原生会话仍可能被其他客户端写入。导入不会删除、归档或修改 Provider 侧会话；若要隔离后续工作，可稍后通过上下文交接创建新任务。</small></span></div>
+              <header><span><strong>{previewState.preview.metadata.title || "未命名会话"}</strong><small>已读取 {previewState.preview.messages.length} 条规范化消息{previewState.preview.truncated ? "（达到本地预览上限）" : ""}</small></span><em>Rux 独立副本</em></header>
+              <div className="session-import-warning"><CircleAlert size={15} /><span><strong>完整内容将复制到 Rux 本地，且可能包含敏感信息</strong><small>导入不会删除、归档或修改 Provider 侧会话；继续对话时会创建 Rux 管理的新 Session。</small></span></div>
               <div className="session-import-message-list">
                 {previewState.preview.messages.slice(0, 12).map((message) => <article key={message.id} className={`is-${message.role}`}><strong>{message.role === "user" ? "你" : message.role === "assistant" ? "Agent" : message.role === "system" ? "System" : "Tool"}</strong><p>{message.content.map((part) => part.type === "text" ? part.text : part.type === "tool-call" ? `[工具调用: ${part.name}]` : part.type === "tool-result" ? "[工具结果]" : `[暂不支持的内容类型: ${part.providerType}]`).join("\n\n") || "（空消息）"}</p></article>)}
                 {previewState.preview.messages.length > 12 ? <small>其余 {previewState.preview.messages.length - 12} 条将在确认后写入本地 Projection。</small> : null}
               </div>
               <footer>
-                <button type="button" className="secondary-button" onClick={() => onImport("view")} disabled={previewState.status === "importing"}>仅导入查看</button>
-                <button type="button" className="primary-button" onClick={() => onImport("continue")} disabled={previewState.status === "importing" || previewState.preview.resume.status !== "available"}>{previewState.status === "importing" ? <LoaderCircle size={14} className="status-running" /> : <Play size={14} />}导入并继续</button>
+                <button type="button" className="primary-button" onClick={() => onImport("copy")} disabled={previewState.status === "importing"}>{previewState.status === "importing" ? <LoaderCircle size={14} className="status-running" /> : <Play size={14} />}导入到 Rux</button>
               </footer>
             </section>
           ) : null}
@@ -5516,15 +5632,6 @@ export function App() {
     if (!String(prompt || "").trim()) {
       return { ok: false, error: "请先在输入框中描述你想完成的任务。" };
     }
-    if (taskSnapshot.importedSession?.mode === "view") {
-      return { ok: false, error: "这是仅查看的导入会话。若要继续，请重新导入并选择“导入并继续”，或通过上下文交接创建新任务。" };
-    }
-    if (taskSnapshot.importedSession?.status === "native-unavailable") {
-      return { ok: false, error: "原生会话当前不可用。本地 Projection 仍可查看；请先刷新确认，或通过上下文交接创建新任务。" };
-    }
-    if (taskSnapshot.importedSession?.status === "unlinked") {
-      return { ok: false, error: "该会话已解除关联。本地内容仍可查看；请重新导入原生会话，或通过上下文交接创建新任务。" };
-    }
     if (!taskSnapshot.agentRevisionId || !taskSnapshot.providerConnection?.id) {
       return { ok: false, error: "这个任务缺少可验证的 Agent Revision 或 Provider Connection，请新建任务。" };
     }
@@ -5586,9 +5693,12 @@ export function App() {
     const requestedModel = adapter === "claude-code"
       ? modelAlias(taskSnapshot.model)
       : taskSnapshot.model && !taskSnapshot.model.toLowerCase().includes("default") ? taskSnapshot.model : undefined;
-    const pinnedImprovementContext = (taskSnapshot.improvementAssets || []).length
-      ? `Rux approved improvement assets pinned when this Task was created:\n\n${taskSnapshot.improvementAssets.map((asset) => `[${asset.type}] ${asset.name} · v${asset.version}\n${asset.content}`).join("\n\n")}\n\nCurrent user request:\n${prompt}`
+    const independentPrompt = !sessionLink && taskSnapshot.importedSession
+      ? importedCopyPrompt(taskSnapshot, prompt)
       : prompt;
+    const pinnedImprovementContext = (taskSnapshot.improvementAssets || []).length
+      ? `Rux approved improvement assets pinned when this Task was created:\n\n${taskSnapshot.improvementAssets.map((asset) => `[${asset.type}] ${asset.name} · v${asset.version}\n${asset.content}`).join("\n\n")}\n\nCurrent user request:\n${independentPrompt}`
+      : independentPrompt;
     let run;
     try {
       run = runtime.run(pinnedImprovementContext, {
@@ -5599,6 +5709,7 @@ export function App() {
         modelSource: taskSnapshot.modelSource,
         modelVerificationStatus: taskSnapshot.modelVerificationStatus,
         reasoningEffort: taskSnapshot.reasoningEffort || undefined,
+        serviceTier: taskSnapshot.serviceTier || undefined,
         sessionId,
         profileId: taskSnapshot.agentProfileId,
         agentRevisionId: taskSnapshot.agentRevisionId,
@@ -6474,6 +6585,7 @@ export function App() {
           adapter: choice.adapter,
           model: choice.model,
           ...(choice.reasoningEffort ? { reasoningEffort: choice.reasoningEffort } : { reasoningEffort: undefined }),
+          serviceTier: undefined,
           permissionMode: choice.permissionMode || task.permissionMode || "acceptEdits",
           ...(choice.profileId ? { agentProfileId: choice.profileId } : { agentProfileId: undefined }),
           agentRevisionId: choice.agentRevisionId,
@@ -6492,6 +6604,8 @@ export function App() {
       if (task.id !== selectedTask.id) return task;
       const supported = codexReasoningOptions(codexCatalog.models, model)
         .some((option) => option.reasoningEffort === task.reasoningEffort);
+      const supportsServiceTier = codexServiceTierOptions(codexCatalog.models, model)
+        .some((option) => option.id === (task.serviceTier || ""));
       const verifiedModels = verifiedModelHistory(items, runtimeAdapterForTask(task), task.providerConnection?.id);
       const modelState = modelSelectionState(runtimeAdapterForTask(task), model, codexCatalog.models, verifiedModels);
       return {
@@ -6499,6 +6613,7 @@ export function App() {
         model,
         ...modelState,
         ...(supported ? {} : { reasoningEffort: undefined }),
+        ...(supportsServiceTier ? {} : { serviceTier: undefined }),
         updatedAtIso,
       };
     }));
@@ -6508,6 +6623,13 @@ export function App() {
     const updatedAtIso = isoNow();
     setTasks((items) => items.map((task) => task.id === selectedTask.id
       ? { ...task, reasoningEffort: reasoningEffort || undefined, updatedAtIso }
+      : task));
+  };
+
+  const changeSelectedServiceTier = (serviceTier) => {
+    const updatedAtIso = isoNow();
+    setTasks((items) => items.map((task) => task.id === selectedTask.id
+      ? { ...task, serviceTier: serviceTier || undefined, updatedAtIso }
       : task));
   };
 
@@ -7386,13 +7508,7 @@ export function App() {
     : "";
   const composerInteractionLockReason = !appReady
     ? "工作台仍在初始化，完成后即可编辑。"
-    : selectedTask.importedSession?.status === "unlinked"
-      ? "该导入会话已解除关联，当前只保留本地只读内容。"
-      : selectedTask.importedSession?.status === "native-unavailable"
-        ? "原生会话当前不可用，当前只保留本地只读内容。"
-        : selectedTask.importedSession?.mode === "view"
-          ? "这是仅查看的导入会话，原会话的模型、权限和消息不会在这里修改。"
-          : "";
+    : "";
 
   return (
     <div className={`app-shell codex-shell ${sidebarCollapsed ? "sidebar-is-collapsed" : ""}`}>
@@ -7538,11 +7654,8 @@ export function App() {
             onCreateTaskWithLatestAgent={createTaskWithLatestAgent}
             onRetrySession={retryFailedSession}
             onCreateFreshTask={createFreshTaskAfterSessionFailure}
-            onRefreshSession={() => void refreshImportedSession()}
-            onOpenSessionVersions={() => void loadSessionRevisions()}
             onOpenHandoff={openContextHandoff}
             onOpenLocalData={() => void openLocalData("task")}
-            sessionSyncBusy={sessionSyncState.loading}
             workspacePlaceholder={workspaceState.active.placeholder}
           />
           <Composer
@@ -7553,6 +7666,7 @@ export function App() {
             onAgentChange={changeSelectedAgent}
             onModelChange={changeSelectedModel}
             onReasoningEffortChange={changeSelectedReasoningEffort}
+            onServiceTierChange={changeSelectedServiceTier}
             onPermissionChange={changeSelectedPermission}
             onOpenAccounts={openAccounts}
             onChooseContextFiles={chooseContextFiles}

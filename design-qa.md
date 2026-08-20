@@ -1,51 +1,57 @@
-# Account menu parity QA — 2026-08-20
+# Codex nested model menu QA — 2026-08-20
 
 ## Comparison target
 
-- Source visual truth: `design-audit/account-menu-fix-2026-08-20/02-reference-account-menu.png`.
-- User-reported broken state: `design-audit/account-menu-fix-2026-08-20/01-user-reported-broken.png`.
-- Browser-rendered implementation: `design-audit/account-menu-fix-2026-08-20/03-browser-account-menu-fixed.png`.
-- Synced account state: `design-audit/chatgpt-account-sync-2026-08-20/01-browser-synced.png`.
-- Side-by-side comparison input: `design-audit/account-menu-fix-2026-08-20/05-side-by-side-account-menu.png`.
+- Broken Rux state: `design-audit/codex-model-menu-2026-08-20/00-before-flat-list.png`.
+- Source visual truth:
+  - `design-audit/codex-model-menu-2026-08-20/10-reference-model-submenu.png`
+  - `design-audit/codex-model-menu-2026-08-20/11-reference-reasoning-submenu.png`
+  - `design-audit/codex-model-menu-2026-08-20/12-reference-speed-submenu.png`
+  - `design-audit/codex-model-menu-2026-08-20/13-reference-primary-menu.png`
+- Browser implementation:
+  - `design-audit/codex-model-menu-2026-08-20/02-model-submenu.png`
+  - `design-audit/codex-model-menu-2026-08-20/03-speed-submenu.png`
+  - `design-audit/codex-model-menu-2026-08-20/04-advanced-panel.png`
+  - `design-audit/codex-model-menu-2026-08-20/05-reasoning-submenu.png`
+- Side-by-side comparison inputs: `20-comparison-model.png`, `21-comparison-reasoning.png`, `22-comparison-speed.png`, and `23-comparison-advanced.png` in the same evidence folder.
 
 ## Viewport and normalization
 
-- Reference: 2866 × 1624 physical pixels at macOS Retina density, normalized to 1433 × 812.
-- Implementation: 1433 × 812 CSS pixels, device scale factor 1.
-- Comparison input: 2866 × 812, reference on the left and implementation on the right.
-- State: light theme, expanded account menu, expanded sidebar, right Environment panel open.
+- Reference captures: 2866 × 1624 physical pixels at macOS Retina density, normalized to 1433 × 812.
+- Browser implementation: 1433 × 812 CSS pixels, device scale factor 1.
+- Comparison images: 2866 × 812, reference on the left and implementation on the right.
+- State: light theme, editable Codex task, Composer model control open with each submenu selected.
 
 ## Findings
 
-No actionable P0, P1, or P2 findings remain in the account footer and account-menu flow.
+No actionable P0, P1, or P2 findings remain in the scoped Composer model menu.
 
-- Fonts and typography: system UI family, compact 13 px menu labels, profile emphasis, muted status copy, and keyboard shortcut treatment preserve the reference hierarchy without wrapping or truncation.
-- Spacing and layout rhythm: the menu is 224 px wide, begins at x = 9 px, ends at y = 768 px, and uses natural content height, so neither the profile row nor logout row is clipped after removing the Pets row.
-- Colors and visual tokens: white translucent surface, grey border, subtle elevation, muted icons/status and neutral footer background align with the reference treatment.
-- Image and icon fidelity: the flow contains no raster imagery. Existing Lucide icons remain consistent in size, stroke and alignment; the initials avatar is a native UI element rather than a substituted image asset.
-- Copy and content: the former `账户与登录` pseudo-identity and fabricated static usage were removed. Before synchronization the UI shows only verified connection state; after the explicit action it shows the official App Server email when available, plan-backed account state, real remaining quota and synchronization time.
-- Accessibility and interaction: the trigger exposes expanded state; the popover is a named menu; sync, profile, usage, invite, settings and logout are separate named menu items. The sync item exposes busy state and keeps failures in an alert. Profile opens the account dialog and Settings opens the settings surface. The removed Pets feature is absent from both this menu and Settings.
-- Responsive resilience: the menu uses natural content height with a bounded viewport maximum; compact rows fit the target viewport without forced overflow, while shorter viewports retain scrolling.
+- Fonts and typography: compact system UI type, semibold category labels, muted selected values, menu item hierarchy and truncation match the reference intent. Reasoning choices use the target Chinese labels without leaking catalog descriptions into the menu.
+- Spacing and layout rhythm: the old tall single-column picker is replaced by a 224 px primary menu and right-side submenus. Row height, padding, rounded corners, separators, elevation and Composer anchoring follow the reference geometry without clipping the Composer or persistent controls.
+- Colors and tokens: white translucent surfaces, subtle grey borders, neutral hover/active fills, blue range progress and selected checks align with the reference light-theme tokens.
+- Image and icon fidelity: no raster assets are present. Existing Lucide chevrons, checks and lightning icon remain optically consistent with the reference controls; the range input is a real interactive control.
+- Copy and content: primary rows are exactly `模型`, `推理强度`, `速度`, and `高级`. Model names are normalized from live catalog display names; speed copy is `标准 / 默认速度` and `快速 / 1.5 倍速度，用量更多`.
+- Interaction and accessibility: the trigger and primary rows expose menu relationships and expanded state; model, reasoning and speed choices use named radio-menu items; Escape backs out of a submenu before closing the menu; Advanced exposes a labelled discrete slider.
+- Runtime fidelity: `model/list` supplies models, supported reasoning efforts, service tiers and the default service tier. A selected non-default speed tier is persisted on the Task/Run and forwarded as `serviceTier` to `thread/start`, `thread/resume`, and `turn/start`.
 
 ## Comparison history
 
-1. Initial P1: later 35 px row sizing was forced into an older fixed 189 px menu, overflowing both ends and visually clipping the account identity and logout rows.
-2. Initial P1: the footer/profile used `账户与登录` as if it were a user identity, while Usage displayed a hard-coded `剩余 29%` copied from reference evidence.
-3. Fix: restored the reference compact row geometry, natural menu height, x = 9 px / bottom = 44 px / width = 224 px anchoring, and truthful connection-state labels.
-4. Post-fix evidence: `03-browser-account-menu-fixed.png` and `05-side-by-side-account-menu.png`. No remaining P0/P1/P2 mismatch was observed in the scoped account surface.
+1. Initial P1: Rux rendered every model in one tall flat picker, repeated reasoning suffixes on model rows, and omitted the reference primary hierarchy, speed control and advanced state.
+2. Fix: implemented the four-row primary menu, right-side model/reasoning/speed submenus, live catalog service tiers, and the Advanced discrete slider.
+3. First comparison found a P2 reasoning-menu content drift because English catalog descriptions appeared beneath each Chinese effort label, and a P2 advanced-state drift because the native slider used an unstyled black track.
+4. Fix: reasoning rows now match the reference label-only treatment; Advanced uses a discrete blue/grey track, marks and white thumb. Post-fix evidence is recorded in the implementation and comparison images above.
 
 ## Runtime checks
 
-- Browser interactions: account menu open/close, profile → account dialog, account dialog close, and Settings navigation.
-- Browser console after interactions: no errors or warnings.
-- One-click sync browser path: `同步 ChatGPT` changed the Usage row from connection state to `剩余 29%` and displayed the synchronization time without closing the menu.
-- Packaged `Rux.app`: launched against the real local Codex boundary. One explicit click completed without error, exposed an official account email, updated Usage to a real remaining percentage, showed a synchronization timestamp, and kept the removed Pets entry absent. The private email was not copied into QA artifacts.
+- Browser interactions tested: open/close, model submenu, reasoning submenu, speed submenu, Standard/Fast selection, Advanced open/back, Escape behavior.
+- Browser console: no errors or warnings.
+- Packaged `Rux.app`: loaded the live catalog and exposed `5.6 Sol`, `5.6 Terra`, `5.6 Luna`, `5.5`, `5.4`, `5.4 Mini`, and `5.3-Codex-Spark`; the real speed submenu exposed Standard and Fast.
 - `npm test`: passed.
 - `npm run build:desktop`: passed.
 - `npm run package`: passed; package remains unsigned because no Developer ID identity is configured.
 
 ## Follow-up polish
 
-- P3: the reference ChatGPT client can display its host-account profile name (`SuperZ`). Rux intentionally shows the verified provider identity (`ChatGPT`) because repository credential-safety rules prohibit scraping credentials or exposing unapproved account payloads in the Renderer.
+- P3: full-screen task content and Composer horizontal position differ between the supplied reference task and the showcase fixture. Menu geometry and interactions were compared relative to the Composer; dynamic task content was not treated as model-menu drift.
 
 final result: passed
