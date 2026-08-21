@@ -252,6 +252,12 @@ test("clean startup waits for explicit project and account actions", async () =>
   assert.match(rendererSource, /Rux approved improvement assets pinned when this Task was created/);
   assert.doesNotMatch(rendererSource, /composer-interaction-lock/);
   assert.match(rendererSource, /title: "新对话"/);
+  assert.match(rendererSource, /sanitizeCodexCatalogCache/);
+  assert.match(rendererSource, /agentModelListResultSchema\.safeParse\(value\)/);
+  assert.match(rendererSource, /codexCatalog: \{\s+adapter: "codex",\s+source: "engine-catalog"/);
+  assert.match(rendererSource, /if \(choice\.adapter === "codex"\) void loadCodexModels\(\);/);
+  assert.match(rendererSource, /return modelCatalogLoading \? "正在加载" : "选择模型"/);
+  assert.doesNotMatch(rendererSource, /return "Codex 中"/);
   assert.match(rendererSource, /messages: \[\],\s+plan: \[\],\s+activity: \[\],\s+runs: \[\]/);
   assert.match(rendererSource, /placeholder=\{interactionLockReason \? "当前会话不可编辑" : "随心输入"\}/);
   assert.match(rendererSource, /onImport\("copy"\)/);

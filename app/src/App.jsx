@@ -100,6 +100,7 @@ import {
 import { mergeTokenUsage, tokenUsageTotal } from "./token-usage-state.js";
 import { computeLocalSuccessMetrics } from "./local-success-metrics.js";
 import {
+  agentModelListResultSchema,
   agentRevisionIdFor,
   builtInAgentRevisionId,
   defaultModelState,
@@ -345,6 +346,18 @@ function readUiPreferences() {
   } catch {
     return {};
   }
+}
+
+function sanitizeCodexCatalogCache(value) {
+  const parsed = agentModelListResultSchema.safeParse(value);
+  if (!parsed.success || !parsed.data.models.length) return null;
+  return {
+    loading: false,
+    models: parsed.data.models,
+    error: "",
+    source: parsed.data.source,
+    refreshedAt: parsed.data.fetchedAt,
+  };
 }
 
 function sanitizeAgentDetectionCache(value) {
@@ -2024,7 +2037,7 @@ function Composer({ task, draft, onDraft, onSend, onAgentChange, onModelChange, 
   const modelVisualLabel = (model) => {
     const value = String(model || "");
     if (/^(codex|rux) default$/i.test(value)) {
-      if (!selectedCatalogModel) return "Codex 中";
+      if (!selectedCatalogModel) return modelCatalogLoading ? "正在加载" : "选择模型";
       const effort = task.reasoningEffort || selectedCatalogModel.defaultReasoningEffort;
       return `${codexModelDisplayName(selectedCatalogModel)}${effort ? ` ${reasoningEffortLabel(effort)}` : ""}`;
     }
@@ -2044,7 +2057,9 @@ function Composer({ task, draft, onDraft, onSend, onAgentChange, onModelChange, 
   const displayModelOptions = modelOptions.filter((model, index, items) =>
     items.findIndex((candidate) => modelVisualLabel(candidate) === modelVisualLabel(model)) === index);
   const selectedModelName = taskUsesDefaultModel
-    ? codexModelDisplayName(selectedCatalogModel || "Codex")
+    ? selectedCatalogModel
+      ? codexModelDisplayName(selectedCatalogModel)
+      : modelCatalogLoading ? "正在加载" : "选择模型"
     : codexModelDisplayName(selectedCatalogModel || task.model);
   const selectedReasoning = task.reasoningEffort || selectedCatalogModel?.defaultReasoningEffort || "medium";
   const selectedReasoningIndex = Math.max(0, reasoningOptions.findIndex((option) => option.reasoningEffort === selectedReasoning));
@@ -4792,7 +4807,8 @@ export function App() {
       model: /^codex default$/i.test(saved.model || "") ? "Rux default" : saved.model || defaultCodexSettings.model,
     };
   });
-  const [codexCatalog, setCodexCatalog] = useState({ loading: false, models: [], error: "", source: "", refreshedAt: "" });
+  const [codexCatalog, setCodexCatalog] = useState(() => sanitizeCodexCatalogCache(uiPreferences.codexCatalog)
+    || { loading: false, models: [], error: "", source: "", refreshedAt: "" });
   const [streamingMessagesByTask, setStreamingMessagesByTask] = useState({});
   const [taskActionError, setTaskActionError] = useState("");
   const [permissionBusy, setPermissionBusy] = useState("");
@@ -4941,11 +4957,20 @@ export function App() {
         drafts,
         draft: drafts[selectedTaskId] || "",
         codexSettings,
+        ...(codexCatalog.models.length ? {
+          codexCatalog: {
+            adapter: "codex",
+            source: "engine-catalog",
+            fetchedAt: codexCatalog.refreshedAt || isoNow(),
+            models: codexCatalog.models,
+            nextCursor: null,
+          },
+        } : {}),
       }));
     } catch {
       // UI preferences are optional; private sessions may reject storage.
     }
-  }, [codexSettings, drafts, expandedProjectIds, inspectorOpen, inspectorTab, pinnedProjectIds, selectedFile, selectedTaskId, sidebarCollapsed]);
+  }, [codexCatalog.models, codexCatalog.refreshedAt, codexSettings, drafts, expandedProjectIds, inspectorOpen, inspectorTab, pinnedProjectIds, selectedFile, selectedTaskId, sidebarCollapsed]);
 
   useEffect(() => {
     if (showcaseMode || !authState?.checkedAt) return;
@@ -6064,6 +6089,7 @@ export function App() {
     setTerminalOpen(false);
     setBoardState((state) => ({ ...state, open: false }));
     setSidebarOpen(false);
+    if (choice.adapter === "codex") void loadCodexModels();
     window.setTimeout(() => composerInputRef.current?.focus(), 0);
     return id;
   };

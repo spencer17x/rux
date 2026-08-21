@@ -22,6 +22,7 @@ Do not expose a feature merely because Runtime supports it. V1 Renderer must not
 - ChatGPT account state sync is explicit and user-triggered. The Runtime may expose the bounded `account/read` email/plan and rate-limit summary returned by the official App Server only for the current in-memory UI; never read credential files, expose tokens, persist the email, or refresh in the background.
 - Imported Agent conversations are editable Rux-owned copies. Normal import has one `copy` path, never resumes or writes the source Native Session, and seeds the first Rux-managed Session with a bounded copy of imported user/assistant history. Legacy `view`, `continue`, `read-only`, `native-unavailable` and `unlinked` values may remain schema-readable only for historical data; they must not lock the Composer or appear as current creation choices.
 - New chat actions open a focused blank Task directly; do not add a Rux setup modal.
+- New Codex chats immediately use the last validated official model catalog snapshot and explicitly refresh it. Never render the engine-default placeholder as `Codex 中`; while the first catalog is loading, show a loading/selection state, then the real default model and reasoning label.
 - Product, Workspace selection and account/login remain distinct actions.
 - Normal v1 startup and settings are Codex-only. Historical non-Codex data may remain readable only when doing so does not reintroduce a normal creation or configuration path.
 
