@@ -258,6 +258,10 @@ test("clean startup waits for explicit project and account actions", async () =>
   assert.match(rendererSource, /if \(choice\.adapter === "codex"\) void loadCodexModels\(\);/);
   assert.match(rendererSource, /return modelCatalogLoading \? "正在加载" : "选择模型"/);
   assert.doesNotMatch(rendererSource, /return "Codex 中"/);
+  assert.match(rendererSource, /const lastAssistantMessageIndexByRun = new Map\(\)/);
+  assert.match(rendererSource, /\["completed", "failed", "cancelled"\]\.includes\(messageRun\?\.status\)/);
+  assert.match(rendererSource, /run=\{showRunEvidence \? messageRun : undefined\}/);
+  assert.match(rendererSource, /\{!hasAssistantMessage \? <p className="agent-response-lead">/);
   assert.match(rendererSource, /messages: \[\],\s+plan: \[\],\s+activity: \[\],\s+runs: \[\]/);
   assert.match(rendererSource, /placeholder=\{interactionLockReason \? "当前会话不可编辑" : "随心输入"\}/);
   assert.match(rendererSource, /onImport\("copy"\)/);

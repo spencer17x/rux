@@ -1752,6 +1752,10 @@ function TaskTimeline({ task, streamingMessages = [], changes, onOpenChanges, on
     })),
   ];
   const renderedMessages = collapseUnsupportedMessages(displayMessages);
+  const lastAssistantMessageIndexByRun = new Map();
+  renderedMessages.forEach((message, index) => {
+    if (message.role === "assistant" && message.runId) lastAssistantMessageIndexByRun.set(message.runId, index);
+  });
   const verificationCounts = verifications.reduce((counts, verification) => ({
     ...counts,
     [verification.status]: counts[verification.status] + 1,
@@ -1866,6 +1870,10 @@ function TaskTimeline({ task, streamingMessages = [], changes, onOpenChanges, on
         {renderedMessages.map((message, index) => {
           const priorRunId = renderedMessages[index - 1]?.runId;
           const runIndex = message.runId ? task.runs?.findIndex((run) => run.id === message.runId) : -1;
+          const messageRun = runIndex >= 0 ? task.runs[runIndex] : undefined;
+          const showRunEvidence = message.role === "assistant"
+            && lastAssistantMessageIndexByRun.get(message.runId) === index
+            && ["completed", "failed", "cancelled"].includes(messageRun?.status);
           const showRunDivider = Boolean(message.runId && message.runId !== priorRunId);
           return (
             <React.Fragment key={message.id}>
@@ -1875,7 +1883,7 @@ function TaskTimeline({ task, streamingMessages = [], changes, onOpenChanges, on
                   <small>{ruxAgentLabel(message.agent || task.agent)}{message.adapter ? ` · ${ruxAdapterLabel(message.adapter)}` : ""}</small>
                 </div>
               ) : null}
-              <Message message={message} agent={task.agent} run={message.runId ? task.runs?.find((run) => run.id === message.runId) : undefined} />
+              <Message message={message} agent={task.agent} run={showRunEvidence ? messageRun : undefined} />
             </React.Fragment>
           );
         })}
@@ -1891,7 +1899,7 @@ function TaskTimeline({ task, streamingMessages = [], changes, onOpenChanges, on
           </section>
         ) : !isWaiting ? (
           <section className="agent-response">
-            {!hasAssistantMessage || !isCompleted ? <p className="agent-response-lead">{responseLead}</p> : null}
+            {!hasAssistantMessage ? <p className="agent-response-lead">{responseLead}</p> : null}
 
             {pendingPermission ? (
               <div ref={permissionTargetRef}>
