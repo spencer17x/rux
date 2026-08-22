@@ -1,8 +1,6 @@
 .DS_Store
-.design/
 app/node_modules/
 app/.vite/
 app/dist/
 app/out/
 app/release/
-app/release-*/

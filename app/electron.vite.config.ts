@@ -1,7 +1,6 @@
 import { resolve } from "node:path";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "electron-vite";
-import { developmentContentSecurityPolicyPlugin } from "./build/content-security-policy.mjs";
 
 export default defineConfig({
   main: {
@@ -13,7 +12,6 @@ export default defineConfig({
   },
   preload: {
     build: {
-      externalizeDeps: false,
       rollupOptions: {
         input: resolve(__dirname, "src/electron/preload.ts"),
         output: {
@@ -30,6 +28,6 @@ export default defineConfig({
         input: resolve(__dirname, "index.html"),
       },
     },
-    plugins: [developmentContentSecurityPolicyPlugin(), react()],
+    plugins: [react()],
   },
 });

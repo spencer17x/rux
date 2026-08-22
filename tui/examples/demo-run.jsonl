@@ -1,7 +1,0 @@
-{"kind":"event","event":{"type":"runtime.ready","status":{"pid":0,"platform":"replay","workspaceRoot":"/demo","startedAt":"replay"}}}
-{"kind":"event","event":{"type":"run.started","runId":"replay-run-1","adapter":"mock","prompt":"Replay a recorded run"}}
-{"kind":"event","event":{"type":"activity.started","runId":"replay-run-1","activity":{"id":"replay-read","kind":"read","title":"Replay activity","detail":"This line came from examples/demo-run.jsonl","state":"active"}}}
-{"kind":"event","event":{"type":"activity.completed","runId":"replay-run-1","activity":{"id":"replay-read","kind":"read","title":"Replay activity","detail":"Replay completed; no tool executed","state":"done"}}}
-{"kind":"event","event":{"type":"assistant.message","runId":"replay-run-1","text":"This is a recorded JSONL event, not a live agent response."}}
-{"kind":"event","event":{"type":"run.completed","runId":"replay-run-1","durationMs":0,"turns":0}}
-

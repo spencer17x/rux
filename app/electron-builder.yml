@@ -1,7 +1,6 @@
-appId: com.rux.workbench
+appId: com.rux.app
 productName: Rux
 copyright: Copyright © 2026 Rux
-afterPack: build/after-pack.mjs
 
 directories:
   output: release
@@ -10,43 +9,10 @@ files:
   - out/**/*
   - package.json
 
-extraResources:
-  - from: out/runtime-host
-    to: runtime-host
-  - from: out/bin
-    to: bin
-    filter:
-      - rux-tui*
-  - from: out/update-config.json
-    to: update-config.json
-
 asar: true
-asarUnpack:
-  - node_modules/node-pty/**/*
-
-npmRebuild: true
-
-electronFuses:
-  # Required by the packaged Claude permission helper and TUI Runtime host.
-  runAsNode: true
-  enableCookieEncryption: true
-  enableNodeOptionsEnvironmentVariable: false
-  enableNodeCliInspectArguments: false
-  enableEmbeddedAsarIntegrityValidation: true
-  onlyLoadAppFromAsar: true
-  # Renderer assets are still loaded with BrowserWindow.loadFile().
-  grantFileProtocolExtraPrivileges: true
-  resetAdHocDarwinSignature: true
 
 mac:
   category: public.app-category.developer-tools
-  icon: build/icon.png
-  extendInfo:
-    NSAudioCaptureUsageDescription: null
-    NSBluetoothAlwaysUsageDescription: null
-    NSBluetoothPeripheralUsageDescription: null
-    NSCameraUsageDescription: null
-    NSMicrophoneUsageDescription: Rux uses the microphone only when you choose Voice input in the Composer.
   target:
     - dmg
     - zip
