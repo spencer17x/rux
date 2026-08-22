@@ -7,12 +7,12 @@ the user supplies a new design.
 
 ## Repository shape
 
-- `app/` contains the minimal Electron + React shell.
+- The repository root contains the minimal Electron + React shell.
 - The Renderer stays sandboxed and has no Node.js access.
 - Keep the shell small; add dependencies and privileged boundaries only when a
   concrete new design requires them.
 
-Run development and verification commands from `app/`:
+Run development and verification commands from the repository root:
 
 ```bash
 pnpm install

@@ -3,7 +3,6 @@
 Rux is an intentionally blank Electron client, ready for a new product design.
 
 ```bash
-cd app
 pnpm install
 pnpm dev
 ```
