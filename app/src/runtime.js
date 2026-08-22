@@ -58,6 +58,7 @@ function normalizeRunArguments(options, emit) {
       contextFiles: options?.contextFiles,
       imagePaths: options?.imagePaths,
       conversationHistory: options?.conversationHistory,
+      reviewTarget: options?.reviewTarget,
     },
     emit,
   };
@@ -164,6 +165,45 @@ export function createMockRuntime() {
         { id: "gpt-5.6-luna", model: "gpt-5.6-luna", displayName: "GPT-5.6 Luna", description: "Fast", isDefault: false, defaultReasoningEffort: "medium", supportedReasoningEfforts: [{ reasoningEffort: "medium", description: "Balanced" }], serviceTiers: [], defaultServiceTier: "default" },
       ] : [];
       return { adapter: "codex", source: "engine-catalog", fetchedAt: new Date().toISOString(), models, nextCursor: null };
+    },
+
+    async listCodexPlugins() {
+      return {
+        source: "web-unavailable",
+        fetchedAt: new Date().toISOString(),
+        installed: [],
+        available: [],
+        unavailableReason: "插件目录仅在 Rux 桌面应用中可用。",
+      };
+    },
+
+    async installCodexPlugin() {
+      throw new Error("插件安装仅在 Rux 桌面应用中可用");
+    },
+
+    async removeCodexPlugin() {
+      throw new Error("插件移除仅在 Rux 桌面应用中可用");
+    },
+
+    async listPullRequests() {
+      return {
+        source: "web-unavailable",
+        fetchedAt: new Date().toISOString(),
+        items: [],
+        unavailableReason: "拉取请求仅在 Rux 桌面应用中可用。",
+      };
+    },
+
+    async detectExternalConfig(source) {
+      return { source, availability: "web-unavailable", detectedAt: new Date().toISOString(), items: [], connectors: [], unavailableReason: "配置导入仅在 Rux 桌面应用中可用。" };
+    },
+
+    async importExternalConfig() {
+      throw new Error("配置导入仅在 Rux 桌面应用中可用");
+    },
+
+    async externalConfigHistory() {
+      return { fetchedAt: new Date().toISOString(), records: [], connectors: [] };
     },
 
     async discoverSessions() {
@@ -442,6 +482,34 @@ function createDesktopRuntime(api) {
       return api.request("agent.model.list", params);
     },
 
+    listCodexPlugins() {
+      return api.request("plugin.list", {});
+    },
+
+    installCodexPlugin(params) {
+      return api.request("plugin.install", params);
+    },
+
+    removeCodexPlugin(params) {
+      return api.request("plugin.remove", params);
+    },
+
+    listPullRequests() {
+      return api.request("pullRequest.list", {});
+    },
+
+    detectExternalConfig(params) {
+      return api.request("externalConfig.detect", params);
+    },
+
+    importExternalConfig(params) {
+      return api.request("externalConfig.import", params);
+    },
+
+    externalConfigHistory() {
+      return api.request("externalConfig.history", {});
+    },
+
     discoverSessions(params) {
       return api.request("session.discover", params);
     },
@@ -617,6 +685,7 @@ function createDesktopRuntime(api) {
         ...(normalized.options.modelSource ? { modelSource: normalized.options.modelSource } : {}),
         ...(normalized.options.modelVerificationStatus ? { modelVerificationStatus: normalized.options.modelVerificationStatus } : {}),
         ...(normalized.options.reasoningEffort ? { reasoningEffort: normalized.options.reasoningEffort } : {}),
+        ...(normalized.options.serviceTier ? { serviceTier: normalized.options.serviceTier } : {}),
         ...(normalized.options.sessionId ? { sessionId: normalized.options.sessionId } : {}),
         ...(normalized.options.profileId ? { profileId: normalized.options.profileId } : {}),
         agentRevisionId: normalized.options.agentRevisionId,
@@ -624,6 +693,7 @@ function createDesktopRuntime(api) {
         ...(normalized.options.contextFiles?.length ? { contextFiles: normalized.options.contextFiles } : {}),
         ...(normalized.options.imagePaths?.length ? { imagePaths: normalized.options.imagePaths } : {}),
         ...(normalized.options.conversationHistory?.length ? { conversationHistory: normalized.options.conversationHistory } : {}),
+        ...(normalized.options.reviewTarget ? { reviewTarget: normalized.options.reviewTarget } : {}),
       }).catch((error) => {
         const emit = activeRuns.get(runId);
         if (!emit) return;

@@ -31,15 +31,18 @@ function fakeServer(t, scenario) {
   const executable = join(directory, "codex");
   const transcript = join(directory, "transcript.jsonl");
   const authState = join(directory, "auth-state.txt");
+  const pluginState = join(directory, "plugin-state.json");
   copyFileSync(fixtureSource, executable);
   chmodSync(executable, 0o755);
   writeFileSync(transcript, "", "utf8");
+  writeFileSync(pluginState, JSON.stringify({ documents: true, github: false }), "utf8");
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   return {
     directory,
     executable,
     transcript,
     authState,
+    pluginState,
     options: {
       executable,
       requestTimeoutMs: 3_000,
@@ -47,6 +50,7 @@ function fakeServer(t, scenario) {
         RUX_FAKE_CODEX_SCENARIO: scenario,
         RUX_FAKE_CODEX_TRANSCRIPT: transcript,
         RUX_FAKE_CODEX_AUTH_STATE: authState,
+        RUX_FAKE_CODEX_PLUGIN_STATE: pluginState,
       },
     },
   };
@@ -129,6 +133,61 @@ test("syncs ChatGPT account and rate-limit state only through official App Serve
     "account/rateLimits/read",
   ]);
   assert.deepEqual(requests[2].params, { refreshToken: false });
+});
+
+test("lists, installs, and removes plugins through the official Codex CLI boundary", async (t) => {
+  const fake = fakeServer(t, "plugins");
+  const adapter = new CodexAppServerAdapter(fake.directory, () => undefined, fake.options);
+  t.after(() => adapter.dispose());
+
+  const initial = await adapter.listPlugins();
+  assert.equal(initial.source, "codex-cli");
+  assert.deepEqual(initial.installed.map((plugin) => plugin.pluginId), ["documents@openai-primary-runtime"]);
+  assert.deepEqual(initial.available.map((plugin) => plugin.pluginId), ["github@openai-curated"]);
+  assert.doesNotMatch(JSON.stringify(initial), /sourceType|path|\.codex|plugin-state/);
+
+  const installed = await adapter.installPlugin("github@openai-curated");
+  assert.deepEqual(installed.installed.map((plugin) => plugin.pluginId).sort(), [
+    "documents@openai-primary-runtime",
+    "github@openai-curated",
+  ]);
+  assert.deepEqual(installed.available, []);
+
+  const removed = await adapter.removePlugin("documents@openai-primary-runtime");
+  assert.deepEqual(removed.installed.map((plugin) => plugin.pluginId), ["github@openai-curated"]);
+  assert.deepEqual(removed.available.map((plugin) => plugin.pluginId), ["documents@openai-primary-runtime"]);
+});
+
+test("detects, imports, and reads external setup through bounded App Server methods", async (t) => {
+  const fake = fakeServer(t, "external-import");
+  const adapter = new CodexAppServerAdapter(fake.directory, () => undefined, fake.options);
+  t.after(() => adapter.dispose());
+
+  const detected = await adapter.detectExternalConfig("cursor");
+  assert.equal(detected.source, "cursor");
+  assert.equal(detected.availability, "available");
+  assert.equal(detected.items.length, 3);
+  assert.deepEqual(detected.items.map((item) => item.itemType), ["CONFIG", "SKILLS", "SESSIONS"]);
+  assert.equal(detected.items.find((item) => item.itemType === "SKILLS").itemCount, 2);
+  assert.equal(JSON.stringify(detected).includes("/fake/session.jsonl"), false);
+
+  const imported = await adapter.importExternalConfig("cursor", detected.detectionId, detected.items.slice(0, 2).map((item) => item.id));
+  assert.equal(imported.source, "cursor");
+  assert.equal(imported.successes.length, 2);
+  assert.deepEqual(imported.failures, []);
+
+  const history = await adapter.externalConfigHistory();
+  assert.equal(history.records.length, 1);
+  assert.equal(history.records[0].source, "cursor");
+  assert.equal(history.records[0].successes.length, 2);
+
+  const requests = transcriptMessages(fake.transcript).filter((entry) => entry.direction === "client").map((entry) => entry.message);
+  const detectRequest = requests.find((message) => message.method === "externalAgentConfig/detect");
+  assert.deepEqual(detectRequest.params, { migrationSource: "cursor", includeHome: true, cwds: [fake.directory], maxSessions: 50, maxSessionAgeDays: 30 });
+  const importRequest = requests.find((message) => message.method === "externalAgentConfig/import");
+  assert.equal(importRequest.params.providerId, "cursor");
+  assert.equal(importRequest.params.source, "rux-desktop");
+  assert.equal(importRequest.params.migrationItems.length, 2);
 });
 
 async function waitUntil(predicate, timeoutMs = 3_000) {
@@ -305,6 +364,43 @@ test("performs the initialize/thread/start/turn/start handshake and streams rich
   assert.equal(verification.command, "npm test");
   assert.equal(verification.status, "passed");
   assert.equal(collector.events.filter((event) => event.type === "run.completed").length, 1);
+});
+
+test("starts an inline read-only code review through review/start", async (t) => {
+  const fake = fakeServer(t, "review");
+  const collector = eventCollector();
+  const adapter = new CodexAppServerAdapter(fake.directory, collector.emit, fake.options);
+  t.after(() => adapter.dispose());
+
+  const started = await adapter.start({
+    runId: "run-review",
+    prompt: "/review · 未提交变更",
+    model: "fake-model",
+    reasoningEffort: "high",
+    permissionMode: "plan",
+    reviewTarget: { type: "uncommittedChanges" },
+  });
+  assert.equal(started.threadId, "thread-review");
+  assert.equal(started.turnId, "turn-review");
+  await collector.waitFor((event) => event.type === "run.completed");
+
+  const clientMessages = transcriptMessages(fake.transcript)
+    .filter((entry) => entry.direction === "client")
+    .map((entry) => entry.message);
+  assert.deepEqual(clientMessages.slice(0, 4).map((message) => message.method), [
+    "initialize",
+    "initialized",
+    "thread/start",
+    "review/start",
+  ]);
+  assert.equal(clientMessages[2].params.approvalPolicy, "never");
+  assert.equal(clientMessages[2].params.sandbox, "read-only");
+  assert.deepEqual(clientMessages[3].params, {
+    threadId: "thread-review",
+    target: { type: "uncommittedChanges" },
+    delivery: "inline",
+  });
+  assert.equal(collector.events.find((event) => event.type === "assistant.message").text, "[P1] Review finding from the selected diff");
 });
 
 test("a failed Codex resume never falls back to a new Thread", async (t) => {

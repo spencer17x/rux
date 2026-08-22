@@ -681,7 +681,7 @@ function interruptRun(run: PersistedRun, now: string): PersistedRun {
       status: "interrupted",
       updatedAt: now,
       finishedAt: now,
-      error: run.error || "Rux 上次退出后，Agent 进程已不存在",
+      error: run.error || "Rux 上次退出后，这次运行的进程已不存在",
     };
   }
   if (run.status !== "waiting-permission") return run;
@@ -713,7 +713,7 @@ function interruptRun(run: PersistedRun, now: string): PersistedRun {
     status: "interrupted",
     updatedAt: now,
     finishedAt: now,
-    error: run.error || "Rux 上次退出后，provider-native 权限请求已失效，Agent 进程已不存在",
+    error: run.error || "Rux 上次退出后，这项权限请求已失效；请重新开始运行。",
     permissionRequests: run.permissionRequests.map((request) =>
       request.status === "pending" && request.scope.appliesTo === "single-action"
         ? { ...request, status: "cancelled" as const }

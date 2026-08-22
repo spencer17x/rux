@@ -38,6 +38,54 @@ if (process.argv[2] === "login" && process.argv.length === 3) {
   process.exit(0);
 }
 
+if (process.argv[2] === "plugin") {
+  const pluginStatePath = process.env.RUX_FAKE_CODEX_PLUGIN_STATE;
+  const pluginState = pluginStatePath && existsSync(pluginStatePath)
+    ? JSON.parse(readFileSync(pluginStatePath, "utf8"))
+    : { documents: true, github: false };
+  const savePluginState = () => {
+    if (pluginStatePath) writeFileSync(pluginStatePath, JSON.stringify(pluginState), "utf8");
+  };
+  const pluginRecord = (name, marketplaceName, installed) => ({
+    pluginId: `${name}@${marketplaceName}`,
+    name,
+    marketplaceName,
+    version: "1.0.0-test",
+    installed,
+    enabled: installed,
+    installPolicy: "AVAILABLE",
+    authPolicy: "ON_USE",
+  });
+  if (process.argv[3] === "list") {
+    process.stdout.write(`${JSON.stringify({
+      installed: [
+        ...(pluginState.documents ? [pluginRecord("documents", "openai-primary-runtime", true)] : []),
+        ...(pluginState.github ? [pluginRecord("github", "openai-curated", true)] : []),
+      ],
+      available: [
+        ...(!pluginState.documents ? [pluginRecord("documents", "openai-primary-runtime", false)] : []),
+        ...(!pluginState.github ? [pluginRecord("github", "openai-curated", false)] : []),
+      ],
+    })}\n`);
+    process.exit(0);
+  }
+  const selector = process.argv[4] || "";
+  if (process.argv[3] === "add" && selector === "github@openai-curated") {
+    pluginState.github = true;
+    savePluginState();
+    process.stdout.write(`${JSON.stringify({ ok: true, pluginId: selector })}\n`);
+    process.exit(0);
+  }
+  if (process.argv[3] === "remove" && selector === "documents@openai-primary-runtime") {
+    pluginState.documents = false;
+    savePluginState();
+    process.stdout.write(`${JSON.stringify({ ok: true, pluginId: selector })}\n`);
+    process.exit(0);
+  }
+  process.stderr.write("unsupported fake plugin command\n");
+  process.exit(2);
+}
+
 if (!process.argv.includes("app-server")) {
   process.stderr.write("expected app-server\n");
   process.exit(2);
@@ -62,6 +110,7 @@ let runtimeSequence = 0;
 let pendingApproval;
 let modelCatalogCycles = 0;
 let completed = false;
+const externalImportHistory = [];
 
 function record(value) {
   if (!transcriptPath) return;
@@ -584,6 +633,31 @@ lines.on("line", (line) => {
     });
     return;
   }
+  if (message.method === "externalAgentConfig/detect") {
+    const source = message.params?.migrationSource || "claude-code";
+    send({ id: message.id, result: {
+      items: [
+        { itemType: "CONFIG", description: `${source} settings`, cwd: null, details: null },
+        { itemType: "SKILLS", description: `${source} skills`, cwd: process.cwd(), details: { skills: [{ name: "review" }, { name: "docs" }] } },
+        { itemType: "SESSIONS", description: `${source} recent chats`, cwd: process.cwd(), details: { sessions: [{ cwd: process.cwd(), path: "/fake/session.jsonl", title: "Recent work" }] } },
+      ],
+      connectors: [{ name: `${source} connector`, sessionCount: 1, source: "sessionToolUse" }],
+    } });
+    return;
+  }
+  if (message.method === "externalAgentConfig/import") {
+    const importId = `external-import-${externalImportHistory.length + 1}`;
+    const successes = (message.params?.migrationItems || []).map((item) => ({ itemType: item.itemType, cwd: item.cwd || null, source: message.params?.migrationSource || null, target: item.itemType === "SESSIONS" ? "thread-imported" : "codex-config", title: item.itemType === "SESSIONS" ? "Recent work" : null }));
+    const itemTypeResults = [...new Set(successes.map((item) => item.itemType))].map((itemType) => ({ itemType, successes: successes.filter((item) => item.itemType === itemType), failures: [] }));
+    externalImportHistory.push({ importId, providerId: message.params?.providerId || null, completedAtMs: Date.now(), successes, failures: [] });
+    send({ id: message.id, result: { importId } });
+    send({ method: "externalAgentConfig/import/completed", params: { importId, itemTypeResults } });
+    return;
+  }
+  if (message.method === "externalAgentConfig/import/readHistories") {
+    send({ id: message.id, result: { data: externalImportHistory, connectors: [] } });
+    return;
+  }
   if (message.method === "thread/start" || message.method === "thread/resume") {
     if (requireAuthentication && !isAuthenticated()) {
       send({
@@ -668,6 +742,19 @@ lines.on("line", (line) => {
         additionalDetails: null,
       });
     }
+    return;
+  }
+  if (message.method === "review/start") {
+    send({ id: message.id, result: { reviewThreadId: threadId, turn: turn("inProgress") } });
+    send({ method: "turn/started", params: { threadId, turn: turn("inProgress") } });
+    completeItem({
+      type: "agentMessage",
+      id: "review-finding",
+      text: "[P1] Review finding from the selected diff",
+      phase: "final_answer",
+      memoryCitation: null,
+    });
+    completeTurn("completed");
     return;
   }
   if (message.method === "turn/interrupt") {

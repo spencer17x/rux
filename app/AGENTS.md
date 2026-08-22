@@ -10,7 +10,7 @@ Do not expose a feature merely because Runtime supports it. V1 Renderer must not
 
 ## Confirmed Current Decisions
 
-- The authoritative 2026-08-19 screenshots live under `design-audit/chatgpt-codex-current-2026-08-19/` at 2866 × 1624.
+- The authoritative target baseline is the user-provided ChatGPT macOS `26.818.32112` evidence under `design-audit/chatgpt-codex-26.818.32112-2026-08-22/`. The workspace captures are 2880 × 1624 physical pixels in Simplified Chinese; logical viewport, display scale, account plan and region remain unverified.
 - The current ChatGPT Codex reference exposes a Composer model/reasoning selector such as `5.6 Sol 中`; preserve and align it.
 - Direct 2026-08-20 evidence replaces the flat model list with the current nested Composer menu: primary rows are `模型`, `推理强度`, `速度`, and `高级`, with model/effort/speed choices in right-side submenus. Model effort and service-tier options come from official `model/list`; selected `serviceTier` is passed to `thread/start`/`thread/resume` and `turn/start`.
 - Match the screenshot navigation (`新对话`, `拉取请求`, `站点`, `已安排`, `插件`), bottom account popover, full settings taxonomy, quick-tools menu, right Environment panel and bottom Terminal dock.
@@ -18,7 +18,10 @@ Do not expose a feature merely because Runtime supports it. V1 Renderer must not
 - Composer paste accepts PNG/JPEG/GIF/WebP clipboard images, previews removable thumbnails, persists them through a Main-owned bounded attachment path, and sends them as official App Server `localImage` inputs.
 - The bottom Terminal and right Environment/Review surfaces are mutually exclusive. Terminal supports real add/select/close tab interactions; opening Review from quick tools opens Changes, not Environment.
 - The account footer and popover must use truthful Codex connection copy. Do not present `账户与登录` as a user identity or hard-code usage percentages; at the 1433 × 812 reference viewport the compact 224 px menu is anchored 9 px from the left and 44 px from the bottom without clipping its profile or logout rows.
-- Direct user feedback on 2026-08-20 removes the Pets surface from Rux v1: do not show `显示宠物` in the account menu or `宠物` in Settings.
+- Direct user evidence on 2026-08-22 supersedes the earlier Pets-absence assumption: ChatGPT macOS `26.818.32112` visibly shows `显示宠物` and `邀请好友` in the account menu. Preserve those menu entries, but do not invent the pet rendering, referral destination, eligibility, loading or failure states until their click paths are captured.
+- The same account-menu evidence shows `使用情况` but no separate `同步 ChatGPT` row. Keep account refresh explicit and user-triggered through the visible usage action rather than adding a Rux-only sync entry.
+- The `26.818.32112` task header visibly shows a Share control immediately before `打开位置`. Preserve the entry and its order, but do not map it to export, custom sync, or a guessed system share action until the target click result and permission semantics are captured.
+- The top-left product label and chevron are visible in `26.818.32112`, but their opened destinations are not captured. Keep the branded control visible and evidence-gated; do not open a one-item self-selection menu or invent ChatGPT/product destinations.
 - ChatGPT account state sync is explicit and user-triggered. The Runtime may expose the bounded `account/read` email/plan and rate-limit summary returned by the official App Server only for the current in-memory UI; never read credential files, expose tokens, persist the email, or refresh in the background.
 - Imported Agent conversations are editable Rux-owned copies. Normal import has one `copy` path, never resumes or writes the source Native Session, and seeds the first Rux-managed Session with a bounded copy of imported user/assistant history. Legacy `view`, `continue`, `read-only`, `native-unavailable` and `unlinked` values may remain schema-readable only for historical data; they must not lock the Composer or appear as current creation choices.
 - New chat actions open a focused blank Task directly; do not add a Rux setup modal.

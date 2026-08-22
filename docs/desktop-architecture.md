@@ -1,7 +1,7 @@
 # Rux v1 Desktop Architecture
 
 > Baseline: current ChatGPT desktop Codex parity contract
-> Protocol: v21; product surface follows `docs/product-requirements.md`
+> Protocol: v25; product surface follows `docs/product-requirements.md`
 
 ## 1. Architecture goal
 
@@ -22,10 +22,22 @@ flowchart LR
 ### Renderer
 
 - Renders the Codex-aligned project rail, one focused Task, Composer and on-demand panels.
-- Renders the Composer model control as a nested settings menu backed by `model/list`, including per-model reasoning efforts and service tiers; the selected tier travels through protocol v21 to official App Server thread/turn settings.
+- Renders the Composer model control as a nested settings menu backed by `model/list`, including per-model reasoning efforts and service tiers; the selected tier travels through protocol v25 to official App Server thread/turn settings.
+- Opens the Plugins navigation as a real catalog backed by bounded `codex plugin list --available --json`; explicit install/remove actions run through the same official CLI boundary and return only sanitized plugin metadata to Renderer.
 - Holds transient drafts, selection and streaming presentation state.
-- Keeps user-triggered ChatGPT account snapshots in memory only; `auth.chatgpt.sync` delegates `account/read` and rate-limit reads to the official Codex App Server and never persists account email or tokens.
+- Holds Task-scoped queued Composer inputs in memory, allows cancellation, and starts only the next queued input after the current Run reaches a terminal event; queued inputs never cross Workspace boundaries or auto-resume after an application restart.
+- Uses platform speech recognition only after the user presses the Composer voice control. Main grants media permission only to the trusted main WebContents and only for audio; camera/video requests remain denied, capture tracks are released immediately, and unsupported platforms show a disabled control instead of simulated dictation.
+- Keeps user-triggered ChatGPT account snapshots in memory only; `auth.chatgpt.sync` delegates only `account/read` and rate-limit reads to the official Codex App Server, does not chain into general CLI/Provider discovery, and never persists account email or tokens.
 - Treats imported Agent history as a Rux-owned editable copy. Source Session identifiers remain provenance only; the first continued Run starts a new Rux-managed Session with a bounded transcript context, and subsequent Runs resume only that Rux-owned Session.
+- Normal v1 hydration restores authorized Workspace and Task snapshots and keeps only the Codex adapter. It does not enumerate historical Agent Profiles, native Provider Connections, Board/Improvement data, hidden local metrics, or hidden updater state. Historical New Task, Board, Working Copies, Improvement, Handoff, custom Agent, and legacy Session-discovery dialogs are not mounted in the v1 React tree; their stores and privileged compatibility services remain intact for a separately reviewed migration.
+- Main does not schedule historical Improvement evaluation or any other dormant Provider work. Compatibility stores and explicit privileged methods remain for retained data, but normal startup creates no Improvement timer and cannot contact a Provider on that feature's behalf.
+- Uses a semantic primary navigation landmark, a named keyboard-focusable conversation scroll region with busy state, and an ARIA account menu whose initial focus, Arrow Up/Down, Home/End, Escape close, and trigger-focus restoration paths are verified in the packaged app.
+- Composer More, permission, model, reasoning and speed overlays move focus into their first or selected enabled item, support Arrow Up/Down and Home/End, return Escape from a submenu to its exact parent item, and return a second Escape to the originating trigger. The application-level Escape handler yields whenever any menu/dialog/Composer overlay is mounted, so closing an overlay cannot also close Environment or Terminal.
+- Inspector Changes/Context/Run and Terminal tabs use roving tabindex with Arrow Left/Right and Home/End. Activating a tab updates its panel and focus together; closing an active Terminal tab focuses the surviving selected tab, while a newly created Terminal activates its real shell input.
+- Task actions, Open location, and Quick tools are mutually exclusive ARIA menus. Each opens on its first enabled item, supports Arrow Up/Down and Home/End, skips disabled entries, and restores its exact trigger on Escape; rename mode keeps dialog/form behavior instead of menu navigation.
+- Visible buttons must either invoke a real handler, submit a real form, or be explicitly disabled with an evidence/capability reason. Reply/code copy uses the platform Clipboard; feedback, reply expansion and code application remain visible but gated until their target protocols and click results are known.
+- Sidebar Search, Notifications and Account are mutually exclusive transient surfaces. Search moves focus into its input; Escape clears and unmounts it, while Notifications exposes a stable empty state. Both restore their exact trigger on Escape and are included in the global overlay-yield boundary.
+- General Settings no longer treats persisted display values as implemented behavior. Bottom panel controls the title-bar Terminal entry; Speed maps to an official catalog `serviceTier`; Prevent sleep drives a minimal Main-owned `powerSaveBlocker` only while a Task is running or waiting for approval, with forced release on Workspace switch/quit. File-open default, language switching, menu-bar residency and right-side Terminal docking remain visibly disabled until real consumers exist.
 - Has no Node integration and cannot read files, credentials, processes or PTYs directly.
 - Sends only schema-valid product intents through Preload.
 
@@ -33,6 +45,7 @@ flowchart LR
 
 - Exposes the smallest typed `window.rux` API.
 - Does not expose generic IPC, filesystem primitives, secret reads or process execution.
+- Exposes only current v1 Workspace/task/image/power intents plus the validated Runtime request/event bridge. Board, Working Copies, Improvement, old Session/Handoff, local-data, custom-Provider, hidden metrics and updater compatibility methods are not present on `window.rux`, even while their Main-owned stores/handlers remain during data retention.
 
 ### Main
 
@@ -114,6 +127,8 @@ The repository still contains protocol/store/runtime modules for historical Rux 
 
 New v1 work must not depend on those modules. A later cleanup can delete them only after exporting or migrating affected local data and updating protocol, Runtime, Preload, tests and docs together.
 
+The active Renderer does not load Board/Improvement summaries during startup, pin Improvement assets on new Tasks, inject them into Runs, or offer historical Agent backends to the Composer. Those stores and methods remain compatibility-only and are not deleted by this boundary change.
+
 ## 10. Verification contract
 
 - Renderer/protocol/runtime behavior change: run `npm test`.
@@ -121,3 +136,6 @@ New v1 work must not depend on those modules. A later cleanup can delete them on
 - Handoff bundle: run `npm run package` and launch the packaged app.
 - Visible change: capture the actual packaged state and compare it with the matching Codex reference at the same viewport/state.
 - Web/Sites compatibility remains supported but cannot substitute for packaged desktop acceptance.
+- Pull-request discovery is a user-triggered, read-only Runtime operation backed by the official `gh` CLI for the authorized Workspace. Output is size/time bounded and schema-normalized; credentials and raw CLI environment never cross into Renderer.
+- Composer `/review` is carried as a validated `CodexReviewTarget` on `run.start`. The privileged Codex adapter creates or resumes the official Thread, calls App Server `review/start` with inline delivery, forces the review Run to the read-only permission profile, and returns findings through the ordinary persisted Run/Transcript event path.
+- Settings Import calls App Server `externalAgentConfig/detect`, `externalAgentConfig/import`, and `externalAgentConfig/import/readHistories` only after a direct user action. Runtime fixes detection to the authorized Workspace plus the official user-level scope, caches raw migration objects behind an expiring opaque detection id, and accepts only selected item ids plus explicit confirmation from Renderer. Raw migration details, source session paths, and configuration payloads never cross the Renderer boundary.

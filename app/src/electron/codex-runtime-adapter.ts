@@ -4,6 +4,11 @@ import type {
   AgentModelListParams,
   AgentModelListResult,
   ChatGptAccountSyncResult,
+  CodexPluginListResult,
+  ExternalConfigDetectResult,
+  ExternalConfigHistoryResult,
+  ExternalConfigImportResult,
+  ExternalConfigSource,
   PermissionDecideParams,
   PermissionDecision,
   PermissionRequest,
@@ -105,6 +110,30 @@ export class CodexRuntimeAdapter {
 
   listModels(params: AgentModelListParams): Promise<AgentModelListResult> {
     return this.adapter.listModels(params);
+  }
+
+  listPlugins(): Promise<CodexPluginListResult> {
+    return this.adapter.listPlugins();
+  }
+
+  installPlugin(pluginId: string): Promise<CodexPluginListResult> {
+    return this.adapter.installPlugin(pluginId);
+  }
+
+  removePlugin(pluginId: string): Promise<CodexPluginListResult> {
+    return this.adapter.removePlugin(pluginId);
+  }
+
+  detectExternalConfig(source: ExternalConfigSource): Promise<ExternalConfigDetectResult> {
+    return this.adapter.detectExternalConfig(source);
+  }
+
+  importExternalConfig(source: ExternalConfigSource, detectionId: string, itemIds: string[]): Promise<ExternalConfigImportResult> {
+    return this.adapter.importExternalConfig(source, detectionId, itemIds);
+  }
+
+  externalConfigHistory(): Promise<ExternalConfigHistoryResult> {
+    return this.adapter.externalConfigHistory();
   }
 
   syncChatGptAccount(): Promise<ChatGptAccountSyncResult> {

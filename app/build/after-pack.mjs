@@ -7,8 +7,9 @@ export const UNUSED_PRIVACY_USAGE_KEYS = Object.freeze([
   "NSBluetoothAlwaysUsageDescription",
   "NSBluetoothPeripheralUsageDescription",
   "NSCameraUsageDescription",
-  "NSMicrophoneUsageDescription",
 ]);
+
+export const MICROPHONE_USAGE_DESCRIPTION = "Rux uses the microphone only when you choose Voice input in the Composer.";
 
 export function hardenMacInfoPlist(info) {
   // electron-builder 26 injects NSAllowsArbitraryLoads for its optional updater
@@ -19,6 +20,7 @@ export function hardenMacInfoPlist(info) {
   for (const key of UNUSED_PRIVACY_USAGE_KEYS) {
     delete info[key];
   }
+  info.NSMicrophoneUsageDescription = MICROPHONE_USAGE_DESCRIPTION;
 
   return info;
 }

@@ -37,6 +37,7 @@ import {
   GitCompareArrows,
   GitPullRequest,
   Globe2,
+  Ghost,
   History,
   LayoutList,
   Laptop,
@@ -74,6 +75,7 @@ import {
   ThumbsDown,
   ThumbsUp,
   Trash2,
+  Upload,
   UserRound,
   Wrench,
   X,
@@ -161,7 +163,7 @@ const fallbackWorkspaceState = showcaseMode
     };
 
 const fallbackAdapters = [
-  { id: "codex", name: "Codex", available: showcaseMode, detail: showcaseMode ? "Codex 展示运行时" : "Codex 将在首次运行时检查" },
+  { id: "codex", name: "Codex", available: true, detail: showcaseMode ? "Codex 展示运行时" : "Codex 将在首次运行时检查安装与连接" },
   { id: "claude-code", name: "Claude Code", available: false, detail: "尚未检测本机 Claude Code" },
   { id: "rux-native", name: "Rux Native", available: false, detail: "添加原生 Provider 后即可使用，无需安装 Agent CLI" },
 ];
@@ -211,13 +213,13 @@ function mergeAuthState(current, incoming) {
 }
 
 const permissionOptions = [
-  { id: "acceptEdits", label: "请求批准", description: "在具体命令、文件或网络操作需要授权时询问", short: "Ask for approval" },
-  { id: "dontAsk", label: "完全访问", description: "无需逐项批准即可编辑文件并运行可访问网络的命令", short: "Full access" },
-  { id: "plan", label: "只读", description: "只允许分析和规划，不修改工作区", short: "Read only" },
+  { id: "acceptEdits", label: "请求批准", description: "在具体命令、文件或网络操作需要授权时询问", short: "请求批准" },
+  { id: "dontAsk", label: "完全访问", description: "无需逐项批准即可编辑文件并运行可访问网络的命令", short: "完全访问" },
+  { id: "plan", label: "只读", description: "只允许分析和规划，不修改工作区", short: "只读" },
 ];
 
 function permissionLabel(mode) {
-  return permissionOptions.find((item) => item.id === mode)?.short || "Workspace write";
+  return permissionOptions.find((item) => item.id === mode)?.short || "工作区写入";
 }
 
 function ruxVisibleText(value) {
@@ -319,10 +321,10 @@ function reasoningEffortLabel(value) {
 
 function modelStateLabel(source, status) {
   if (status === "unavailable") return "模型不可用";
-  if (source === "engine-default") return "由 Engine 选择 · 无需验证";
-  if (source === "engine-catalog") return "官方模型目录 · 无需验证";
-  if (source === "verified-history") return "此连接已验证";
-  if (status === "verified") return "此连接已验证";
+  if (source === "engine-default") return "由 Codex 选择 · 无需验证";
+  if (source === "engine-catalog") return "Codex 官方模型目录 · 无需验证";
+  if (source === "verified-history") return "已验证";
+  if (status === "verified") return "已验证";
   if (status === "unverified") return "手动模型 ID · 首次运行后验证";
   return "模型来源未知";
 }
@@ -334,6 +336,13 @@ const defaultCodexSettings = {
   model: "Rux default",
   reasoningEffort: "",
   permissionMode: "acceptEdits",
+  openTarget: "VS Code",
+  language: "自动检测",
+  showInMenuBar: true,
+  bottomPanel: true,
+  terminalPosition: "bottom",
+  preventSleep: true,
+  speed: "标准",
 };
 
 function isLegacyShowcaseTask(task) {
@@ -1046,18 +1055,19 @@ function Sidebar({
   pinnedProjectIds,
   onTogglePinProject,
   onCreateTaskInWorkspace,
-  onOpenBoard,
-  boardEnabledByWorkspace,
-  onOpenWorkingCopies,
-  onOpenImprovements,
-  improvementPendingCount,
   onCollapse,
   onOpenAccounts,
   onOpenSettings,
+  onOpenPlugins,
+  pluginsOpen,
+  onOpenPullRequests,
+  pullRequestsOpen,
+  onOpenSites,
+  sitesOpen,
+  onOpenScheduled,
+  scheduledOpen,
   onLogout,
   onSyncChatGpt,
-  onOpenAgents,
-  onOpenSessionDiscovery,
   onOpenEnvironment,
   onOpenChanges,
   onRenameTask,
@@ -1070,18 +1080,17 @@ function Sidebar({
   accountUsageLabel,
   accountSyncing,
   accountSyncError,
-  accountSyncedAt,
   collapsed,
 }) {
   const [searchOpen, setSearchOpen] = useState(false);
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
-  const [productMenuOpen, setProductMenuOpen] = useState(false);
   const [projectMenu, setProjectMenu] = useState(null);
   const accountMenuRef = useRef(null);
-  const productMenuRef = useRef(null);
-  const productTriggerRef = useRef(null);
+  const accountTriggerRef = useRef(null);
+  const searchTriggerRef = useRef(null);
+  const notificationTriggerRef = useRef(null);
   const matchingTasks = tasks.filter((task) =>
     `${task.title} ${task.agent}`.toLowerCase().includes(searchQuery.toLowerCase()),
   );
@@ -1101,15 +1110,26 @@ function Sidebar({
   })).sort((left, right) => Number(pinnedProjectIds.includes(right.id)) - Number(pinnedProjectIds.includes(left.id)));
 
   useEffect(() => {
-    if (!accountMenuOpen && !notificationsOpen) return undefined;
+    if (!accountMenuOpen && !notificationsOpen && !searchOpen) return undefined;
     const closePopovers = (event) => {
       if (accountMenuOpen && !accountMenuRef.current?.contains(event.target)) setAccountMenuOpen(false);
       if (notificationsOpen && !event.target.closest?.(".sidebar-notification-shell")) setNotificationsOpen(false);
     };
     const closeOnEscape = (event) => {
       if (event.key === "Escape") {
+        const restoreAccountFocus = accountMenuOpen;
+        const restoreNotificationFocus = !restoreAccountFocus && notificationsOpen;
+        const restoreSearchFocus = !restoreAccountFocus && !restoreNotificationFocus && searchOpen;
+        event.preventDefault();
         setAccountMenuOpen(false);
         setNotificationsOpen(false);
+        setSearchOpen(false);
+        if (restoreSearchFocus) onSearch("");
+        window.requestAnimationFrame(() => {
+          if (restoreAccountFocus) accountTriggerRef.current?.focus();
+          else if (restoreNotificationFocus) notificationTriggerRef.current?.focus();
+          else if (restoreSearchFocus) searchTriggerRef.current?.focus();
+        });
       }
     };
     document.addEventListener("pointerdown", closePopovers, true);
@@ -1118,26 +1138,31 @@ function Sidebar({
       document.removeEventListener("pointerdown", closePopovers, true);
       document.removeEventListener("keydown", closeOnEscape, true);
     };
-  }, [accountMenuOpen, notificationsOpen]);
+  }, [accountMenuOpen, notificationsOpen, onSearch, searchOpen]);
 
   useEffect(() => {
-    if (!productMenuOpen) return undefined;
-    const closeOnOutsidePress = (event) => {
-      if (!productMenuRef.current?.contains(event.target)) setProductMenuOpen(false);
-    };
-    const closeOnEscape = (event) => {
-      if (event.key !== "Escape") return;
-      event.preventDefault();
-      setProductMenuOpen(false);
-      window.requestAnimationFrame(() => productTriggerRef.current?.focus());
-    };
-    document.addEventListener("pointerdown", closeOnOutsidePress, true);
-    document.addEventListener("keydown", closeOnEscape, true);
-    return () => {
-      document.removeEventListener("pointerdown", closeOnOutsidePress, true);
-      document.removeEventListener("keydown", closeOnEscape, true);
-    };
-  }, [productMenuOpen]);
+    if (!accountMenuOpen) return undefined;
+    const frame = window.requestAnimationFrame(() => accountMenuRef.current
+      ?.querySelector('[role="menuitem"]:not(:disabled)')
+      ?.focus());
+    return () => window.cancelAnimationFrame(frame);
+  }, [accountMenuOpen]);
+
+  const handleAccountMenuKeyDown = (event) => {
+    if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+    const items = [...event.currentTarget.querySelectorAll('[role="menuitem"]:not(:disabled)')];
+    if (!items.length) return;
+    event.preventDefault();
+    const currentIndex = items.indexOf(document.activeElement);
+    const nextIndex = event.key === "Home"
+      ? 0
+      : event.key === "End"
+        ? items.length - 1
+        : event.key === "ArrowDown"
+          ? (currentIndex + 1 + items.length) % items.length
+          : (currentIndex - 1 + items.length) % items.length;
+    items[nextIndex].focus();
+  };
 
   useEffect(() => {
     if (!projectMenu) return undefined;
@@ -1182,80 +1207,68 @@ function Sidebar({
       </div>
 
       <div className="product-row">
-        <div className="product-switcher-shell" ref={productMenuRef}>
+        <div className="product-switcher-shell">
           <button
-            ref={productTriggerRef}
-            className={`product-switcher ${productMenuOpen ? "is-open" : ""}`}
+            className="product-switcher"
             type="button"
-            aria-label="切换 Rux 工作台"
-            aria-haspopup="menu"
-            aria-expanded={productMenuOpen}
-            aria-controls={productMenuOpen ? "product-switcher-menu" : undefined}
-            title="Rux 工作台"
-            onClick={() => setProductMenuOpen((open) => !open)}
+            aria-label="Rux 工作台"
+            title="工作台切换结果尚缺当前客户端点击证据"
+            disabled
           >
             <span className="product-name">Rux</span>
             <ChevronDown size={15} />
           </button>
-          {productMenuOpen ? (
-            <div id="product-switcher-menu" className="product-switcher-menu" role="menu" aria-label="工作台">
-              <button
-                autoFocus
-                type="button"
-                role="menuitemradio"
-                aria-checked="true"
-                className="is-current"
-                onClick={() => {
-                  setProductMenuOpen(false);
-                  window.requestAnimationFrame(() => productTriggerRef.current?.focus());
-                }}
-              >
-                <Check size={15} aria-hidden="true" />
-                <span><strong>Rux 工作台</strong><small>当前工作台</small></span>
-              </button>
-            </div>
-          ) : null}
         </div>
         <div className="product-row-actions">
           <button
+            ref={searchTriggerRef}
             className={`icon-button ${searchOpen ? "is-active" : ""}`}
             type="button"
-            onClick={() => setSearchOpen((value) => {
-              if (value) onSearch("");
-              return !value;
-            })}
+            onClick={() => {
+              setAccountMenuOpen(false);
+              setNotificationsOpen(false);
+              setSearchOpen((value) => {
+                if (value) onSearch("");
+                return !value;
+              });
+            }}
             aria-label="搜索任务"
             aria-pressed={searchOpen}
           ><Search size={18} /></button>
           <div className="sidebar-notification-shell">
-            <button className={`icon-button ${notificationsOpen ? "is-active" : ""}`} type="button" onClick={() => setNotificationsOpen((open) => !open)} aria-label="通知" aria-expanded={notificationsOpen}><Bell size={18} /></button>
+            <button ref={notificationTriggerRef} className={`icon-button ${notificationsOpen ? "is-active" : ""}`} type="button" onClick={() => {
+              setAccountMenuOpen(false);
+              setSearchOpen(false);
+              onSearch("");
+              setNotificationsOpen((open) => !open);
+            }} aria-label="通知" aria-expanded={notificationsOpen}><Bell size={18} /></button>
             {notificationsOpen ? <div className="sidebar-notification-popover" role="status"><strong>通知</strong><span>暂时没有新通知</span></div> : null}
           </div>
         </div>
       </div>
 
-      <div className="sidebar-nav" aria-label="主要导航">
+      <nav className="sidebar-nav" aria-label="主要导航">
         <button type="button" onClick={onNewTask}>
           <SquarePen size={18} />
           <span>新对话</span>
         </button>
-        <button type="button" onClick={onOpenChanges} disabled={activeWorkspace.placeholder} title={activeWorkspace.placeholder ? "请先打开项目" : undefined}>
+        <button type="button" className={pullRequestsOpen ? "is-active" : ""} aria-current={pullRequestsOpen ? "page" : undefined} onClick={onOpenPullRequests} disabled={activeWorkspace.placeholder} title={activeWorkspace.placeholder ? "请先打开项目" : undefined}>
           <GitPullRequest size={18} />
           <span>拉取请求</span>
         </button>
-        <button type="button" onClick={onOpenEnvironment} disabled={activeWorkspace.placeholder} title={activeWorkspace.placeholder ? "请先打开项目" : undefined}>
+        <button type="button" className={sitesOpen ? "is-active" : ""} aria-current={sitesOpen ? "page" : undefined} onClick={onOpenSites}>
           <PanelsTopLeft size={18} />
           <span>站点</span>
         </button>
-        <button type="button" onClick={() => setNotificationsOpen(true)}>
+        <button type="button" className={scheduledOpen ? "is-active" : ""} aria-current={scheduledOpen ? "page" : undefined} onClick={onOpenScheduled}>
           <Clock3 size={18} />
           <span>已安排</span>
         </button>
-        <button type="button" onClick={onOpenSettings}>
+        <button type="button" className={pluginsOpen ? "is-active" : ""} aria-current={pluginsOpen ? "page" : undefined} onClick={onOpenPlugins}>
           <AtSign size={18} />
           <span>插件</span>
         </button>
-      </div>
+      </nav>
 
       {searchOpen ? (
         <div className="sidebar-search-wrap">
@@ -1424,25 +1437,29 @@ function Sidebar({
       </nav>
 
       {projectMenu ? createPortal(
-        <div className="project-info-popover" role="menu" aria-label={`项目 ${projectMenu.project.name}`} style={{ left: projectMenu.left, top: projectMenu.top }}>
+        <div className="project-info-popover" role="dialog" aria-label={`项目 ${projectMenu.project.name}`} style={{ left: projectMenu.left, top: projectMenu.top }}>
           <div className="project-info-title"><Folder size={16} /><strong>{projectMenu.project.name}</strong><button type="button" className={pinnedProjectIds.includes(projectMenu.project.id) ? "is-pinned" : ""} onClick={() => onTogglePinProject(projectMenu.project.id)} onPointerUp={(event) => event.currentTarget.blur()} aria-label={pinnedProjectIds.includes(projectMenu.project.id) ? `取消置顶项目 ${projectMenu.project.name}` : `置顶项目 ${projectMenu.project.name}`} title={pinnedProjectIds.includes(projectMenu.project.id) ? "取消置顶项目" : "置顶项目"}><Pin size={14} /></button></div>
           <div className="project-info-row"><MessageCircle size={14} /><span>{projectMenu.taskCount} 个任务</span></div>
           <div className="project-info-divider" />
           <div className="project-info-row project-info-path"><Folder size={14} /><span>{projectMenu.project.primary.path.replace(/^\/Users\/[^/]+/, "~")}</span></div>
-          <div className="project-info-divider" />
-          <button type="button" role="menuitem" onClick={() => { const id = projectMenu.project.id; setProjectMenu(null); onOpenWorkingCopies(id); }}><Settings size={14} /><span>编辑项目</span></button>
         </div>,
         document.body,
       ) : null}
 
       <div className="sidebar-footer" ref={accountMenuRef}>
         <button
+          ref={accountTriggerRef}
           type="button"
           className="account-switcher"
           aria-label="账户菜单"
           aria-expanded={accountMenuOpen}
           title="账户菜单"
-          onClick={() => setAccountMenuOpen((open) => !open)}
+          onClick={() => {
+            setNotificationsOpen(false);
+            setSearchOpen(false);
+            onSearch("");
+            setAccountMenuOpen((open) => !open);
+          }}
         >
           <span className="account-avatar account-initials">{String(accountLabel || "Rux").trim().slice(0, 2).toUpperCase()}</span>
           <span className="workspace-copy">
@@ -1451,14 +1468,14 @@ function Sidebar({
           <CircleHelp size={17} />
         </button>
         {accountMenuOpen ? (
-          <div className="account-popover" role="menu" aria-label="账户菜单">
+          <div className="account-popover" role="menu" aria-label="账户菜单" onKeyDown={handleAccountMenuKeyDown}>
             <button type="button" className="account-popover-profile" role="menuitem" onClick={() => { setAccountMenuOpen(false); onOpenAccounts(); }}>
               <span className="account-avatar account-initials">{String(accountLabel || "Rux").trim().slice(0, 2).toUpperCase()}</span><strong>{accountLabel}</strong>
             </button>
             <div className="account-popover-separator" />
-            <button type="button" role="menuitem" disabled={accountSyncing} onClick={() => void onSyncChatGpt?.()}><RefreshCw size={17} className={accountSyncing ? "status-running" : ""} /><span>{accountSyncing ? "正在同步" : "同步 ChatGPT"}</span><small>{accountSyncedAt || "手动"}</small></button>
-            <button type="button" role="menuitem" onClick={() => { setAccountMenuOpen(false); onOpenAccounts(); }}><Activity size={17} /><span>使用情况</span><small>{accountUsageLabel}</small></button>
-            <button type="button" role="menuitem"><Share2 size={17} /><span>邀请好友</span></button>
+            <button type="button" role="menuitem" disabled={accountSyncing} onClick={() => { setAccountMenuOpen(false); void onSyncChatGpt?.(); onOpenAccounts(); }}><Activity size={17} className={accountSyncing ? "status-running" : ""} /><span>{accountSyncing ? "正在刷新" : "使用情况"}</span><small>{accountUsageLabel}</small></button>
+            <button type="button" role="menuitem" disabled title="宠物显示结果尚缺当前客户端点击证据"><Ghost size={17} /><span>显示宠物</span></button>
+            <button type="button" role="menuitem" disabled title="邀请流程尚未完成当前客户端验收"><Share2 size={17} /><span>邀请好友</span></button>
             <button type="button" role="menuitem" onClick={() => { setAccountMenuOpen(false); onOpenSettings(); }}><Settings size={17} /><span>设置</span><kbd>⌘,</kbd></button>
             <button type="button" role="menuitem" onClick={() => { setAccountMenuOpen(false); onLogout?.(); }}><LogOut size={17} /><span>{accountConnected ? "退出登录" : "登录"}</span></button>
             {accountSyncError ? <p className="account-popover-error" role="alert">{accountSyncError}</p> : null}
@@ -1591,7 +1608,7 @@ function MessageBody({ text }) {
               <header>
                 <span>{language === "text" || language === "txt" ? "纯文本" : language || "代码"}</span>
                 <div>
-                  <button type="button" aria-label="应用代码片段" title="应用代码片段"><Sparkles size={13} /></button>
+                  <button type="button" aria-label="应用代码片段" title="应用代码片段的目标行为尚缺当前客户端点击证据" disabled><Sparkles size={13} /></button>
                   <button type="button" aria-label="复制代码片段" title="复制" onClick={() => void navigator.clipboard?.writeText(block)}><Copy size={13} /></button>
                 </div>
               </header>
@@ -1621,12 +1638,11 @@ function Message({ message, agent, run }) {
       >
         <div className="message-author">
           {ruxAgentLabel(message.agent || agent)}
-          <span>{message.adapter ? `${ruxAdapterLabel(message.adapter)} · ` : ""}{message.time || "现在"}</span>
+          <span>{message.time || "现在"}</span>
         </div>
-        {run ? <div className="message-run-evidence" aria-label="本回合模型与 Token 证据">
+        {run ? <div className="message-run-evidence" aria-label="本回合模型与令牌证据">
           <span><Bot size={11} />{ruxModelLabel(run.model || run.modelDecision?.actualModel || "未报告")}</span>
-          {run.modelDecision?.mode === "auto" ? <span>Auto · {run.modelDecision.classification === "complex" ? "复杂任务" : "简单任务"}</span> : null}
-          <span>{tokenUsageTotal(run.tokenUsage) === undefined ? "Token 未报告" : `${tokenUsageTotal(run.tokenUsage).toLocaleString("en-US")} tokens`}</span>
+          <span>{tokenUsageTotal(run.tokenUsage) === undefined ? "令牌未报告" : `${tokenUsageTotal(run.tokenUsage).toLocaleString("en-US")} 个令牌`}</span>
         </div> : null}
         <MessageBody text={message.text} />
       </article>
@@ -1639,14 +1655,14 @@ function Message({ message, agent, run }) {
         {message.images.map((image) => <img key={image.id} src={localImageSource(image.path)} alt={image.name} />)}
       </div> : null}
       <MessageBody text={message.text} />
-      <div className="message-author">You <span>{message.time}</span></div>
+      <div className="message-author">你 <span>{message.time}</span></div>
     </article>
   );
 }
 
 function PermissionCard({ request, busy, error, onDecision }) {
   const actionLabels = {
-    "workspace.write": "创建、修改或删除 Workspace 文件",
+    "workspace.write": "创建、修改或删除工作区文件",
     "command.execute": "执行命令",
     "file.write": "写入文件",
     "network.access": "访问网络",
@@ -1655,15 +1671,17 @@ function PermissionCard({ request, busy, error, onDecision }) {
   const singleAction = request.scope.appliesTo === "single-action";
   const workspacePreflight = request.action === "workspace.write" && !request.provider;
   const title = request.action === "command.execute"
-    ? "允许 Rux 运行此命令？"
+    ? "允许 Codex 运行此命令？"
     : request.action === "file.write"
-      ? "允许 Rux 编辑此文件？"
+      ? "允许 Codex 编辑此文件？"
       : request.action === "network.access"
-        ? "允许 Rux 访问网络？"
+        ? "允许 Codex 访问网络？"
         : singleAction
-          ? "允许 Rux 使用此工具？"
-          : "允许 Rux 修改工作区？";
-  const providerLabel = request.provider ? "Rux 请求批准" : "Rux 工作区批准";
+          ? "允许 Codex 使用此工具？"
+          : "允许 Codex 修改工作区？";
+  const providerLabel = request.provider === "codex"
+    ? "Codex 请求批准"
+    : request.provider ? "工具请求批准" : "工作区权限请求";
   return (
     <section
       className="permission-request-card"
@@ -1680,8 +1698,8 @@ function PermissionCard({ request, busy, error, onDecision }) {
         </div>
       </header>
       <dl>
-        <div><dt>Action</dt><dd>{actionLabels[request.action] || request.action}</dd></div>
-        <div><dt>Scope</dt><dd><code title={request.scope.path}>{request.scope.path}</code><small>{singleAction ? "仅这一项操作" : "仅本次 Run"}</small></dd></div>
+        <div><dt>操作</dt><dd>{actionLabels[request.action] || request.action}</dd></div>
+        <div><dt>范围</dt><dd><code title={request.scope.path}>{request.scope.path}</code><small>{singleAction ? "仅这一项操作" : "仅本次运行"}</small></dd></div>
       </dl>
       <p id={`permission-impact-${request.id}`}>{request.impact}</p>
       {error ? <div className="permission-error" role="alert"><CircleAlert size={14} />{error}</div> : null}
@@ -1712,7 +1730,7 @@ function WorkspaceChangesCard({ state, onOpenChanges, onRestoreChanges }) {
           <button type="button" className="review-button" onClick={() => onOpenChanges(files[0].path)}>审查</button>
         </span>
       </header>
-      <p>Workspace 全局状态，可能包含本次 Run 开始前已有的改动；本次 Run 的文件归属以 Run Evidence 为准。</p>
+      <p>工作区全局状态，可能包含本次运行开始前已有的改动；文件归属以本次运行证据为准。</p>
       <div className="transcript-change-files">
         {files.slice(0, 3).map((file) => {
           const segments = file.path.split("/");
@@ -1731,7 +1749,7 @@ function WorkspaceChangesCard({ state, onOpenChanges, onRestoreChanges }) {
   );
 }
 
-function TaskTimeline({ task, streamingMessages = [], changes, onOpenChanges, onRestoreChanges, onOpenRun, onWaitingAction, onPermissionDecision, permissionBusy, permissionError, taskActionError, onDismissTaskActionError, agentRevisionUpdate, onCreateTaskWithLatestAgent, onRetrySession, onCreateFreshTask, onOpenHandoff, onOpenLocalData, workspacePlaceholder = false }) {
+function TaskTimeline({ task, streamingMessages = [], changes, onOpenChanges, onRestoreChanges, onOpenRun, onWaitingAction, onPermissionDecision, permissionBusy, permissionError, taskActionError, onDismissTaskActionError, onRetrySession, onCreateFreshTask, workspacePlaceholder = false }) {
   const isWaiting = task.status === "waiting";
   const isCompleted = task.status === "completed";
   const hasOutcome = task.status === "completed" || task.status === "failed";
@@ -1774,18 +1792,18 @@ function TaskTimeline({ task, streamingMessages = [], changes, onOpenChanges, on
   const streamingLength = streamingMessages.reduce((total, message) => total + message.text.length, 0);
   const followKey = `${task.id}:${task.messages.length}:${streamingMessages.length}:${streamingLength}:${latestRun?.events?.length || 0}:${pendingPermission?.id || ""}:${task.status}`;
   const responseLead = task.status === "running"
-    ? `${ruxAgentLabel(task.agent)} 正在执行这个 Run。下面的活动和消息来自真实 Runtime 事件。`
+    ? "Codex 正在执行这次运行。下面的活动和消息来自真实运行事件。"
     : task.status === "blocked"
       ? pendingPermission?.provider
-        ? `${ruxAgentLabel(task.agent)} 已暂停在一项 provider-native 权限请求前；请审查下面的具体范围与持续时间。`
-        : `${ruxAgentLabel(task.agent)} 尚未启动写入操作；请先审查下面的权限范围。`
+        ? "Codex 已暂停，等待你审查下面的具体权限范围与持续时间。"
+        : "Codex 尚未启动写入操作；请先审查下面的权限范围。"
     : task.status === "stopped"
-      ? latestRun?.error || "Run 已停止；已经收到的消息和事件仍然保留。"
+      ? latestRun?.error || "运行已停止；已经收到的消息和事件仍然保留。"
       : task.status === "failed"
-        ? latestRun?.error || "Run 已结束，但 Runtime 或验证证据报告失败。"
+        ? latestRun?.error || "运行已结束，但运行环境或验证证据报告失败。"
         : task.status === "interrupted"
-          ? latestRun?.error || "Rux 退出时 Agent 进程已终止；该 Run 不能直接恢复。"
-      : "Run 已结束。请以 Agent 消息、事件记录和 Workspace Changes 为准审查结果。";
+          ? latestRun?.error || "Rux 退出时 Codex 进程已终止；这次运行不能直接恢复。"
+      : "运行已结束。请以 Codex 消息、事件记录和工作区变更为准审查结果。";
 
   useEffect(() => {
     if (!previousFollowKeyRef.current) {
@@ -1813,12 +1831,11 @@ function TaskTimeline({ task, streamingMessages = [], changes, onOpenChanges, on
 
   return (
     <div className="timeline-region">
-      <div ref={timelineScrollRef} className="timeline-scroll" onScroll={(event) => {
+      <div ref={timelineScrollRef} className="timeline-scroll" role="region" aria-label="对话记录" aria-busy={["running", "blocked"].includes(task.status)} tabIndex={0} onScroll={(event) => {
         const node = event.currentTarget;
         setShowJumpToLatest(node.scrollHeight - node.scrollTop - node.clientHeight > 180);
       }}>
         <div className="timeline-content">
-        {!workspacePlaceholder && !task.importedSession && task.messages.length ? <div className="task-context-actions"><button type="button" onClick={onOpenHandoff}><GitCompareArrows size={13} />复制为新任务</button></div> : null}
         {taskActionError ? (
           <div className="account-error" role="alert">
             <CircleAlert size={15} />
@@ -1827,39 +1844,23 @@ function TaskTimeline({ task, streamingMessages = [], changes, onOpenChanges, on
           </div>
         ) : null}
         {task.importedSession ? (
-          <section className="agent-revision-notice session-imported-notice" aria-label="导入的 Agent 会话">
+          <section className="agent-revision-notice session-imported-notice" aria-label="导入的对话">
             <span className="agent-revision-notice-icon"><History size={15} /></span>
-            <span><strong>已导入为 Rux 独立副本</strong><small>{task.importedSession.source === "codex-import" ? "Codex 导入" : "Claude Code 导入"} · 后续消息使用 Rux 新 Session，原 Provider 会话不会被修改。</small></span>
-            <div className="session-imported-actions">
-              <button type="button" onClick={onOpenHandoff}><GitCompareArrows size={13} />复制为新任务</button>
-              <button type="button" onClick={onOpenLocalData}><Database size={13} />管理本地数据</button>
-            </div>
+            <span><strong>已导入为 Rux 独立副本</strong><small>{task.importedSession.source === "codex-import" ? "Codex 对话" : "外部对话"} · 后续消息使用新的 Codex 会话，来源会话保持不变。</small></span>
           </section>
         ) : null}
         {sessionRecovery ? (
-          <section className="session-recovery-card" role="alert" aria-label="Native Session 恢复失败">
+          <section className="session-recovery-card" role="alert" aria-label="Codex 会话恢复失败">
             <span className="session-recovery-icon"><CircleAlert size={17} /></span>
             <div>
-              <strong>未能恢复原 Native Session</strong>
+              <strong>未能恢复原 Codex 会话</strong>
               <p>{sessionRecovery.error}</p>
-              <small>{sessionRecovery.link.kind === "codex-thread" ? "Codex Thread" : "Claude Session"} · {sessionRecovery.link.nativeSessionId}</small>
+              <small>{sessionRecovery.link.kind === "codex-thread" ? "Codex 会话" : "原会话"} · {sessionRecovery.link.nativeSessionId}</small>
             </div>
             <div className="session-recovery-actions">
-              <button type="button" className="secondary-button" onClick={onRetrySession}>重试原 Session</button>
+              <button type="button" className="secondary-button" onClick={onRetrySession}>重试原会话</button>
               <button type="button" className="primary-button" onClick={onCreateFreshTask}>创建新任务</button>
             </div>
-          </section>
-        ) : null}
-        {agentRevisionUpdate ? (
-          <section className="agent-revision-notice" aria-label="Agent 有新 Revision">
-            <span className="agent-revision-notice-icon"><Copy size={15} /></span>
-            <span>
-              <strong>{agentRevisionUpdate.profile.name} 已有 Revision {agentRevisionUpdate.latestRevisionNumber}</strong>
-              <small>此任务继续固定使用 Revision {agentRevisionUpdate.currentRevisionNumber || "旧版本"}；消息、Run 和 Native Session 不会自动迁移。</small>
-            </span>
-            <button type="button" onClick={onCreateTaskWithLatestAgent} disabled={!agentRevisionUpdate.available} title={agentRevisionUpdate.available ? "基于最新版 Agent 创建空白任务" : agentRevisionUpdate.unavailableReason}>
-              使用新版创建新任务
-            </button>
           </section>
         ) : null}
         {hasOutcome && elapsed && elapsed !== "—" ? (
@@ -1879,8 +1880,8 @@ function TaskTimeline({ task, streamingMessages = [], changes, onOpenChanges, on
             <React.Fragment key={message.id}>
               {showRunDivider ? (
                 <div className="transcript-run-divider">
-                  <span>Run #{runIndex >= 0 ? runIndex + 1 : "?"}</span>
-                  <small>{ruxAgentLabel(message.agent || task.agent)}{message.adapter ? ` · ${ruxAdapterLabel(message.adapter)}` : ""}</small>
+                  <span>运行 #{runIndex >= 0 ? runIndex + 1 : "?"}</span>
+                  <small>{ruxAgentLabel(message.agent || task.agent)}</small>
                 </div>
               ) : null}
               <Message message={message} agent={task.agent} run={showRunEvidence ? messageRun : undefined} />
@@ -1892,7 +1893,7 @@ function TaskTimeline({ task, streamingMessages = [], changes, onOpenChanges, on
           <section className="waiting-card">
             <span className="waiting-icon"><Play size={18} /></span>
             <div>
-              <h3>这个 Run 还未开始</h3>
+              <h3>这次运行还未开始</h3>
               <p>先打开一个项目，然后描述你想完成的任务。</p>
             </div>
             <button type="button" className="primary-button" onClick={onWaitingAction}>打开项目</button>
@@ -1916,7 +1917,7 @@ function TaskTimeline({ task, streamingMessages = [], changes, onOpenChanges, on
               <details className="process-disclosure">
                 <summary>
                   <Sparkles size={15} />
-                  <span>Reasoning summary</span>
+                  <span>推理摘要</span>
                   <ChevronRight size={15} className="disclosure-chevron" />
                 </summary>
                 <p>{String(reasoning)}</p>
@@ -1926,7 +1927,7 @@ function TaskTimeline({ task, streamingMessages = [], changes, onOpenChanges, on
             {task.activity.length ? <details className="process-disclosure">
               <summary>
                 <Search size={15} />
-                <span>{task.activity.length} 个 Runtime 活动</span>
+                <span>{task.activity.length} 个运行活动</span>
                 <ChevronRight size={15} className="disclosure-chevron" />
               </summary>
               <div className="compact-activity-list">
@@ -1938,7 +1939,7 @@ function TaskTimeline({ task, streamingMessages = [], changes, onOpenChanges, on
               <details className="process-disclosure plan-disclosure">
                 <summary>
                   <LayoutList size={15} />
-                  <span>Plan {doneCount} of {task.plan.length}</span>
+                  <span>计划 {doneCount} / {task.plan.length}</span>
                   <ChevronRight size={15} className="disclosure-chevron" />
                 </summary>
                 <ol>
@@ -1951,16 +1952,16 @@ function TaskTimeline({ task, streamingMessages = [], changes, onOpenChanges, on
               <div className={`agent-run-status is-${task.status}`}>
                 <StatusIcon status={task.status} size={15} />
                 <span>{task.status === "stopped" ? "运行已停止" : task.status === "failed" ? "运行失败" : task.status === "interrupted" ? "运行已中断" : task.status === "blocked" ? "等待权限决定" : "正在执行任务"}</span>
-                <small>{ruxAgentLabel(task.agent)} · {ruxModelLabel(task.model)}</small>
+                <small>Codex · {ruxModelLabel(task.model)}</small>
               </div>
             ) : null}
 
             {hasOutcome && latestRun ? (
               <>
                 {!hasAssistantMessage ? <p className="agent-result-copy">
-                  {task.status === "failed" ? "Run 已结束并包含失败证据" : "Runtime 已报告完成"}
+                  {task.status === "failed" ? "运行已结束并包含失败证据" : "Codex 已完成"}
                   {latestRun.durationMs ? ` · ${formatDuration(latestRun.durationMs)}` : ""}
-                  {latestRun.turns ? ` · ${latestRun.turns} turn` : ""}。
+                  {latestRun.turns ? ` · ${latestRun.turns} 个回合` : ""}。
                   {!verifications.length ? "未收到结构化验证证据，不会显示测试或构建通过。" : "验证结论只来自下方结构化证据。"}
                 </p> : null}
                 {verifications.length ? (
@@ -1978,10 +1979,10 @@ function TaskTimeline({ task, streamingMessages = [], changes, onOpenChanges, on
               <button type="button" className="run-change-callout" onClick={onOpenRun}>
                 <span className="change-callout-icon"><GitCompareArrows size={18} /></span>
                 <span className="change-callout-copy">
-                  <strong>Run changed {runPatch.totals.files} files</strong>
-                  <span><b>+{runPatch.totals.additions}</b> <em>−{runPatch.totals.deletions}</em> · baseline-owned</span>
+                  <strong>本次运行修改 {runPatch.totals.files} 个文件</strong>
+                  <span><b>+{runPatch.totals.additions}</b> <em>−{runPatch.totals.deletions}</em> · 本次运行证据</span>
                 </span>
-                <span className="change-review-label">Evidence <ChevronRight size={17} /></span>
+                <span className="change-review-label">查看证据 <ChevronRight size={17} /></span>
               </button>
             ) : null}
 
@@ -1989,9 +1990,9 @@ function TaskTimeline({ task, streamingMessages = [], changes, onOpenChanges, on
             {hasOutcome && (hasAssistantMessage || totals?.files) ? (
               <div className="transcript-feedback" aria-label="回复操作">
                 <button type="button" onClick={() => void navigator.clipboard?.writeText(task.messages.filter((message) => message.role === "assistant").at(-1)?.text || "")} aria-label="复制回复"><Copy size={15} /></button>
-                <button type="button" aria-label="赞"><ThumbsUp size={15} /></button>
-                <button type="button" aria-label="踩"><ThumbsDown size={15} /></button>
-                <button type="button" aria-label="展开回复"><Maximize2 size={15} /></button>
+                <button type="button" aria-label="赞" title="反馈提交接口与确认状态尚未完成目标客户端验收" disabled><ThumbsUp size={15} /></button>
+                <button type="button" aria-label="踩" title="反馈提交接口与确认状态尚未完成目标客户端验收" disabled><ThumbsDown size={15} /></button>
+                <button type="button" aria-label="展开回复" title="展开回复行为尚缺当前客户端点击证据" disabled><Maximize2 size={15} /></button>
               </div>
             ) : null}
           </section>
@@ -2007,33 +2008,44 @@ function TaskTimeline({ task, streamingMessages = [], changes, onOpenChanges, on
   );
 }
 
-function Composer({ task, draft, onDraft, onSend, onAgentChange, onModelChange, onReasoningEffortChange, onServiceTierChange, onPermissionChange, onOpenAccounts, onChooseContextFiles, onRemoveContextFile, onPasteImages, pendingImages = [], onRemoveImage, onRequestModelCatalog, modelCatalogLoading = false, contextBusy = false, interactionLockReason = "", focusRef, agentChoices, codexModels, codexCatalog, canRun = true, canSwitchAgent = true }) {
+function Composer({ task, draft, onDraft, onSend, onQueue, onOpenReviewCommand, queuedInputs = [], onRemoveQueuedInput, onModelChange, onReasoningEffortChange, onServiceTierChange, onPermissionChange, onOpenAccounts, onChooseContextFiles, onRemoveContextFile, onPasteImages, pendingImages = [], onRemoveImage, onRequestModelCatalog, modelCatalogLoading = false, contextBusy = false, interactionLockReason = "", focusRef, agentChoices, codexModels, codexCatalog, canRun = true }) {
   const [optionsOpen, setOptionsOpen] = useState("");
   const [modelMenuSection, setModelMenuSection] = useState("");
   const [dictating, setDictating] = useState(false);
-  const [manualModel, setManualModel] = useState(task.model || "");
+  const [speechError, setSpeechError] = useState("");
   const composerRef = useRef(null);
   const textareaRef = useRef(null);
+  const moreTriggerRef = useRef(null);
+  const permissionTriggerRef = useRef(null);
+  const modelTriggerRef = useRef(null);
+  const morePanelRef = useRef(null);
+  const permissionMenuRef = useRef(null);
+  const modelMenuRef = useRef(null);
+  const modelSubmenuRef = useRef(null);
+  const advancedPanelRef = useRef(null);
+  const modelReturnSectionRef = useRef("");
+  const speechRecognitionRef = useRef(null);
   const isActive = task.status === "running" || task.status === "blocked";
   const selectedAgentId = task.agentProfileId || runtimeAdapterForTask(task);
   const selectedAgentChoice = agentChoices.find((choice) => choice.id === selectedAgentId);
-  const taskAutoModelPolicy = task.agentRevisionSnapshot?.autoModelPolicy
-    || (selectedAgentChoice?.agentRevisionId === task.agentRevisionId ? selectedAgentChoice.autoModelPolicy : undefined);
   const selectedAgentAvailable = Boolean(selectedAgentChoice?.available);
   const selectedCatalogModel = codexCatalogModel(codexModels, task.model);
   const taskUsesDefaultModel = /^(codex|rux) default$/i.test(String(task.model || ""));
   const effectiveTaskModel = taskUsesDefaultModel && selectedCatalogModel ? selectedCatalogModel.model : task.model;
+  const reviewCommandMatch = !pendingImages.length && /^\/(?:r(?:e(?:v(?:i(?:e(?:w)?)?)?)?)?)?$/i.test(draft.trim());
   const submit = () => {
-    if (!isActive && selectedAgentAvailable && (draft.trim() || pendingImages.length)) onSend();
+    if (!selectedAgentAvailable || (!draft.trim() && !pendingImages.length)) return;
+    if (draft.trim().toLocaleLowerCase() === "/review" && !pendingImages.length) {
+      onOpenReviewCommand();
+      return;
+    }
+    if (isActive) onQueue();
+    else onSend();
   };
   const modelOptions = Array.from(new Set([
     effectiveTaskModel,
-    ...(taskAutoModelPolicy ? ["Auto"] : []),
-    ...(selectedAgentChoice?.catalogModels || []).map((item) => item.model || item.id),
-    ...(selectedAgentChoice?.verifiedModels || []).map((item) => item.model),
-    ...(runtimeAdapterForTask(task) === "codex"
-      ? [...((codexModels || []).length ? [] : ["Rux default"]), ...(codexModels || []).map((model) => model.model)]
-      : runtimeAdapterForTask(task) === "claude-code" ? ["Claude default"] : ["Rux prototype"]),
+    ...((codexModels || []).length ? [] : ["Rux default"]),
+    ...(codexModels || []).map((model) => model.model),
   ].filter(Boolean)));
   const reasoningOptions = runtimeAdapterForTask(task) === "codex"
     ? codexReasoningOptions(codexModels, task.model)
@@ -2073,6 +2085,92 @@ function Composer({ task, draft, onDraft, onSend, onAgentChange, onModelChange, 
   const selectedReasoningIndex = Math.max(0, reasoningOptions.findIndex((option) => option.reasoningEffort === selectedReasoning));
   const advancedProgress = reasoningOptions.length > 1 ? `${(selectedReasoningIndex / (reasoningOptions.length - 1)) * 100}%` : "0%";
   const selectedServiceTier = serviceTierOptions.find((tier) => tier.id === (task.serviceTier || "")) || serviceTierOptions[0];
+  const speechRecognitionConstructor = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const speechSupported = Boolean(speechRecognitionConstructor && navigator.mediaDevices?.getUserMedia);
+  const enabledMenuItems = (container) => [...(container?.querySelectorAll('[role="menuitem"]:not(:disabled), [role="menuitemradio"]:not(:disabled), button:not(:disabled)') || [])];
+  const focusFirstOrSelected = (container) => {
+    const items = enabledMenuItems(container);
+    (items.find((item) => item.getAttribute("aria-checked") === "true") || items[0])?.focus();
+  };
+  const restoreComposerTrigger = (section) => {
+    const trigger = section === "more" ? moreTriggerRef.current : section === "permission" ? permissionTriggerRef.current : modelTriggerRef.current;
+    window.requestAnimationFrame(() => trigger?.focus());
+  };
+  const handleComposerMenuKeyDown = (event) => {
+    if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+    const items = enabledMenuItems(event.currentTarget);
+    if (!items.length) return;
+    event.preventDefault();
+    const currentIndex = items.indexOf(document.activeElement);
+    const nextIndex = event.key === "Home"
+      ? 0
+      : event.key === "End"
+        ? items.length - 1
+        : event.key === "ArrowDown"
+          ? (currentIndex + 1 + items.length) % items.length
+          : (currentIndex - 1 + items.length) % items.length;
+    items[nextIndex].focus();
+  };
+
+  const stopDictation = () => {
+    try {
+      speechRecognitionRef.current?.stop();
+    } catch {
+      // Recognition may already have reached its terminal state.
+    }
+    speechRecognitionRef.current = null;
+    setDictating(false);
+  };
+
+  const toggleDictation = async () => {
+    if (dictating) {
+      stopDictation();
+      textareaRef.current?.focus();
+      return;
+    }
+    if (!speechSupported || !speechRecognitionConstructor) {
+      setSpeechError("当前系统不支持语音输入。");
+      return;
+    }
+    setSpeechError("");
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      stream.getTracks().forEach((track) => track.stop());
+      const recognition = new speechRecognitionConstructor();
+      recognition.lang = navigator.language || "zh-CN";
+      recognition.continuous = true;
+      recognition.interimResults = false;
+      recognition.onresult = (event) => {
+        let transcript = "";
+        for (let index = event.resultIndex; index < event.results.length; index += 1) {
+          if (event.results[index].isFinal) transcript += event.results[index][0]?.transcript || "";
+        }
+        const spoken = transcript.trim();
+        if (spoken) onDraft((current) => `${String(current || "").trimEnd()}${current ? " " : ""}${spoken}`);
+      };
+      recognition.onerror = (event) => {
+        setSpeechError(event.error === "not-allowed" || event.error === "service-not-allowed"
+          ? "麦克风权限未授予。请在系统设置中允许 Rux 使用麦克风。"
+          : `语音输入失败：${event.error || "未知错误"}`);
+        speechRecognitionRef.current = null;
+        setDictating(false);
+      };
+      recognition.onend = () => {
+        speechRecognitionRef.current = null;
+        setDictating(false);
+      };
+      speechRecognitionRef.current = recognition;
+      recognition.start();
+      setDictating(true);
+    } catch (error) {
+      speechRecognitionRef.current = null;
+      setDictating(false);
+      const message = error instanceof Error ? error.message : String(error);
+      setSpeechError(/permission|denied|not allowed/i.test(message)
+        ? "麦克风权限未授予。请在系统设置中允许 Rux 使用麦克风。"
+        : `语音输入失败：${message}`);
+    }
+  };
 
   useEffect(() => {
     if (!optionsOpen) return undefined;
@@ -2084,8 +2182,17 @@ function Composer({ task, draft, onDraft, onSend, onAgentChange, onModelChange, 
     };
     const closeOnEscape = (event) => {
       if (event.key === "Escape") {
-        if (modelMenuSection) setModelMenuSection("");
-        else setOptionsOpen("");
+        event.preventDefault();
+        event.stopPropagation();
+        if (modelMenuSection) {
+          const parentSection = modelMenuSection;
+          modelReturnSectionRef.current = parentSection;
+          setModelMenuSection("");
+        } else {
+          const closingSection = optionsOpen;
+          setOptionsOpen("");
+          restoreComposerTrigger(closingSection);
+        }
       }
     };
     document.addEventListener("pointerdown", close, true);
@@ -2097,21 +2204,55 @@ function Composer({ task, draft, onDraft, onSend, onAgentChange, onModelChange, 
   }, [modelMenuSection, optionsOpen]);
 
   useEffect(() => {
-    if (optionsOpen === "more") setManualModel(task.model || "");
-  }, [optionsOpen, task.id, task.model]);
+    if (!optionsOpen) return undefined;
+    const frame = window.requestAnimationFrame(() => {
+      if (optionsOpen === "more") focusFirstOrSelected(morePanelRef.current);
+      else if (optionsOpen === "permission") focusFirstOrSelected(permissionMenuRef.current);
+      else if (modelMenuSection === "advanced") focusFirstOrSelected(advancedPanelRef.current);
+      else if (modelMenuSection) focusFirstOrSelected(modelSubmenuRef.current);
+      else if (modelReturnSectionRef.current) {
+        const parentSection = modelReturnSectionRef.current;
+        modelReturnSectionRef.current = "";
+        modelMenuRef.current?.querySelector(`[data-menu-section="${parentSection}"]`)?.focus();
+      } else focusFirstOrSelected(modelMenuRef.current);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [modelMenuSection, optionsOpen]);
 
   useEffect(() => {
     if (!canRun || isActive) {
+      stopDictation();
       setOptionsOpen(false);
       setModelMenuSection("");
     }
   }, [canRun, isActive]);
 
+  useEffect(() => () => {
+    try {
+      speechRecognitionRef.current?.abort();
+    } catch {
+      // Component teardown owns the recognition lifecycle.
+    }
+  }, []);
+
   const missingFromCatalog = runtimeAdapterForTask(task) === "codex" && catalogModelMissing(task, codexCatalog);
 
   return (
     <div className="composer-dock">
+      {queuedInputs.length ? <section className="composer-queue" aria-label={`${queuedInputs.length} 条排队输入`} aria-live="polite">
+        <header><span><Clock3 size={13} /><strong>已排队 {queuedInputs.length} 条</strong></span><small>当前运行结束后按顺序发送</small></header>
+        <div>{queuedInputs.map((entry, index) => <article key={entry.id}>
+          <span className="composer-queue-index">{index + 1}</span>
+          <span className="composer-queue-copy"><strong>{entry.text || `${entry.images.length} 张图片`}</strong>{entry.images.length ? <small>{entry.images.length} 张图片</small> : null}</span>
+          <button type="button" onClick={() => onRemoveQueuedInput(entry.id)} aria-label={`取消排队输入 ${index + 1}`}><X size={13} /></button>
+        </article>)}</div>
+      </section> : null}
       <div className="composer-shell" ref={composerRef}>
+        {reviewCommandMatch ? <div className="composer-slash-menu" role="listbox" aria-label="Composer 命令">
+          <button type="button" role="option" aria-selected={draft.trim().toLocaleLowerCase() === "/review"} onClick={onOpenReviewCommand}>
+            <GitCompareArrows size={16} /><span><strong>/review</strong><small>让 Codex 审阅基准分支、未提交变更、提交或自定义范围</small></span>
+          </button>
+        </div> : null}
         {pendingImages.length ? <div className="composer-image-attachments" aria-label="待发送图片">
           {pendingImages.map((image) => <figure key={image.id}>
             <img src={localImageSource(image.path)} alt={image.name} />
@@ -2141,22 +2282,23 @@ function Composer({ task, draft, onDraft, onSend, onAgentChange, onModelChange, 
             }
           }}
           placeholder={interactionLockReason ? "当前会话不可编辑" : "随心输入"}
-          aria-label="给 Agent 发送消息"
+          aria-label="给 Codex 发送消息"
           rows={2}
           disabled={!canRun}
         />
         <div className="composer-toolbar">
           <div className="composer-tools">
-            <button type="button" className={`composer-icon-button ${optionsOpen === "more" ? "is-active" : ""}`} aria-label="添加文件和更多" title="添加文件和更多" aria-expanded={optionsOpen === "more"} disabled={!canRun || isActive} onClick={() => setOptionsOpen((open) => open === "more" ? "" : "more")}><Plus size={19} /></button>
-            {!selectedAgentAvailable ? <button type="button" className="composer-connect-button" onClick={onOpenAccounts}><CircleAlert size={13} />配置连接</button> : null}
-            <button type="button" className={`permission-chip ${task.permissionMode === "dontAsk" ? "is-full-access" : ""}`} disabled={!canRun || isActive} onClick={() => setOptionsOpen((open) => open === "permission" ? "" : "permission")} aria-label={`批准方式：${permissionVisualLabel}`} aria-expanded={optionsOpen === "permission"}><ShieldCheck size={16} /><span>{permissionVisualLabel}</span><ChevronDown size={13} /></button>
+            <button ref={moreTriggerRef} type="button" className={`composer-icon-button ${optionsOpen === "more" ? "is-active" : ""}`} aria-label="添加文件和更多" title="添加文件和更多" aria-expanded={optionsOpen === "more"} disabled={!canRun || isActive} onClick={() => setOptionsOpen((open) => open === "more" ? "" : "more")}><Plus size={19} /></button>
+            {!selectedAgentAvailable ? <button type="button" className="composer-connect-button" onClick={onOpenAccounts}><CircleAlert size={13} /><span>配置连接</span></button> : null}
+            <button ref={permissionTriggerRef} type="button" className={`permission-chip ${task.permissionMode === "dontAsk" ? "is-full-access" : ""}`} disabled={!canRun || isActive} onClick={() => setOptionsOpen((open) => open === "permission" ? "" : "permission")} aria-label={`批准方式：${permissionVisualLabel}`} aria-haspopup="menu" aria-expanded={optionsOpen === "permission"}><ShieldCheck size={16} /><span>{permissionVisualLabel}</span><ChevronDown size={13} /></button>
           </div>
           <div className="composer-submit-area">
             <CircleDashed size={18} className={isActive ? "status-running" : "composer-context-status"} aria-label={isActive ? "运行中" : "上下文就绪"} />
             <button
+              ref={modelTriggerRef}
               type="button"
               className="composer-model-select"
-              aria-label="选择模型"
+              aria-label={`选择模型：${modelVisualLabel(task.model)}`}
               aria-haspopup="menu"
               aria-expanded={optionsOpen === "model"}
               disabled={!canRun || isActive}
@@ -2169,37 +2311,29 @@ function Composer({ task, draft, onDraft, onSend, onAgentChange, onModelChange, 
             >
               <span>{modelVisualLabel(task.model)}</span><ChevronDown size={13} />
             </button>
-            <button type="button" className={`composer-mic-button ${dictating ? "is-active" : ""}`} aria-label="语音输入" aria-pressed={dictating} disabled={!canRun || isActive} onClick={() => { setDictating((active) => !active); textareaRef.current?.focus(); }}><Mic size={19} /></button>
+            <button type="button" className={`composer-mic-button ${dictating ? "is-active" : ""}`} aria-label={dictating ? "停止语音输入" : "语音输入"} aria-pressed={dictating} disabled={!canRun || isActive || !speechSupported} title={speechSupported ? dictating ? "停止语音输入" : "语音输入" : "当前系统不支持语音输入"} onClick={() => void toggleDictation()}><Mic size={19} /></button>
             <button
               type="button"
               className="send-button"
-              disabled={!canRun || !selectedAgentAvailable || isActive || (!draft.trim() && !pendingImages.length)}
+              disabled={!canRun || !selectedAgentAvailable || (!draft.trim() && !pendingImages.length)}
               onClick={submit}
-              aria-label="发送"
+              aria-label={isActive ? "排队发送" : "发送"}
+              title={isActive ? "当前运行结束后发送" : "发送"}
             >
               <ArrowUp size={18} />
             </button>
           </div>
         </div>
+        {dictating ? <div className="composer-speech-status" role="status"><span className="composer-speech-pulse" />正在听写…</div> : null}
+        {speechError ? <div className="composer-speech-error" role="alert"><CircleAlert size={12} />{speechError}</div> : null}
         {optionsOpen === "more" ? (
-          <div className="composer-options-popover" role="group" aria-label="运行设置">
+          <div ref={morePanelRef} className="composer-options-popover" role="group" aria-label="运行设置">
             <button type="button" className="composer-add-context" disabled={!window.rux || contextBusy || !canRun || isActive} onClick={() => { setOptionsOpen(""); void onChooseContextFiles(); }}><Paperclip size={14} /><span><strong>添加项目文件</strong><small>{window.rux ? "选择一个或多个 Workspace 文件作为下一次 Run 的 Context" : "文件选择仅在桌面应用中可用"}</small></span></button>
-            {runtimeAdapterForTask(task) === "codex" ? (
-              <label><span>推理强度</span><select aria-label="Rux 推理强度" value={task.reasoningEffort || ""} onChange={(event) => onReasoningEffortChange(event.target.value)} disabled={!canRun || isActive}>
-                <option value="">模型默认</option>
-                {reasoningOptions.map((option) => <option key={option.reasoningEffort} value={option.reasoningEffort}>{reasoningEffortLabel(option.reasoningEffort)}</option>)}
-              </select></label>
-            ) : null}
-            <div className="composer-manual-model">
-              <span>高级模型 ID</span>
-              <div><input value={manualModel} onChange={(event) => setManualModel(event.target.value)} placeholder="由 Engine 支持的模型 ID" disabled={!canRun || isActive} /><button type="button" className="secondary-button" disabled={!manualModel.trim() || manualModel.trim() === task.model || !canRun || isActive} onClick={() => onModelChange(manualModel.trim())}>应用</button></div>
-              <small>{modelStateLabel(task.modelSource, task.modelVerificationStatus)}</small>
-            </div>
             <p><CircleDot size={11} /> 本地 · <GitBranch size={11} /> {task.branch} · {permissionLabel(task.permissionMode)}</p>
           </div>
         ) : null}
         {optionsOpen === "permission" ? (
-          <div className="composer-permission-popover" role="menu" aria-label="如何批准 Rux 操作">
+          <div ref={permissionMenuRef} className="composer-permission-popover" role="menu" aria-label="如何批准 Rux 操作" onKeyDown={handleComposerMenuKeyDown}>
             <strong>如何批准 Rux 操作？</strong>
             {permissionOptions.map((option) => (
               <button
@@ -2207,7 +2341,7 @@ function Composer({ task, draft, onDraft, onSend, onAgentChange, onModelChange, 
                 role="menuitemradio"
                 aria-checked={(task.permissionMode || "acceptEdits") === option.id}
                 key={option.id}
-                onClick={() => { onPermissionChange(option.id); setOptionsOpen(""); }}
+                onClick={() => { onPermissionChange(option.id); setOptionsOpen(""); restoreComposerTrigger("permission"); }}
               >
                 <span className="composer-permission-check">{(task.permissionMode || "acceptEdits") === option.id ? <Check size={14} /> : null}</span>
                 <span><b>{option.label}</b><small>{option.description}</small></span>
@@ -2218,8 +2352,8 @@ function Composer({ task, draft, onDraft, onSend, onAgentChange, onModelChange, 
         {optionsOpen === "model" ? (
           <div className="composer-model-popover">
             {modelMenuSection === "advanced" ? (
-              <div className="composer-model-advanced-panel" role="group" aria-label="高级模型设置">
-                <header><button type="button" onClick={() => setModelMenuSection("")}><strong>高级</strong><ChevronRight size={15} /></button><Zap size={17} /></header>
+              <div ref={advancedPanelRef} className="composer-model-advanced-panel" role="group" aria-label="高级模型设置">
+                <header><button type="button" onClick={() => { modelReturnSectionRef.current = "advanced"; setModelMenuSection(""); }}><strong>高级</strong><ChevronRight size={15} /></button><Zap size={17} /></header>
                 <input
                   type="range"
                   min="0"
@@ -2234,25 +2368,25 @@ function Composer({ task, draft, onDraft, onSend, onAgentChange, onModelChange, 
                 <span className="composer-model-advanced-marks" aria-hidden="true">{reasoningOptions.map((option) => <i key={option.reasoningEffort} />)}</span>
                 <small>{reasoningEffortLabel(selectedReasoning)}</small>
               </div>
-            ) : <div className="composer-model-menu" role="menu" aria-label="模型与运行设置">
+            ) : <div ref={modelMenuRef} className="composer-model-menu" role="menu" aria-label="模型与运行设置" onKeyDown={handleComposerMenuKeyDown}>
               {modelCatalogLoading ? <div className="composer-model-loading" role="status"><LoaderCircle size={14} className="status-running" />正在加载模型…</div> : null}
               {!modelCatalogLoading && codexCatalog.error ? <div className="composer-model-error" role="alert">{codexCatalog.error}</div> : null}
-              <button type="button" role="menuitem" className={modelMenuSection === "model" ? "is-active" : ""} aria-haspopup="menu" aria-expanded={modelMenuSection === "model"} onClick={() => setModelMenuSection("model")}>
+              <button type="button" role="menuitem" data-menu-section="model" className={modelMenuSection === "model" ? "is-active" : ""} aria-haspopup="menu" aria-expanded={modelMenuSection === "model"} onClick={() => setModelMenuSection("model")}>
                 <strong>模型</strong><span>{selectedModelName}</span><ChevronRight size={15} />
               </button>
-              <button type="button" role="menuitem" className={modelMenuSection === "reasoning" ? "is-active" : ""} aria-haspopup="menu" aria-expanded={modelMenuSection === "reasoning"} onClick={() => setModelMenuSection("reasoning")} disabled={!reasoningOptions.length}>
+              <button type="button" role="menuitem" data-menu-section="reasoning" className={modelMenuSection === "reasoning" ? "is-active" : ""} aria-haspopup="menu" aria-expanded={modelMenuSection === "reasoning"} onClick={() => setModelMenuSection("reasoning")} disabled={!reasoningOptions.length}>
                 <strong>推理强度</strong><span>{reasoningEffortLabel(selectedReasoning)}</span><ChevronRight size={15} />
               </button>
-              <button type="button" role="menuitem" className={modelMenuSection === "speed" ? "is-active" : ""} aria-haspopup="menu" aria-expanded={modelMenuSection === "speed"} onClick={() => setModelMenuSection("speed")}>
+              <button type="button" role="menuitem" data-menu-section="speed" className={modelMenuSection === "speed" ? "is-active" : ""} aria-haspopup="menu" aria-expanded={modelMenuSection === "speed"} onClick={() => setModelMenuSection("speed")}>
                 <strong>速度</strong><span>{selectedServiceTier?.name || "标准"}</span><ChevronRight size={15} />
               </button>
               <div className="composer-model-divider" />
-              <button type="button" role="menuitem" className="composer-model-advanced" onClick={() => setModelMenuSection("advanced")}>
+              <button type="button" role="menuitem" data-menu-section="advanced" className="composer-model-advanced" onClick={() => setModelMenuSection("advanced")}>
                 <strong>高级</strong><ChevronRight size={15} />
               </button>
             </div>}
             {modelMenuSection === "model" ? (
-              <div className="composer-model-submenu is-model" role="menu" aria-label="模型">
+              <div ref={modelSubmenuRef} className="composer-model-submenu is-model" role="menu" aria-label="模型" onKeyDown={handleComposerMenuKeyDown}>
                 {displayModelOptions.map((model) => {
                   const selected = model === effectiveTaskModel;
                   return <button type="button" role="menuitemradio" aria-checked={selected} key={model} onClick={() => { onModelChange(model); setModelMenuSection(""); }}><span>{codexModelDisplayName(codexCatalogModel(codexModels, model) || model)}</span>{selected ? <Check size={15} /> : null}</button>;
@@ -2260,7 +2394,7 @@ function Composer({ task, draft, onDraft, onSend, onAgentChange, onModelChange, 
               </div>
             ) : null}
             {modelMenuSection === "reasoning" ? (
-              <div className="composer-model-submenu is-reasoning" role="menu" aria-label="推理强度">
+              <div ref={modelSubmenuRef} className="composer-model-submenu is-reasoning" role="menu" aria-label="推理强度" onKeyDown={handleComposerMenuKeyDown}>
                 {reasoningOptions.map((option) => {
                   const selected = option.reasoningEffort === selectedReasoning;
                   return <button type="button" role="menuitemradio" aria-checked={selected} key={option.reasoningEffort} onClick={() => { onReasoningEffortChange(option.reasoningEffort); setModelMenuSection(""); }}><span><b>{reasoningEffortLabel(option.reasoningEffort)}</b></span>{selected ? <Check size={15} /> : null}</button>;
@@ -2268,37 +2402,13 @@ function Composer({ task, draft, onDraft, onSend, onAgentChange, onModelChange, 
               </div>
             ) : null}
             {modelMenuSection === "speed" ? (
-              <div className="composer-model-submenu is-speed" role="menu" aria-label="速度">
+              <div ref={modelSubmenuRef} className="composer-model-submenu is-speed" role="menu" aria-label="速度" onKeyDown={handleComposerMenuKeyDown}>
                 {serviceTierOptions.map((tier) => {
                   const selected = tier.id === (task.serviceTier || "");
                   return <button type="button" role="menuitemradio" aria-checked={selected} key={tier.id || "default"} onClick={() => { onServiceTierChange(tier.id); setModelMenuSection(""); }}><span><b>{tier.name}</b>{tier.description ? <small>{tier.description}</small> : null}</span>{selected ? <Check size={15} /> : null}</button>;
                 })}
               </div>
             ) : null}
-          </div>
-        ) : null}
-        {false && optionsOpen === "agent" ? (
-          <div className="composer-agent-menu" role="menu" aria-label="切换 Agent">
-            <div className="composer-agent-menu-heading"><strong>选择 Agent</strong><small>切换后将在当前项目中创建新任务</small></div>
-            {!selectedAgentChoice ? <div className="composer-agent-menu-history"><span>{ruxAgentLabel(task.agent)}</span><small>当前任务固定的 Agent Definition 已删除</small></div> : null}
-            {agentChoices.map((agent) => {
-              const current = agent.id === selectedAgentId;
-              return <button
-                type="button"
-                role="menuitemradio"
-                aria-checked={current}
-                key={agent.id}
-                disabled={!agent.available}
-                onClick={() => {
-                  setOptionsOpen("");
-                  if (!current) onAgentChange(agent.id);
-                }}
-              >
-                <span><strong>{ruxAgentLabel(agent.name)}</strong><small>{agent.available ? agent.detail || agent.adapter : agent.unavailableReason || "当前不可用"}</small></span>
-                {current ? <Check size={14} /> : agent.available ? <ChevronRight size={14} /> : <CircleAlert size={14} />}
-              </button>;
-            })}
-            <button type="button" className="composer-agent-manage" onClick={() => { setOptionsOpen(""); onOpenAccounts(); }}><Settings size={14} /><span>管理 Agent 与 Provider</span></button>
           </div>
         ) : null}
         {(task.contextFiles || []).length ? (
@@ -2314,6 +2424,59 @@ function Composer({ task, draft, onDraft, onSend, onAgentChange, onModelChange, 
       ) : null}
     </div>
   );
+}
+
+function CodeReviewDialog({ open, busy, error, onClose, onStart }) {
+  const [mode, setMode] = useState("uncommittedChanges");
+  const [branch, setBranch] = useState("main");
+  const [sha, setSha] = useState("");
+  const [title, setTitle] = useState("");
+  const [instructions, setInstructions] = useState("");
+  const dialogRef = useDialogFocus(open, onClose);
+  useEffect(() => {
+    if (!open) return;
+    setMode("uncommittedChanges");
+    setBranch("main");
+    setSha("");
+    setTitle("");
+    setInstructions("");
+  }, [open]);
+  if (!open) return null;
+  const valid = mode === "uncommittedChanges"
+    || (mode === "baseBranch" && branch.trim())
+    || (mode === "commit" && /^[0-9a-f]{4,128}$/i.test(sha.trim()))
+    || (mode === "custom" && instructions.trim());
+  const submit = (event) => {
+    event.preventDefault();
+    if (!valid || busy) return;
+    const target = mode === "baseBranch"
+      ? { type: "baseBranch", branch: branch.trim() }
+      : mode === "commit"
+        ? { type: "commit", sha: sha.trim(), ...(title.trim() ? { title: title.trim() } : {}) }
+        : mode === "custom"
+          ? { type: "custom", instructions: instructions.trim() }
+          : { type: "uncommittedChanges" };
+    onStart(target);
+  };
+  const choices = [
+    ["uncommittedChanges", "审阅未提交变更", "包含已暂存、未暂存和未跟踪文件"],
+    ["baseBranch", "与基准分支比较", "查找合并基点并审阅当前分支差异"],
+    ["commit", "审阅一个提交", "只审阅指定提交引入的变更"],
+    ["custom", "自定义审阅说明", "按你提供的范围和标准执行审阅"],
+  ];
+  return <div className="dialog-backdrop review-command-backdrop" role="presentation">
+    <section ref={dialogRef} tabIndex={-1} className="review-command-dialog" role="dialog" aria-modal="true" aria-labelledby="review-command-title">
+      <header><span><GitCompareArrows size={18} /><span><h2 id="review-command-title">代码审阅</h2><p>Codex 会读取所选差异并报告优先级明确的问题，不修改工作区。</p></span></span><button type="button" className="icon-button" onClick={onClose} disabled={busy} aria-label="关闭代码审阅"><X size={17} /></button></header>
+      <form onSubmit={submit}>
+        <div className="review-command-choices" role="radiogroup" aria-label="选择审阅范围">{choices.map(([value, label, detail]) => <label key={value} className={mode === value ? "is-selected" : ""}><input type="radio" name="review-mode" value={value} checked={mode === value} onChange={() => setMode(value)} disabled={busy} /><span><strong>{label}</strong><small>{detail}</small></span></label>)}</div>
+        {mode === "baseBranch" ? <label className="review-command-field"><span>基准分支</span><input autoFocus value={branch} onChange={(event) => setBranch(event.target.value)} placeholder="main" /></label> : null}
+        {mode === "commit" ? <div className="review-command-fields"><label className="review-command-field"><span>提交 SHA</span><input autoFocus value={sha} onChange={(event) => setSha(event.target.value)} placeholder="例如 a1b2c3d" /></label><label className="review-command-field"><span>标题（可选）</span><input value={title} onChange={(event) => setTitle(event.target.value)} /></label></div> : null}
+        {mode === "custom" ? <label className="review-command-field"><span>审阅说明</span><textarea autoFocus value={instructions} onChange={(event) => setInstructions(event.target.value)} placeholder="例如：重点检查权限边界和恢复路径" /></label> : null}
+        {error ? <div className="permission-error" role="alert"><CircleAlert size={14} />{error}</div> : null}
+        <footer><button type="button" className="secondary-button" onClick={onClose} disabled={busy}>取消</button><button type="submit" className="primary-button" disabled={!valid || busy}>{busy ? <LoaderCircle size={14} className="status-running" /> : <GitCompareArrows size={14} />}{busy ? "正在启动…" : "开始审阅"}</button></footer>
+      </form>
+    </section>
+  </div>;
 }
 
 function TaskHeader({
@@ -2333,6 +2496,7 @@ function TaskHeader({
   onArchiveTask,
   inspectorOpen,
   changesCount,
+  showBottomPanelControl = true,
   canRun = true,
   canArchive = true,
 }) {
@@ -2349,6 +2513,22 @@ function TaskHeader({
   const locationMenuRef = useRef(null);
   const locationMenuTriggerRef = useRef(null);
   const quickToolsRef = useRef(null);
+  const quickToolsTriggerRef = useRef(null);
+  const handleTaskHeaderMenuKeyDown = (event) => {
+    if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+    const items = [...event.currentTarget.querySelectorAll('[role="menuitem"]:not(:disabled)')];
+    if (!items.length) return;
+    event.preventDefault();
+    const currentIndex = items.indexOf(document.activeElement);
+    const nextIndex = event.key === "Home"
+      ? 0
+      : event.key === "End"
+        ? items.length - 1
+        : event.key === "ArrowDown"
+          ? (currentIndex + 1 + items.length) % items.length
+          : (currentIndex - 1 + items.length) % items.length;
+    items[nextIndex].focus();
+  };
 
   useEffect(() => {
     setRenameTitle(task.title);
@@ -2384,6 +2564,7 @@ function TaskHeader({
         window.requestAnimationFrame(() => locationMenuTriggerRef.current?.focus());
       } else if (quickToolsOpen) {
         setQuickToolsOpen(false);
+        window.requestAnimationFrame(() => quickToolsTriggerRef.current?.focus());
       }
     };
     document.addEventListener("pointerdown", closeOnOutsidePress, true);
@@ -2393,6 +2574,12 @@ function TaskHeader({
       document.removeEventListener("keydown", closeOnEscape, true);
     };
   }, [locationMenuOpen, quickToolsOpen, task.title, taskMenuOpen]);
+
+  useEffect(() => {
+    if (!quickToolsOpen) return undefined;
+    const frame = window.requestAnimationFrame(() => quickToolsRef.current?.querySelector('[role="menuitem"]:not(:disabled)')?.focus());
+    return () => window.cancelAnimationFrame(frame);
+  }, [quickToolsOpen]);
 
   const closeTaskMenu = () => {
     setTaskMenuOpen(false);
@@ -2441,13 +2628,14 @@ function TaskHeader({
             title={needsProject ? "请先打开项目" : "任务操作"}
             onClick={() => {
               setLocationMenuOpen(false);
+              setQuickToolsOpen(false);
               setRenaming(false);
               setRenameTitle(task.title);
               setTaskMenuOpen((open) => !open);
             }}
           ><MoreHorizontal size={18} /></button>
           {taskMenuOpen ? (
-            <div id="task-header-action-menu" className="task-header-action-menu" role={renaming ? "dialog" : "menu"} aria-label={renaming ? "重命名任务" : "任务操作"}>
+            <div id="task-header-action-menu" className="task-header-action-menu" role={renaming ? "dialog" : "menu"} aria-label={renaming ? "重命名任务" : "任务操作"} onKeyDown={renaming ? undefined : handleTaskHeaderMenuKeyDown}>
               {renaming ? (
                 <form className="task-header-rename-form" onSubmit={submitRename}>
                   <label htmlFor="task-header-rename-input">任务名称</label>
@@ -2489,6 +2677,15 @@ function TaskHeader({
         </div>
       </div>
       <div className="task-header-actions">
+        <button
+          type="button"
+          className="icon-button task-share-trigger"
+          aria-label="共享任务"
+          title="共享结果与权限语义尚缺当前客户端点击证据"
+          disabled
+        >
+          <Upload size={17} />
+        </button>
         <div className="open-location-shell" ref={locationMenuRef}>
           <button
             ref={locationMenuTriggerRef}
@@ -2500,6 +2697,7 @@ function TaskHeader({
                 return;
               }
               setTaskMenuOpen(false);
+              setQuickToolsOpen(false);
               setRenaming(false);
               setLocationMenuOpen((open) => !open);
             }}
@@ -2513,7 +2711,7 @@ function TaskHeader({
             {!needsProject ? <ChevronDown size={16} /> : null}
           </button>
           {locationMenuOpen ? (
-            <div id="open-location-menu" className="open-location-menu" role="menu" aria-label="选择打开位置">
+            <div id="open-location-menu" className="open-location-menu" role="menu" aria-label="选择打开位置" onKeyDown={handleTaskHeaderMenuKeyDown}>
               <button autoFocus type="button" role="menuitem" onClick={() => chooseOpenTarget("vscode")}><Code2 size={15} className="vscode-symbol" /><span><strong>在 VS Code 中打开</strong><small>使用 vscode://file</small></span></button>
               <button type="button" role="menuitem" onClick={() => chooseOpenTarget("finder")}><Folder size={15} /><span><strong>在 Finder 中显示</strong><small>显示当前项目文件夹</small></span></button>
             </div>
@@ -2521,24 +2719,32 @@ function TaskHeader({
         </div>
         <div className="quick-tools-shell" ref={quickToolsRef}>
           <button
+            ref={quickToolsTriggerRef}
             type="button"
             className={`icon-button environment-trigger ${quickToolsOpen ? "is-active" : ""}`}
-            onClick={() => setQuickToolsOpen((open) => !open)}
+            onClick={() => {
+              setTaskMenuOpen(false);
+              setRenaming(false);
+              setLocationMenuOpen(false);
+              setQuickToolsOpen((open) => !open);
+            }}
+            aria-haspopup="menu"
             aria-expanded={quickToolsOpen}
+            aria-controls={quickToolsOpen ? "quick-tools-menu" : undefined}
             aria-label="快捷工具"
             title="快捷工具"
           >
             <SlidersHorizontal size={18} />
           </button>
-          {quickToolsOpen ? <div className="quick-tools-menu" role="menu" aria-label="快捷工具">
+          {quickToolsOpen ? <div id="quick-tools-menu" className="quick-tools-menu" role="menu" aria-label="快捷工具" onKeyDown={handleTaskHeaderMenuKeyDown}>
             <button type="button" role="menuitem" onClick={() => { setQuickToolsOpen(false); onOpenReview(); }}><FilePlus2 size={17} /><span>审阅</span><kbd>⌃⇧G</kbd></button>
             <button type="button" role="menuitem" onClick={() => { setQuickToolsOpen(false); onToggleTerminal(); }}><SquareTerminal size={17} /><span>终端</span><kbd>⌃`</kbd></button>
-            <button type="button" role="menuitem"><Globe2 size={17} /><span>浏览器</span><kbd>⌘T</kbd></button>
+            <button type="button" role="menuitem" disabled title="当前官方本地边界尚未提供内置浏览器控制"><Globe2 size={17} /><span>浏览器</span><kbd>⌘T</kbd></button>
             <button type="button" role="menuitem" onClick={() => { setQuickToolsOpen(false); onOpenWorkspace("finder"); }}><Folder size={17} /><span>文件</span><kbd>⌘P</kbd></button>
-            <button type="button" role="menuitem"><MessageCircle size={17} /><span>侧边聊天</span><kbd>⌥⌘S</kbd></button>
+            <button type="button" role="menuitem" disabled title="当前官方本地边界尚未提供侧边聊天"><MessageCircle size={17} /><span>侧边聊天</span><kbd>⌥⌘S</kbd></button>
           </div> : null}
         </div>
-        <button
+        {showBottomPanelControl ? <button
           type="button"
           className={`icon-button terminal-trigger ${terminalOpen ? "is-active" : ""}`}
           onClick={onToggleTerminal}
@@ -2548,10 +2754,10 @@ function TaskHeader({
           disabled={needsProject}
         >
           <SquareTerminal size={17} />
-        </button>
+        </button> : null}
         <button type="button" className={`icon-button panel-trigger ${inspectorOpen ? "is-active" : ""}`} onClick={onToggleInspector} aria-label={inspectorOpen ? "关闭环境面板" : "打开环境面板"} title={needsProject ? "请先打开项目" : undefined} disabled={needsProject}><PanelRight size={17} /></button>
         {["running", "blocked", "stopped", "failed", "interrupted"].includes(task.status) ? (
-          <button type="button" className="icon-button run-control" onClick={onToggleRun} disabled={!canRun} aria-label={["running", "blocked"].includes(task.status) ? "停止运行" : "开始新的 Run"} title={["running", "blocked"].includes(task.status) ? "停止运行" : "开始新的 Run"}>
+          <button type="button" className="icon-button run-control" onClick={onToggleRun} disabled={!canRun} aria-label={["running", "blocked"].includes(task.status) ? "停止运行" : "开始新的运行"} title={["running", "blocked"].includes(task.status) ? "停止运行" : "开始新的运行"}>
             {["running", "blocked"].includes(task.status) ? <Square size={14} /> : <Play size={15} />}
           </button>
         ) : null}
@@ -2569,10 +2775,10 @@ function ChangesPane({ state, selectedFile, onSelectFile, onRefresh, onRestore, 
     <div className="inspector-scroll">
       <div className="changes-summary">
         <div>
-          <strong>{state.loading ? "正在读取 Git…" : `${totals.files} 个 Workspace 文件已更改`}</strong>
-          <span>+{totals.additions} <em>−{totals.deletions}</em>{totals.binaryFiles ? ` · ${totals.binaryFiles} binary` : ""}</span>
+          <strong>{state.loading ? "正在读取 Git…" : `${totals.files} 个工作区文件已更改`}</strong>
+          <span>+{totals.additions} <em>−{totals.deletions}</em>{totals.binaryFiles ? ` · ${totals.binaryFiles} 个二进制文件` : ""}</span>
         </div>
-        <button type="button" className="review-filter" onClick={onRefresh} disabled={state.loading}><RotateCcw size={14} /> Workspace</button>
+        <button type="button" className="review-filter" onClick={onRefresh} disabled={state.loading}><RotateCcw size={14} /> 工作区</button>
       </div>
 
       {state.error ? <div className="account-error" role="alert"><CircleAlert size={15} /><span>{state.error}</span></div> : null}
@@ -2593,7 +2799,7 @@ function ChangesPane({ state, selectedFile, onSelectFile, onRefresh, onRestore, 
             <span className="file-stat"><b>+{file.additions}</b><em>−{file.deletions}</em></span>
           </button>
         ))}
-        {!state.loading && !files.length ? <p className="empty-inspector-copy">当前 Workspace 没有未提交变更。</p> : null}
+        {!state.loading && !files.length ? <p className="empty-inspector-copy">当前工作区没有未提交变更。</p> : null}
       </div>
 
       {selected ? <div className="diff-panel">
@@ -2601,23 +2807,23 @@ function ChangesPane({ state, selectedFile, onSelectFile, onRefresh, onRestore, 
           <span><FileCode2 size={14} /> {selectedFile}</span>
         </div>
         <div className="diff-code" role="region" aria-label={`${selectedFile} 差异`}>
-          {state.diffLoading ? <p className="empty-inspector-copy">正在读取 Diff…</p> : null}
+          {state.diffLoading ? <p className="empty-inspector-copy">正在读取差异…</p> : null}
           {state.diff?.sections?.map((section) => (
             <section className="real-diff-section" key={section.layer}>
-              <div className="real-diff-layer">{section.layer}</div>
+              <div className="real-diff-layer">{section.layer === "staged" ? "已暂存" : section.layer === "unstaged" ? "未暂存" : section.layer === "untracked" ? "未跟踪" : section.layer}</div>
               {section.patch === null
-                ? <p className="empty-inspector-copy">Binary diff · 无文本补丁</p>
-                : <pre>{section.patch || "No textual changes"}</pre>}
+                ? <p className="empty-inspector-copy">二进制文件，无文本差异</p>
+                : <pre>{section.patch || "没有文本差异"}</pre>}
             </section>
           ))}
         </div>
       </div> : null}
 
       <div className="review-actions">
-        <button type="button" className="secondary-button" onClick={onRestore} disabled={!selected || state.loading}><RotateCcw size={14} /> Restore selected</button>
-        <button type="button" className="primary-button" onClick={onAccept} disabled={!files.length || state.loading}><Check size={14} /> Accept review</button>
+        <button type="button" className="secondary-button" onClick={onRestore} disabled={!selected || state.loading}><RotateCcw size={14} /> 恢复所选文件</button>
+        <button type="button" className="primary-button" onClick={onAccept} disabled={!files.length || state.loading}><Check size={14} /> 完成审查</button>
       </div>
-      <p className="review-semantics">Accept 只记录审查，不会 stage、commit 或 push。Restore 会先显示准确预览并要求二次确认。</p>
+      <p className="review-semantics">完成审查只记录结果，不会暂存、提交或推送。恢复文件前会显示准确预览并要求二次确认。</p>
     </div>
   );
 }
@@ -2633,13 +2839,13 @@ function ContextPane({ state, changes, selectedPaths, onRefresh, onToggleFile })
   return (
     <div className="inspector-scroll context-pane">
       <div className="context-heading-row">
-        <div><strong>Runtime Context</strong><small>{snapshot ? `更新于 ${new Date(snapshot.generatedAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}` : "尚未读取"}</small></div>
+        <div><strong>运行上下文</strong><small>{snapshot ? `更新于 ${new Date(snapshot.generatedAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}` : "尚未读取"}</small></div>
         <button type="button" className="review-filter" onClick={() => onRefresh()} disabled={state.loading}><RotateCcw size={14} /> 刷新</button>
       </div>
       {state.error ? <div className="account-error" role="alert"><CircleAlert size={15} /><span>{state.error}</span></div> : null}
-      <p className="context-truth-copy">文件 Context 默认不发送。只有你在下面明确勾选、并通过敏感信息检查的文件，才会进入下一次 Run；自定义 Agent 指令会在 Run 启动时注入。</p>
+      <p className="context-truth-copy">文件上下文默认不发送。只有你在下面明确勾选、并通过敏感信息检查的文件，才会进入下一次运行；项目指令会在运行启动时注入。</p>
       <section className="context-group context-picker-group">
-        <div className="context-group-heading is-static"><Plus size={15} /><span><strong>Include changed files</strong><small>{selectedPaths.length} selected · opt-in</small></span></div>
+        <div className="context-group-heading is-static"><Plus size={15} /><span><strong>包含变更文件</strong><small>已选择 {selectedPaths.length} 个 · 主动加入</small></span></div>
         <div className="context-file-picker">
           {candidates.map((file) => (
             <label key={file.path}>
@@ -2649,12 +2855,12 @@ function ContextPane({ state, changes, selectedPaths, onRefresh, onToggleFile })
           ))}
           {!candidates.length ? <p>当前没有可选择的 Git 变更文件。</p> : null}
         </div>
-        <p className="context-privacy-note"><ShieldCheck size={13} /> .env、私钥、凭据路径和明显的 token 内容会在 Runtime 边界阻断，不会进入 provider prompt。</p>
+        <p className="context-privacy-note"><ShieldCheck size={13} /> .env、私钥、凭据路径和明显的令牌内容会在运行边界阻断，不会进入模型输入。</p>
       </section>
-      <ContextGroup title="Project instructions" items={snapshot?.instructions || []} empty="未检测到 Workspace 指令文件" />
-      <ContextGroup title="Selected files" items={selectedSources} empty="未选择文件；下一次 Run 不会附带文件内容" onRemove={(path) => void onToggleFile(path)} disabled={state.loading} />
+      <ContextGroup title="项目指令" items={snapshot?.instructions || []} empty="未检测到工作区指令文件" />
+      <ContextGroup title="已选文件" items={selectedSources} empty="未选择文件；下一次运行不会附带文件内容" onRemove={(path) => void onToggleFile(path)} disabled={state.loading} />
       <section className="context-group">
-        <div className="context-group-heading is-static"><Braces size={15} /><span><strong>Capabilities</strong><small>当前 Runtime 可用能力</small></span></div>
+        <div className="context-group-heading is-static"><Braces size={15} /><span><strong>可用能力</strong><small>当前运行环境提供的能力</small></span></div>
         <div className="context-items">{(snapshot?.capabilities || []).map((item) => <span key={item}>{item}</span>)}</div>
       </section>
     </div>
@@ -2664,14 +2870,14 @@ function ContextPane({ state, changes, selectedPaths, onRefresh, onToggleFile })
 function ContextGroup({ title, items, empty, onRemove, disabled = false }) {
   return (
     <section className="context-group">
-      <div className="context-group-heading is-static"><FileCode2 size={15} /><span><strong>{title}</strong><small>{items.length} sources</small></span></div>
+      <div className="context-group-heading is-static"><FileCode2 size={15} /><span><strong>{title}</strong><small>{items.length} 个来源</small></span></div>
       <div className="context-items">
         {items.map((item) => onRemove ? (
           <div className="context-selected-source" key={`${item.kind}-${item.path}`}>
-            <span>{item.path} · {item.bytes} bytes{item.exists === false ? " · missing" : ""}</span>
-            <button type="button" onClick={() => onRemove(item.path)} disabled={disabled} aria-label={`从下一次 Run Context 移除 ${item.path}`} title="从下一次 Run Context 移除"><X size={12} /></button>
+            <span>{item.path} · {item.bytes} 字节{item.exists === false ? " · 缺失" : ""}</span>
+            <button type="button" onClick={() => onRemove(item.path)} disabled={disabled} aria-label={`从下一次运行上下文移除 ${item.path}`} title="从下一次运行上下文移除"><X size={12} /></button>
           </div>
-        ) : <span key={`${item.kind}-${item.path}`}>{item.path} · {item.bytes} bytes</span>)}
+        ) : <span key={`${item.kind}-${item.path}`}>{item.path} · {item.bytes} 字节</span>)}
         {!items.length ? <span>{empty}</span> : null}
       </div>
     </section>
@@ -2723,9 +2929,9 @@ function RunPane({ task, onToggleRun, runReviewState, onOpenRunDiff, onAcceptRun
     <div className="inspector-scroll run-pane">
       {runs.length > 1 ? (
         <div className="run-history-picker">
-          <label htmlFor="run-history-select">Run history</label>
-          <select id="run-history-select" aria-label="选择 Run 历史" value={inspectedRun?.id || ""} onChange={(event) => { setSelectedRunId(event.target.value); onCancelRunRestore(); }}>
-            {runs.map((run, index) => <option key={run.id} value={run.id}>Run #{index + 1} · {ruxAdapterLabel(run.adapter)} · {run.status}</option>)}
+          <label htmlFor="run-history-select">运行历史</label>
+          <select id="run-history-select" aria-label="选择运行历史" value={inspectedRun?.id || ""} onChange={(event) => { setSelectedRunId(event.target.value); onCancelRunRestore(); }}>
+            {runs.map((run, index) => <option key={run.id} value={run.id}>运行 #{index + 1} · {statusLabel[run.status === "waiting-permission" ? "blocked" : run.status] || run.status}</option>)}
           </select>
         </div>
       ) : null}
@@ -2733,57 +2939,42 @@ function RunPane({ task, onToggleRun, runReviewState, onOpenRunDiff, onAcceptRun
       <section className="run-status-card">
         <div className="run-status-heading">
           <span className={`large-status is-${inspectedTaskStatus}`}><StatusIcon status={inspectedTaskStatus} size={18} /></span>
-          <div><strong>{statusLabel[inspectedTaskStatus]}</strong><small>{inspectedRun ? `Run #${inspectedIndex + 1} · ${inspectedRun.status}${isLatest ? " · latest" : " · historical"}` : "尚无 Run"}</small></div>
+          <div><strong>{statusLabel[inspectedTaskStatus]}</strong><small>{inspectedRun ? `运行 #${inspectedIndex + 1} · ${isLatest ? "最新" : "历史记录"}` : "尚无运行"}</small></div>
         </div>
         <dl>
-          <div><dt>Agent</dt><dd><Bot size={13} /> {ruxAgentLabel(inspectedRun?.agentSnapshot?.name || task.agent)}</dd></div>
-          <div><dt>Engine</dt><dd>{ruxAdapterLabel(inspectedRun?.adapter || runtimeAdapterForTask(task))}</dd></div>
-          <div><dt>Revision</dt><dd title={inspectedRun?.agentRevisionId || task.agentRevisionId}>{inspectedRun?.agentRevisionId || task.agentRevisionId}</dd></div>
-          <div><dt>Connection</dt><dd title={inspectedRun?.providerConnection?.label || task.providerConnection?.label}>{inspectedRun?.providerConnection?.label || task.providerConnection?.label || "—"}</dd></div>
-          <div><dt>Model</dt><dd>{ruxModelLabel(inspectedRun?.model || task.model)}</dd></div>
-          <div><dt>Model state</dt><dd>{modelStateLabel(inspectedRun?.modelSource || task.modelSource, inspectedRun?.modelVerificationStatus || task.modelVerificationStatus)}</dd></div>
-          <div><dt>Reasoning</dt><dd>{reasoningEffortLabel(inspectedRun?.reasoningEffort || task.reasoningEffort)}</dd></div>
-          <div><dt>Elapsed</dt><dd>{formatDuration(inspectedRun?.durationMs) || (isLatest ? task.elapsed : "—")}</dd></div>
-          <div><dt>Tokens</dt><dd>{tokenUsageTotal(inspectedRun?.tokenUsage) === undefined ? "未报告" : tokenUsageTotal(inspectedRun.tokenUsage).toLocaleString("en-US")}</dd></div>
-          {inspectedRun?.costUsd === undefined ? null : <div><dt>Cost</dt><dd>${inspectedRun.costUsd.toFixed(4)}</dd></div>}
-          <div><dt>Permission</dt><dd><ShieldCheck size={13} /> {permissionLabel(inspectedRun?.permissionMode || task.permissionMode)}</dd></div>
-          <div><dt>Session</dt><dd title={inspectedRun?.sessionLink?.nativeSessionId || inspectedRun?.sessionId || ""}>{inspectedRun?.sessionLink?.kind === "codex-thread" ? "Codex Thread" : inspectedRun?.sessionLink?.kind === "claude-session" ? "Claude Session" : inspectedRun?.sessionId ? "Native Session" : "尚未建立"}{inspectedRun?.sessionLink?.nativeSessionId || inspectedRun?.sessionId ? ` · ${inspectedRun?.sessionLink?.nativeSessionId || inspectedRun?.sessionId}` : ""}</dd></div>
+          <div><dt>模型</dt><dd>{ruxModelLabel(inspectedRun?.model || task.model)}</dd></div>
+          <div><dt>模型状态</dt><dd>{modelStateLabel(inspectedRun?.modelSource || task.modelSource, inspectedRun?.modelVerificationStatus || task.modelVerificationStatus)}</dd></div>
+          <div><dt>推理强度</dt><dd>{reasoningEffortLabel(inspectedRun?.reasoningEffort || task.reasoningEffort)}</dd></div>
+          <div><dt>耗时</dt><dd>{formatDuration(inspectedRun?.durationMs) || (isLatest ? task.elapsed : "—")}</dd></div>
+          <div><dt>令牌</dt><dd>{tokenUsageTotal(inspectedRun?.tokenUsage) === undefined ? "未报告" : tokenUsageTotal(inspectedRun.tokenUsage).toLocaleString("en-US")}</dd></div>
+          {inspectedRun?.costUsd === undefined ? null : <div><dt>费用</dt><dd>${inspectedRun.costUsd.toFixed(4)}</dd></div>}
+          <div><dt>权限</dt><dd><ShieldCheck size={13} /> {permissionLabel(inspectedRun?.permissionMode || task.permissionMode)}</dd></div>
+          <div><dt>会话</dt><dd title={inspectedRun?.sessionLink?.nativeSessionId || inspectedRun?.sessionId || ""}>{inspectedRun?.sessionLink?.nativeSessionId || inspectedRun?.sessionId ? `Codex · ${inspectedRun?.sessionLink?.nativeSessionId || inspectedRun?.sessionId}` : "尚未建立"}</dd></div>
         </dl>
       </section>
 
-      {inspectedRun?.modelDecision ? <section className="run-section run-model-decision" aria-label="模型路由决定">
-        <h3>Model decision</h3>
-        <dl>
-          <div><dt>Mode</dt><dd>{inspectedRun.modelDecision.mode === "auto" ? `Auto · ${inspectedRun.modelDecision.classification === "complex" ? "复杂任务" : "简单任务"}` : "固定模型"}</dd></div>
-          <div><dt>Actual model</dt><dd>{ruxModelLabel(inspectedRun.modelDecision.actualModel)}</dd></div>
-          {inspectedRun.modelDecision.strategy ? <div><dt>Strategy</dt><dd>{inspectedRun.modelDecision.strategy} · score {inspectedRun.modelDecision.score} / {inspectedRun.modelDecision.threshold}</dd></div> : null}
-          <div><dt>Reason</dt><dd>{inspectedRun.modelDecision.rationale}</dd></div>
-          {inspectedRun.modelDecision.fallback ? <div><dt>Fallback</dt><dd>{ruxModelLabel(inspectedRun.modelDecision.fallback.fromModel)} → {ruxModelLabel(inspectedRun.modelDecision.fallback.toModel)} · {inspectedRun.modelDecision.fallback.reason}</dd></div> : null}
-        </dl>
-      </section> : null}
-
-      <section className="run-section run-token-usage" aria-label="Token 用量明细">
-        <h3>Token usage</h3>
+      <section className="run-section run-token-usage" aria-label="令牌用量明细">
+        <h3>令牌用量</h3>
         {inspectedRun?.tokenUsage ? <dl>
-          <div><dt>Input</dt><dd>{inspectedRun.tokenUsage.inputTokens?.toLocaleString("en-US") ?? "未报告"}</dd></div>
-          <div><dt>Cached input</dt><dd>{inspectedRun.tokenUsage.cachedInputTokens?.toLocaleString("en-US") ?? "未报告"}</dd></div>
-          <div><dt>Output</dt><dd>{inspectedRun.tokenUsage.outputTokens?.toLocaleString("en-US") ?? "未报告"}</dd></div>
-          <div><dt>Reasoning</dt><dd>{inspectedRun.tokenUsage.reasoningOutputTokens?.toLocaleString("en-US") ?? "未报告"}</dd></div>
-          <div><dt>Total</dt><dd>{tokenUsageTotal(inspectedRun.tokenUsage)?.toLocaleString("en-US") ?? "未报告"}{inspectedRun.tokenUsage.isEstimate ? " · 估算" : ""}</dd></div>
-          <div><dt>Source</dt><dd>{inspectedRun.tokenUsage.source === "engine" ? "Engine 报告" : inspectedRun.tokenUsage.source === "provider" ? "Provider 报告" : "Rux 估算"}</dd></div>
-        </dl> : <p>Engine / Provider 未报告本次 Run 的 Token 用量；Rux 不会把估算值冒充为计费事实。</p>}
+          <div><dt>输入</dt><dd>{inspectedRun.tokenUsage.inputTokens?.toLocaleString("en-US") ?? "未报告"}</dd></div>
+          <div><dt>缓存输入</dt><dd>{inspectedRun.tokenUsage.cachedInputTokens?.toLocaleString("en-US") ?? "未报告"}</dd></div>
+          <div><dt>输出</dt><dd>{inspectedRun.tokenUsage.outputTokens?.toLocaleString("en-US") ?? "未报告"}</dd></div>
+          <div><dt>推理</dt><dd>{inspectedRun.tokenUsage.reasoningOutputTokens?.toLocaleString("en-US") ?? "未报告"}</dd></div>
+          <div><dt>总计</dt><dd>{tokenUsageTotal(inspectedRun.tokenUsage)?.toLocaleString("en-US") ?? "未报告"}{inspectedRun.tokenUsage.isEstimate ? " · 估算" : ""}</dd></div>
+          <div><dt>来源</dt><dd>{["engine", "provider"].includes(inspectedRun.tokenUsage.source) ? "Codex 报告" : "Rux 估算"}</dd></div>
+        </dl> : <p>Codex 未报告本次运行的令牌用量；Rux 不会把估算值冒充为计费事实。</p>}
       </section>
 
       {permissionRequests.length ? (
         <section className="run-section">
-          <h3>Permission history</h3>
+          <h3>权限记录</h3>
           <div className="permission-history">
             {permissionRequests.map((request) => {
               const decision = permissionDecisions.find((item) => item.requestId === request.id);
               return (
                 <article key={request.id} className={`permission-history-row is-${decision?.decision || request.status}`}>
                   <header><ShieldCheck size={14} /><strong>{request.action}</strong><small>{decision?.decision || request.status}</small></header>
-                  <p>{request.scope.path} · {request.scope.appliesTo === "single-action" ? "仅这一项操作" : "仅本次 Run"}{request.provider ? ` · ${ruxAdapterLabel(request.provider)}` : ""}</p>
+                  <p>{request.scope.path} · {request.scope.appliesTo === "single-action" ? "仅这一项操作" : "仅本次运行"}</p>
                   <small>{decision ? new Date(decision.decidedAt).toLocaleString("zh-CN") : `请求于 ${new Date(request.requestedAt).toLocaleString("zh-CN")}`}</small>
                 </article>
               );
@@ -2792,52 +2983,31 @@ function RunPane({ task, onToggleRun, runReviewState, onOpenRunDiff, onAcceptRun
         </section>
       ) : null}
 
-      {inspectedRun?.agentSnapshot ? (
-        <section className="run-section">
-          <h3>Agent snapshot</h3>
-          <div className="run-agent-snapshot">
-            <header><Bot size={15} /><span><strong>{ruxAgentLabel(inspectedRun.agentSnapshot.name)}</strong><small>{ruxAdapterLabel(inspectedRun.agentSnapshot.backend)} · immutable Run history</small></span></header>
-            <p>{inspectedRun.agentSnapshot.instructions}</p>
-            <dl>
-              <div><dt>Model</dt><dd>{inspectedRun.agentSnapshot.model ? ruxModelLabel(inspectedRun.agentSnapshot.model) : "底座默认"}</dd></div>
-              <div><dt>Permission</dt><dd>{permissionLabel(inspectedRun.agentSnapshot.permissionMode)}</dd></div>
-              <div><dt>Skills</dt><dd>{inspectedRun.agentSnapshot.skillIds.length ? inspectedRun.agentSnapshot.skillIds.join(", ") : "未配置"}</dd></div>
-              <div><dt>Tools</dt><dd>{inspectedRun.agentSnapshot.toolIds.length ? inspectedRun.agentSnapshot.toolIds.join(", ") : "未配置"}</dd></div>
-            </dl>
-          </div>
-        </section>
-      ) : null}
-
       {inspectedRun?.contextSnapshot ? (
         <section className="run-section">
-          <h3>Context snapshot</h3>
+          <h3>上下文快照</h3>
           <div className="run-context-snapshot">
-            <header><Braces size={15} /><span><strong>Immutable Run input</strong><small>{new Date(inspectedRun.contextSnapshot.generatedAt).toLocaleString("zh-CN")}</small></span></header>
+            <header><Braces size={15} /><span><strong>本次运行的输入</strong><small>{new Date(inspectedRun.contextSnapshot.generatedAt).toLocaleString("zh-CN")}</small></span></header>
             <p title={inspectedRun.contextSnapshot.workspaceRoot}>{inspectedRun.contextSnapshot.workspaceRoot}</p>
             {[...inspectedRun.contextSnapshot.instructions, ...inspectedRun.contextSnapshot.selectedFiles].map((source) => (
               <details key={`${source.kind}-${source.path}`}>
-                <summary><span>{source.path}</span><small>{source.kind} · {source.sha256.slice(0, 10)}{source.truncated ? " · truncated" : ""}{source.binary ? " · binary" : ""}{!source.exists ? " · missing" : ""}</small></summary>
+                <summary><span>{source.path}</span><small>{source.kind} · {source.sha256.slice(0, 10)}{source.truncated ? " · 已截断" : ""}{source.binary ? " · 二进制" : ""}{!source.exists ? " · 缺失" : ""}</small></summary>
                 {source.content ? <pre>{source.content}</pre> : <p>没有注入文本内容。</p>}
               </details>
             ))}
-            {!inspectedRun.contextSnapshot.instructions.length && !inspectedRun.contextSnapshot.selectedFiles.length ? <p>此 Run 没有文件 Context；只注入 Workspace 与能力信息。</p> : null}
+            {!inspectedRun.contextSnapshot.instructions.length && !inspectedRun.contextSnapshot.selectedFiles.length ? <p>本次运行没有文件上下文；只注入工作区与能力信息。</p> : null}
           </div>
         </section>
       ) : null}
 
       {inspectedRun?.gitPatch ? (
         <section className="run-section">
-          <h3>Run-owned changes</h3>
+          <h3>本次运行的变更</h3>
           <div className="run-owned-patch">
             <header>
               <GitCompareArrows size={15} />
-              <span><strong>{inspectedRun.gitPatch.totals.files} files</strong><small>+{inspectedRun.gitPatch.totals.additions} −{inspectedRun.gitPatch.totals.deletions} · ignored files excluded</small></span>
+              <span><strong>{inspectedRun.gitPatch.totals.files} 个文件</strong><small>+{inspectedRun.gitPatch.totals.additions} −{inspectedRun.gitPatch.totals.deletions} · 已排除忽略文件</small></span>
             </header>
-            <dl>
-              <div><dt>Before</dt><dd>{inspectedRun.gitPatch.beforeTreeId.slice(0, 12)}</dd></div>
-              <div><dt>After</dt><dd>{inspectedRun.gitPatch.afterTreeId.slice(0, 12)}</dd></div>
-              <div><dt>Snapshot</dt><dd>{inspectedRun.gitPatch.snapshotId.slice(0, 12)}</dd></div>
-            </dl>
             <div className="run-owned-files">
               {inspectedRun.gitPatch.files.map((file) => (
                 <button
@@ -2849,44 +3019,44 @@ function RunPane({ task, onToggleRun, runReviewState, onOpenRunDiff, onAcceptRun
                   disabled={visibleRunReview?.loading}
                 >
                   <span>{file.path}</span>
-                  <small>{file.kind} · +{file.additions} −{file.deletions}{file.isBinary ? " · binary" : ""}</small>
+                  <small>{file.kind} · +{file.additions} −{file.deletions}{file.isBinary ? " · 二进制" : ""}</small>
                 </button>
               ))}
-              {!inspectedRun.gitPatch.files.length ? <p>此 Run 没有改变 Git 可追踪的 Workspace 文件。</p> : null}
+              {!inspectedRun.gitPatch.files.length ? <p>本次运行没有改变 Git 可追踪的工作区文件。</p> : null}
             </div>
             {visibleRunReview?.error ? <div className="permission-error run-review-error" role="alert"><CircleAlert size={14} />{visibleRunReview.error}</div> : null}
             {visibleRunReview?.path ? (
-              <div className="run-owned-diff" role="region" aria-label={`${visibleRunReview.path} 的 Run-owned 差异`}>
-                <header><FileCode2 size={13} /><span>{visibleRunReview.path}</span><small>immutable trees</small></header>
-                {visibleRunReview.loading ? <p>正在读取 Run 快照…</p> : visibleRunReview.diff?.patch === null
-                  ? <p>Binary diff · 无文本补丁</p>
-                  : <pre>{visibleRunReview.diff?.patch || "No textual changes"}</pre>}
+              <div className="run-owned-diff" role="region" aria-label={`${visibleRunReview.path} 的运行变更差异`}>
+                <header><FileCode2 size={13} /><span>{visibleRunReview.path}</span><small>运行结束时</small></header>
+                {visibleRunReview.loading ? <p>正在读取运行快照…</p> : visibleRunReview.diff?.patch === null
+                  ? <p>二进制文件，无文本差异</p>
+                  : <pre>{visibleRunReview.diff?.patch || "没有文本差异"}</pre>}
               </div>
             ) : null}
             {runAcceptance ? (
-              <div className="run-review-complete"><CheckCircle2 size={14} /> 已于 {new Date(runAcceptance.acceptedAt).toLocaleString("zh-CN")} 审查此 Run 快照；未修改 index、commit 或 push。</div>
+              <div className="run-review-complete"><CheckCircle2 size={14} /> 已于 {new Date(runAcceptance.acceptedAt).toLocaleString("zh-CN")} 审查本次运行的变更；未修改暂存区，也未提交或推送。</div>
             ) : (
               <button type="button" className="wide-control run-accept-trigger" onClick={() => onAcceptRunReview(inspectedRun)} disabled={Boolean(visibleRunReview?.accepting) || !inspectedRun.gitPatch.files.length}>
                 {visibleRunReview?.accepting ? <LoaderCircle size={14} className="status-running" /> : <Check size={14} />}
-                {visibleRunReview?.accepting ? "正在记录…" : "Accept Run review"}
+                {visibleRunReview?.accepting ? "正在记录…" : "完成本次运行审查"}
               </button>
             )}
             {(inspectedRun.gitRestores || []).length ? (
-              <div className="run-restore-complete"><CheckCircle2 size={14} /> 已安全恢复 {inspectedRun.gitRestores.at(-1).result.restoredPaths.length + inspectedRun.gitRestores.at(-1).result.deletedPaths.length} 个文件；Git index 未修改。</div>
+              <div className="run-restore-complete"><CheckCircle2 size={14} /> 已安全恢复 {inspectedRun.gitRestores.at(-1).result.restoredPaths.length + inspectedRun.gitRestores.at(-1).result.deletedPaths.length} 个文件；Git 暂存区未修改。</div>
             ) : (
               <button type="button" className="wide-control run-restore-trigger" onClick={() => onPreviewRunRestore(inspectedRun)} disabled={runRestoreBusy || !inspectedRun.gitPatch.files.length}>
-                <RotateCcw size={14} /> Preview Run restore
+                <RotateCcw size={14} /> 预览恢复操作
               </button>
             )}
             {runRestoreError ? <div className="permission-error" role="alert"><CircleAlert size={14} />{runRestoreError}</div> : null}
             {visibleRestorePreview ? (
-              <div className="run-restore-preview" role="alertdialog" aria-modal="false" aria-label="确认恢复此 Run 的变更">
-                <strong>只恢复归属于此 Run 的工作区改动</strong>
-                <p>{visibleRestorePreview.warning || "恢复只修改 worktree；不会修改 Git index。当前树和 Run 结束快照必须完全匹配。"}</p>
+              <div className="run-restore-preview" role="alertdialog" aria-modal="false" aria-label="确认恢复本次运行的变更">
+                <strong>只恢复归属于本次运行的工作区改动</strong>
+                <p>{visibleRestorePreview.warning || "恢复只修改工作区；不会修改 Git 暂存区。当前状态必须与运行结束时完全匹配。"}</p>
                 <dl>
-                  <div><dt>Restore</dt><dd>{visibleRestorePreview.restorePaths.length} files</dd></div>
-                  <div><dt>Delete</dt><dd>{visibleRestorePreview.deletePaths.length} files</dd></div>
-                  <div><dt>Conflicts</dt><dd>{visibleRestorePreview.conflicts.length}</dd></div>
+                  <div><dt>恢复</dt><dd>{visibleRestorePreview.restorePaths.length} 个文件</dd></div>
+                  <div><dt>删除</dt><dd>{visibleRestorePreview.deletePaths.length} 个文件</dd></div>
+                  <div><dt>冲突</dt><dd>{visibleRestorePreview.conflicts.length}</dd></div>
                 </dl>
                 {visibleRestorePreview.conflicts.map((conflict) => <div className="run-restore-conflict" key={`${conflict.reason}-${conflict.path || "all"}`}><CircleAlert size={13} />{conflict.path ? `${conflict.path}: ` : ""}{conflict.message}</div>)}
                 <div className="permission-actions">
@@ -2898,11 +3068,11 @@ function RunPane({ task, onToggleRun, runReviewState, onOpenRunDiff, onAcceptRun
           </div>
         </section>
       ) : inspectedRun?.gitBaseline ? (
-        <section className="run-section"><h3>Run-owned changes</h3><p className="empty-inspector-copy">Baseline 已记录；Run 终态后才会生成归属 Patch。</p></section>
+        <section className="run-section"><h3>本次运行的变更</h3><p className="empty-inspector-copy">已记录运行前状态；运行结束后会生成变更记录。</p></section>
       ) : null}
 
       <section className="run-section">
-        <h3>Verification evidence</h3>
+        <h3>验证证据</h3>
         <div className="verification-list">
           {verifications.map((verification) => (
             <article className={`verification-card is-${verification.status}`} key={verification.id}>
@@ -2913,20 +3083,20 @@ function RunPane({ task, onToggleRun, runReviewState, onOpenRunDiff, onAcceptRun
               </header>
               <code>{verification.command}</code>
               <dl>
-                <div><dt>CWD</dt><dd>{verification.cwd || "未知"}</dd></div>
-                <div><dt>Exit</dt><dd>{verification.exitCode ?? "未知"}</dd></div>
-                <div><dt>Time</dt><dd>{new Date(verification.finishedAt).toLocaleString("zh-CN")}</dd></div>
+                <div><dt>目录</dt><dd>{verification.cwd || "未知"}</dd></div>
+                <div><dt>退出码</dt><dd>{verification.exitCode ?? "未知"}</dd></div>
+                <div><dt>时间</dt><dd>{new Date(verification.finishedAt).toLocaleString("zh-CN")}</dd></div>
               </dl>
               {verification.redacted || verification.truncated ? <p className="verification-note">{verification.redacted ? "已脱敏" : ""}{verification.redacted && verification.truncated ? " · " : ""}{verification.truncated ? "日志已截断" : ""}</p> : null}
               {verification.log ? <details><summary>查看日志</summary><pre>{verification.log}</pre></details> : null}
             </article>
           ))}
-          {!verifications.length ? <p className="empty-inspector-copy">此 Run 尚无带 command、cwd 和 exit code 的验证证据；不会显示“测试通过”。</p> : null}
+          {!verifications.length ? <p className="empty-inspector-copy">本次运行尚无带命令、目录和退出码的验证证据；不会显示“测试通过”。</p> : null}
         </div>
       </section>
 
       <section className="run-section">
-        <h3>Event log</h3>
+        <h3>事件日志</h3>
         {events.map((event) => (
           <div className="run-event-row" key={event.id}>
             <span className="run-event-copy">
@@ -2938,17 +3108,17 @@ function RunPane({ task, onToggleRun, runReviewState, onOpenRunDiff, onAcceptRun
             <small>{new Date(event.occurredAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</small>
           </div>
         ))}
-        {!events.length ? <p className="empty-inspector-copy">Run 启动后，标准化事件会显示在这里。</p> : null}
+        {!events.length ? <p className="empty-inspector-copy">运行启动后，事件会显示在这里。</p> : null}
       </section>
 
       <section className="run-section">
-        <h3>Run controls</h3>
+        <h3>运行控制</h3>
         {isLatest ? (
           <button type="button" className="wide-control" onClick={onToggleRun} disabled={task.status === "waiting"}>
             {["running", "blocked"].includes(task.status) ? <Square size={14} /> : <Play size={15} />}
-            {["running", "blocked"].includes(task.status) ? "Stop run" : "Start new Run"}
+            {["running", "blocked"].includes(task.status) ? "停止运行" : "开始新的运行"}
           </button>
-        ) : <p className="empty-inspector-copy">Historical Run 为只读快照；切回 latest Run 后才能继续或停止。</p>}
+        ) : <p className="empty-inspector-copy">历史运行是只读记录；切回最新运行后才能继续或停止。</p>}
       </section>
     </div>
   );
@@ -3111,7 +3281,7 @@ function EnvironmentPane({ workspace, task, changesState, onOpenChanges, onOpenC
     setSyncState((state) => ({ ...state, busy: "commit", error: "", success: "", commit: null }));
     try {
       const result = await requireGitMethod("commitGit")({ message });
-      setSyncState((state) => ({ ...state, busy: "", error: "", success: `已提交 ${result.files} 个 staged 文件`, commit: result }));
+      setSyncState((state) => ({ ...state, busy: "", error: "", success: `已提交 ${result.files} 个已暂存文件`, commit: result }));
       setCommitMessage("");
       setCompareState({ loading: false, error: "", success: "", result: null });
       await onRefreshChanges?.();
@@ -3137,7 +3307,7 @@ function EnvironmentPane({ workspace, task, changesState, onOpenChanges, onOpenC
     setCompareState({ loading: true, error: "", success: "", result: null });
     try {
       const result = await requireGitMethod("compareGit")({ base: compareBase });
-      setCompareState({ loading: false, error: "", success: `已比较 ${result.base} 与 HEAD（${result.head.slice(0, 8)}）`, result });
+      setCompareState({ loading: false, error: "", success: `已比较 ${result.base} 与当前提交（${result.head.slice(0, 8)}）`, result });
     } catch (error) {
       setCompareState({ loading: false, error: error instanceof Error ? error.message : String(error), success: "", result: null });
     }
@@ -3152,7 +3322,7 @@ function EnvironmentPane({ workspace, task, changesState, onOpenChanges, onOpenC
       const result = await onAddContextSource(path);
       setSourceDraft("");
       const validatedPath = result?.path || path;
-      setSourceState({ loading: false, error: "", success: result?.alreadyIncluded ? `${validatedPath} 已在 Run Context 中` : `已将 ${validatedPath} 加入 Run Context` });
+      setSourceState({ loading: false, error: "", success: result?.alreadyIncluded ? `${validatedPath} 已在运行上下文中` : `已将 ${validatedPath} 加入运行上下文` });
     } catch (error) {
       setSourceState({ loading: false, error: error instanceof Error ? error.message : String(error), success: "" });
     }
@@ -3187,7 +3357,7 @@ function EnvironmentPane({ workspace, task, changesState, onOpenChanges, onOpenC
             {branchesState.loading ? <EnvironmentGitFeedback tone="loading" message="正在读取本地分支…" /> : null}
             {branchesState.error ? <EnvironmentGitFeedback tone="error" message={branchesState.error} /> : null}
             {branchesState.success ? <EnvironmentGitFeedback tone="success" message={branchesState.success} /> : null}
-            {branchesState.data?.detached ? <EnvironmentGitFeedback message={`当前为 detached HEAD${branchesState.data.headId ? ` · ${branchesState.data.headId.slice(0, 8)}` : ""}`} /> : null}
+            {branchesState.data?.detached ? <EnvironmentGitFeedback message={`当前处于分离 HEAD${branchesState.data.headId ? ` · ${branchesState.data.headId.slice(0, 8)}` : ""}`} /> : null}
             {branchesState.data?.local?.length ? (
               <div className="environment-branch-list" role="group" aria-label="选择要切换的本地分支">
                 {branchesState.data.local.map((branch) => (
@@ -3207,7 +3377,7 @@ function EnvironmentPane({ workspace, task, changesState, onOpenChanges, onOpenC
                 ))}
               </div>
             ) : !branchesState.loading && !branchesState.error ? <p className="environment-git-empty">没有可切换的本地分支。</p> : null}
-            {runOwnsWorkspace ? <EnvironmentGitFeedback message="Run 正在占用工作区；停止 Run 后才能切换分支。" /> : null}
+            {runOwnsWorkspace ? <EnvironmentGitFeedback message="当前运行正在占用工作区；停止运行后才能切换分支。" /> : null}
             <button
               type="button"
               className="environment-primary-action"
@@ -3232,26 +3402,26 @@ function EnvironmentPane({ workspace, task, changesState, onOpenChanges, onOpenC
               <button type="button" data-environment-dialog-focus onClick={closeGitSurface} aria-label="关闭提交或推送"><X size={15} /></button>
             </header>
             <section className="environment-git-section">
-              <h3>提交 staged 变更</h3>
-              <p>只提交 Git index 中已经 staged 的内容；Rux 不会自动 stage 文件。</p>
+              <h3>提交已暂存变更</h3>
+              <p>只提交 Git 暂存区中的内容；Rux 不会自动暂存文件。</p>
               <label className="environment-git-field">
-                <span>Commit message</span>
-                <textarea value={commitMessage} onChange={(event) => setCommitMessage(event.target.value)} rows={2} maxLength={500} placeholder="说明这次 staged 变更" disabled={Boolean(syncState.busy) || gitMutationDisabled} />
+                <span>提交信息</span>
+                <textarea value={commitMessage} onChange={(event) => setCommitMessage(event.target.value)} rows={2} maxLength={500} placeholder="说明这次已暂存变更" disabled={Boolean(syncState.busy) || gitMutationDisabled} />
               </label>
               <button type="button" className="environment-primary-action" onClick={() => void commitStagedChanges()} disabled={!commitMessage.trim() || Boolean(syncState.busy) || gitMutationDisabled}>
                 {syncState.busy === "commit" ? <LoaderCircle size={13} className="status-running" /> : <GitCommitHorizontal size={13} />}
-                {syncState.busy === "commit" ? "正在提交…" : "提交 staged 变更"}
+                {syncState.busy === "commit" ? "正在提交…" : "提交已暂存变更"}
               </button>
             </section>
             <section className="environment-git-section">
               <h3>推送当前分支</h3>
-              <p>{currentLocalBranch?.upstream ? `仅推送到现有 upstream：${currentLocalBranch.upstream}` : "当前分支没有现有 upstream；Rux 不会自动创建远端跟踪关系。"}</p>
+              <p>{currentLocalBranch?.upstream ? `仅推送到现有上游：${currentLocalBranch.upstream}` : "当前分支没有现有上游；Rux 不会自动创建远端跟踪关系。"}</p>
               {!pushConfirmOpen ? (
                 <button type="button" className="environment-secondary-action" onClick={() => setPushConfirmOpen(true)} disabled={!currentLocalBranch?.upstream || Boolean(syncState.busy) || gitMutationDisabled}><ArrowUp size={13} />准备推送</button>
               ) : (
                 <div className="environment-push-confirm" role="alert">
                   <strong>确认推送 {currentBranch}？</strong>
-                  <p>这会把当前分支提交发送到 {currentLocalBranch?.upstream}，不会 force push。</p>
+                  <p>这会把当前分支提交发送到 {currentLocalBranch?.upstream}，不会强制推送。</p>
                   <div>
                     <button type="button" className="environment-secondary-action" onClick={() => setPushConfirmOpen(false)} disabled={Boolean(syncState.busy)}>取消</button>
                     <button type="button" className="environment-danger-action" onClick={() => void pushCurrentBranch()} disabled={Boolean(syncState.busy)}>{syncState.busy === "push" ? <LoaderCircle size={13} className="status-running" /> : <ArrowUp size={13} />}{syncState.busy === "push" ? "正在推送…" : "确认推送"}</button>
@@ -3259,10 +3429,10 @@ function EnvironmentPane({ workspace, task, changesState, onOpenChanges, onOpenC
                 </div>
               )}
             </section>
-            {runOwnsWorkspace ? <EnvironmentGitFeedback message="Run 正在占用工作区；停止 Run 后才能 commit 或 push。" /> : null}
+            {runOwnsWorkspace ? <EnvironmentGitFeedback message="当前运行正在占用工作区；停止运行后才能提交或推送。" /> : null}
             {branchesState.loading ? <EnvironmentGitFeedback tone="loading" message="正在读取分支与 upstream…" /> : null}
             {branchesState.error ? <EnvironmentGitFeedback tone="error" message={branchesState.error} /> : null}
-            {syncState.busy ? <EnvironmentGitFeedback tone="loading" message={syncState.busy === "commit" ? "Git 正在创建 commit…" : "Git 正在推送当前分支…"} /> : null}
+            {syncState.busy ? <EnvironmentGitFeedback tone="loading" message={syncState.busy === "commit" ? "Git 正在创建提交…" : "Git 正在推送当前分支…"} /> : null}
             {syncState.error ? <EnvironmentGitFeedback tone="error" message={syncState.error} /> : null}
             {syncState.success ? <EnvironmentGitFeedback tone="success" message={syncState.success} /> : null}
             {syncState.commit ? <p className="environment-git-result"><code>{syncState.commit.commitId.slice(0, 10)}</code><span>{syncState.commit.message}</span></p> : null}
@@ -3271,7 +3441,7 @@ function EnvironmentPane({ workspace, task, changesState, onOpenChanges, onOpenC
         {gitSurface === "compare" ? (
           <section ref={gitSurfaceRef} className="environment-git-popover" id="environment-compare-popover" role="dialog" aria-modal="false" aria-labelledby="environment-compare-title">
             <header className="environment-git-popover-header">
-              <span><strong id="environment-compare-title">比较分支</strong><small>HEAD：{currentBranch}</small></span>
+              <span><strong id="environment-compare-title">比较分支</strong><small>当前分支：{currentBranch}</small></span>
               <button type="button" data-environment-dialog-focus onClick={closeGitSurface} aria-label="关闭分支比较"><X size={15} /></button>
             </header>
             <label className="environment-git-field">
@@ -3281,7 +3451,7 @@ function EnvironmentPane({ workspace, task, changesState, onOpenChanges, onOpenC
                 setCompareState({ loading: false, error: "", success: "", result: null });
               }} disabled={branchesState.loading || compareState.loading}>
                 {!compareBase ? <option value="">选择 base</option> : null}
-                {(branchesState.data?.comparable || []).filter((branch) => branch.name !== branchesState.data?.currentBranch).map((branch) => <option value={branch.name} key={`${branch.kind}-${branch.name}`}>{branch.name}{branch.kind === "remote" ? " · remote" : ""}</option>)}
+                {(branchesState.data?.comparable || []).filter((branch) => branch.name !== branchesState.data?.currentBranch).map((branch) => <option value={branch.name} key={`${branch.kind}-${branch.name}`}>{branch.name}{branch.kind === "remote" ? " · 远端" : ""}</option>)}
               </select>
             </label>
             <div className="environment-git-inline-actions">
@@ -3290,7 +3460,7 @@ function EnvironmentPane({ workspace, task, changesState, onOpenChanges, onOpenC
             </div>
             {branchesState.loading ? <EnvironmentGitFeedback tone="loading" message="正在读取可比较分支…" /> : null}
             {branchesState.error ? <EnvironmentGitFeedback tone="error" message={branchesState.error} /> : null}
-            {compareState.loading ? <EnvironmentGitFeedback tone="loading" message={`正在比较 ${compareBase} 与 HEAD…`} /> : null}
+            {compareState.loading ? <EnvironmentGitFeedback tone="loading" message={`正在比较 ${compareBase} 与当前分支…`} /> : null}
             {compareState.error ? <EnvironmentGitFeedback tone="error" message={compareState.error} /> : null}
             {compareState.success ? <EnvironmentGitFeedback tone="success" message={compareState.success} /> : null}
             {compareState.result ? (
@@ -3298,11 +3468,11 @@ function EnvironmentPane({ workspace, task, changesState, onOpenChanges, onOpenC
                 <header><strong>{compareState.result.totals.files} 个文件</strong><span><b>+{compareState.result.totals.additions}</b><em>−{compareState.result.totals.deletions}</em></span></header>
                 <p>{compareState.result.summary}</p>
                 <div className="environment-compare-files">
-                  {compareState.result.files.slice(0, 100).map((file) => <div key={file.path}><span>{file.path}</span><small>{file.isBinary ? <i>binary</i> : null}<b>+{file.additions}</b><em>−{file.deletions}</em></small></div>)}
+                  {compareState.result.files.slice(0, 100).map((file) => <div key={file.path}><span>{file.path}</span><small>{file.isBinary ? <i>二进制</i> : null}<b>+{file.additions}</b><em>−{file.deletions}</em></small></div>)}
                   {compareState.result.files.length > 100 ? <p>另有 {compareState.result.files.length - 100} 个文件；总计仍以上方完整统计为准。</p> : null}
                   {!compareState.result.files.length ? <p>两个引用之间没有文件差异。</p> : null}
                 </div>
-                {compareState.result.patch ? <pre tabIndex={0} aria-label={`${compareState.result.base} 与 HEAD 的比较 patch`}>{compareState.result.patch}</pre> : null}
+                {compareState.result.patch ? <pre tabIndex={0} aria-label={`${compareState.result.base} 与当前分支的比较补丁`}>{compareState.result.patch}</pre> : null}
                 {compareState.result.truncated ? <EnvironmentGitFeedback message="Patch 已截断；文件统计仍来自完整比较结果。" /> : null}
                 <p className="environment-compare-note">上方是 base compare；Changes 面板显示当前工作区的未提交变更。</p>
                 <button type="button" className="environment-secondary-action environment-open-changes" onClick={() => onOpenChanges()}><FilePlus2 size={13} />打开工作区 Changes（未提交变更）</button>
@@ -3322,19 +3492,19 @@ function EnvironmentPane({ workspace, task, changesState, onOpenChanges, onOpenC
           <form className="source-composer-form" id="environment-source-composer" onSubmit={(event) => void addContextSource(event)}>
             <label className="source-composer"><FileCode2 size={15} /><input autoFocus aria-label="工作区相对文件路径" value={sourceDraft} onChange={(event) => setSourceDraft(event.target.value)} placeholder="例如 src/App.jsx" autoComplete="off" disabled={sourceState.loading} /></label>
             <button type="submit" className="source-composer-submit" disabled={!sourceDraft.trim() || sourceState.loading}>{sourceState.loading ? <LoaderCircle size={13} className="status-running" /> : <Plus size={13} />}添加</button>
-            <small>仅接受当前工作区内的相对文件路径；Runtime 会检查路径边界和敏感文件。</small>
+            <small>仅接受当前工作区内的相对文件路径；运行边界会检查路径与敏感文件。</small>
             {sourceState.loading ? <EnvironmentGitFeedback tone="loading" message="正在验证文件…" /> : null}
             {sourceState.error ? <EnvironmentGitFeedback tone="error" message={sourceState.error} /> : null}
             {sourceState.success ? <EnvironmentGitFeedback tone="success" message={sourceState.success} /> : null}
           </form>
         ) : null}
         <div className="source-list">
-          {!sources.length ? <p className="empty-inspector-copy">添加工作区相对文件后，它会进入下一次 Run 的 Context。</p> : null}
+          {!sources.length ? <p className="empty-inspector-copy">添加工作区相对文件后，它会进入下一次运行的上下文。</p> : null}
           {sources.slice(0, 3).map((source) => (
             <button
               type="button"
               key={`${source.kind}-${source.label}`}
-              title={source.url ? `${source.label} · 在浏览器中打开` : `${source.label} · 在 Context 中查看`}
+              title={source.url ? `${source.label} · 在浏览器中打开` : `${source.label} · 在上下文中查看`}
               onClick={() => source.url
                 ? window.open(source.url, "_blank", "noopener,noreferrer")
                 : onOpenContext()}
@@ -3343,7 +3513,7 @@ function EnvironmentPane({ workspace, task, changesState, onOpenChanges, onOpenC
               <span>{source.label}</span>
             </button>
           ))}
-          {sources.length ? <button type="button" className="source-view-all" onClick={() => onOpenContext()}><Share2 size={18} /><span>在 Context 中查看全部</span></button> : null}
+          {sources.length ? <button type="button" className="source-view-all" onClick={() => onOpenContext()}><Share2 size={18} /><span>在上下文中查看全部</span></button> : null}
         </div>
       </section>
     </div>
@@ -3351,6 +3521,22 @@ function EnvironmentPane({ workspace, task, changesState, onOpenChanges, onOpenC
 }
 
 function Inspector({ open, onClose, tab, onTab, selectedFile, onSelectFile, workspace, task, onToggleRun, changesState, contextState, onRefreshChanges, onRefreshContext, onToggleContextFile, onAddContextSource, onRestoreChanges, onAcceptChanges, runReviewState, onOpenRunDiff, onAcceptRunReview, runRestorePreview, runRestoreBusy, runRestoreError, onPreviewRunRestore, onConfirmRunRestore, onCancelRunRestore, gitClient, onBranchChanged }) {
+  const inspectorTabIds = ["changes", "context", "run"];
+  const handleInspectorTabKeyDown = (event) => {
+    if (event.target.getAttribute("role") !== "tab" || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    const currentIndex = inspectorTabIds.indexOf(tab);
+    const nextIndex = event.key === "Home"
+      ? 0
+      : event.key === "End"
+        ? inspectorTabIds.length - 1
+        : event.key === "ArrowRight"
+          ? (currentIndex + 1) % inspectorTabIds.length
+          : (currentIndex - 1 + inspectorTabIds.length) % inspectorTabIds.length;
+    const nextTab = inspectorTabIds[nextIndex];
+    onTab(nextTab);
+    window.requestAnimationFrame(() => document.getElementById(`inspector-tab-${nextTab}`)?.focus());
+  };
   return (
     <aside className={`inspector inspector-${tab} ${open ? "is-open" : ""}`} aria-hidden={!open} inert={!open}>
       {tab === "environment" ? (
@@ -3373,13 +3559,13 @@ function Inspector({ open, onClose, tab, onTab, selectedFile, onSelectFile, work
           }}
         />
       ) : <>
-      <div className="inspector-tabs" role="tablist" aria-label="任务检查器">
+      <div className="inspector-tabs" role="tablist" aria-label="任务检查器" onKeyDown={handleInspectorTabKeyDown}>
         <button type="button" className="inspector-back" onClick={() => onTab("environment")} aria-label="返回环境信息"><ChevronLeft size={16} /></button>
-        <button type="button" id="inspector-tab-changes" aria-controls="inspector-panel-changes" aria-selected={tab === "changes"} className={tab === "changes" ? "is-active" : ""} onClick={() => onTab("changes")} role="tab">
-          Changes {changesState.snapshot?.totals.files ? <span>{changesState.snapshot.totals.files}</span> : null}
+        <button type="button" id="inspector-tab-changes" aria-controls="inspector-panel-changes" aria-selected={tab === "changes"} tabIndex={tab === "changes" ? 0 : -1} className={tab === "changes" ? "is-active" : ""} onClick={() => onTab("changes")} role="tab">
+          变更 {changesState.snapshot?.totals.files ? <span>{changesState.snapshot.totals.files}</span> : null}
         </button>
-        <button type="button" id="inspector-tab-context" aria-controls="inspector-panel-context" aria-selected={tab === "context"} className={tab === "context" ? "is-active" : ""} onClick={() => onTab("context")} role="tab">Context</button>
-        <button type="button" id="inspector-tab-run" aria-controls="inspector-panel-run" aria-selected={tab === "run"} className={tab === "run" ? "is-active" : ""} onClick={() => onTab("run")} role="tab">Run</button>
+        <button type="button" id="inspector-tab-context" aria-controls="inspector-panel-context" aria-selected={tab === "context"} tabIndex={tab === "context" ? 0 : -1} className={tab === "context" ? "is-active" : ""} onClick={() => onTab("context")} role="tab">上下文</button>
+        <button type="button" id="inspector-tab-run" aria-controls="inspector-panel-run" aria-selected={tab === "run"} tabIndex={tab === "run" ? 0 : -1} className={tab === "run" ? "is-active" : ""} onClick={() => onTab("run")} role="tab">运行</button>
         <button
           type="button"
           className="inspector-more"
@@ -3411,31 +3597,60 @@ function Inspector({ open, onClose, tab, onTab, selectedFile, onSelectFile, work
 function TerminalPanel({ open, onClose }) {
   const [tabs, setTabs] = useState(() => [{ id: `terminal-${Date.now()}`, label: "connecting" }]);
   const [activeTabId, setActiveTabId] = useState(() => tabs[0].id);
+  const focusTerminalTab = (tabId) => window.requestAnimationFrame(() => document.getElementById(`terminal-tab-${tabId}`)?.focus());
+  const activateTerminalTab = (tabId) => {
+    setActiveTabId(tabId);
+    focusTerminalTab(tabId);
+  };
 
   const addTab = () => {
     const tab = { id: `terminal-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, label: "connecting" };
     setTabs((items) => [...items, tab]);
     setActiveTabId(tab.id);
+    focusTerminalTab(tab.id);
   };
 
   const closeTab = (tabId) => {
     setTabs((items) => {
+      const closingIndex = items.findIndex((item) => item.id === tabId);
       const next = items.filter((item) => item.id !== tabId);
       if (!next.length) {
         window.requestAnimationFrame(onClose);
         return [{ id: `terminal-${Date.now()}`, label: "connecting" }];
       }
-      if (activeTabId === tabId) setActiveTabId(next.at(-1).id);
+      const nextActiveTabId = activeTabId === tabId
+        ? next[Math.min(Math.max(0, closingIndex), next.length - 1)].id
+        : activeTabId;
+      setActiveTabId(nextActiveTabId);
+      focusTerminalTab(nextActiveTabId);
       return next;
     });
+  };
+
+  const handleTerminalTabKeyDown = (event) => {
+    if (event.target.getAttribute("role") !== "tab" || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    const currentIndex = Math.max(0, tabs.findIndex((item) => item.id === activeTabId));
+    const nextIndex = event.key === "Home"
+      ? 0
+      : event.key === "End"
+        ? tabs.length - 1
+        : event.key === "ArrowRight"
+          ? (currentIndex + 1) % tabs.length
+          : (currentIndex - 1 + tabs.length) % tabs.length;
+    activateTerminalTab(tabs[nextIndex].id);
   };
 
   if (!open) return null;
   return (
     <section className="terminal-panel" aria-label="集成终端">
       <div className="terminal-header">
-        <div className="terminal-tabs">
-          {tabs.map((tab) => <div className={`terminal-tab ${tab.id === activeTabId ? "is-active" : ""}`} key={tab.id}><button type="button" onClick={() => setActiveTabId(tab.id)}><SquareTerminal size={14} /><span>{tab.label === "connecting" ? "Terminal" : tab.label}</span></button><button type="button" className="terminal-tab-close" aria-label={`关闭终端 ${tab.label}`} onClick={() => closeTab(tab.id)}><X size={13} /></button></div>)}
+        <div className="terminal-tabs" role="tablist" aria-label="终端标签" onKeyDown={handleTerminalTabKeyDown}>
+          {tabs.map((tab, index) => {
+            const label = tab.label === "connecting" ? "Terminal" : tab.label;
+            const selected = tab.id === activeTabId;
+            return <div className={`terminal-tab ${selected ? "is-active" : ""}`} key={tab.id}><button id={`terminal-tab-${tab.id}`} type="button" role="tab" aria-selected={selected} tabIndex={selected ? 0 : -1} aria-controls={`terminal-panel-${tab.id}`} aria-label={`终端 ${index + 1}：${label}`} onClick={() => activateTerminalTab(tab.id)}><SquareTerminal size={14} /><span>{label}</span></button><button type="button" className="terminal-tab-close" aria-label={`关闭终端 ${index + 1}：${label}`} onClick={() => closeTab(tab.id)}><X size={13} /></button></div>;
+          })}
           <button type="button" className="terminal-new-tab" aria-label="新建终端" onClick={addTab}><Plus size={16} /></button>
         </div>
         <div className="terminal-actions">
@@ -3443,7 +3658,7 @@ function TerminalPanel({ open, onClose }) {
         </div>
       </div>
       <div className="terminal-body terminal-body-xterm">
-        {tabs.map((tab) => <div className={`terminal-tab-panel ${tab.id === activeTabId ? "is-active" : ""}`} key={tab.id} aria-hidden={tab.id !== activeTabId}>
+        {tabs.map((tab) => <div id={`terminal-panel-${tab.id}`} className={`terminal-tab-panel ${tab.id === activeTabId ? "is-active" : ""}`} key={tab.id} role="tabpanel" aria-labelledby={`terminal-tab-${tab.id}`} aria-hidden={tab.id !== activeTabId}>
           <TerminalView onSessionChange={(label) => setTabs((items) => items.map((item) => item.id === tab.id ? { ...item, label } : item))} onEscape={onClose} />
         </div>)}
       </div>
@@ -4327,23 +4542,201 @@ function LocalDataDialog({ state, task, workspace, board, onChange, onPreview, o
   </div>;
 }
 
-function CodexSettingsDialog({ open, connected, catalog, settings, boardEnabled, improvementSettings, improvementAgents, localMetrics, localEventMetrics, updateState, updateBusy, onCheckUpdate, onDownloadUpdate, onInstallUpdate, onConfirmUpdateHealthy, onClose, onReload, onSave, onBoardEnabledChange, onImprovementSettingsChange, onOpenAccounts, onOpenLocalData }) {
+function pluginDisplayName(plugin) {
+  return String(plugin?.name || plugin?.pluginId || "插件")
+    .split("-")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toLocaleUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function PluginsSurface({ state, onClose, onReload, onInstall, onRemove }) {
+  const [query, setQuery] = useState("");
+  useEffect(() => {
+    if (state.open) setQuery("");
+  }, [state.open]);
+  if (!state.open) return null;
+
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  const matches = (plugin) => !normalizedQuery
+    || `${plugin.name} ${plugin.pluginId} ${plugin.marketplaceName}`.toLocaleLowerCase().includes(normalizedQuery);
+  const installed = (state.result?.installed || []).filter(matches);
+  const available = (state.result?.available || []).filter(matches);
+  const unavailableReason = state.result?.unavailableReason;
+  const pluginCard = (plugin, isInstalled) => (
+    <article className="plugin-card" key={plugin.pluginId}>
+      <span className="plugin-card-icon"><Box size={19} /></span>
+      <span className="plugin-card-copy">
+        <strong>{pluginDisplayName(plugin)}</strong>
+        <small>{plugin.marketplaceName} · {plugin.version}</small>
+        <code>{plugin.pluginId}</code>
+      </span>
+      <button
+        type="button"
+        className={isInstalled ? "secondary-button" : "primary-button"}
+        disabled={state.loading || Boolean(state.busyPluginId)}
+        onClick={() => isInstalled ? onRemove(plugin) : onInstall(plugin)}
+      >
+        {state.busyPluginId === plugin.pluginId ? <LoaderCircle size={14} className="status-running" /> : isInstalled ? <Trash2 size={14} /> : <Download size={14} />}
+        {state.busyPluginId === plugin.pluginId ? "处理中" : isInstalled ? "移除" : "安装"}
+      </button>
+    </article>
+  );
+
+  return (
+    <section className="plugins-surface" aria-labelledby="plugins-title">
+      <header className="plugins-header">
+        <div><span className="plugins-heading-icon"><AtSign size={19} /></span><span><h1 id="plugins-title">插件</h1><p>浏览和管理官方 Codex CLI 当前可用的插件。</p></span></div>
+        <div className="plugins-header-actions">
+          <label className="plugins-search"><Search size={15} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索插件" aria-label="搜索插件" /></label>
+          <button type="button" className="icon-button" onClick={onReload} disabled={state.loading || Boolean(state.busyPluginId)} aria-label="刷新插件目录"><RefreshCw size={17} className={state.loading ? "status-running" : ""} /></button>
+          <button type="button" className="icon-button" onClick={onClose} aria-label="关闭插件"><X size={17} /></button>
+        </div>
+      </header>
+
+      <div className="plugins-scroll">
+        {state.error ? <div className="plugins-error" role="alert"><CircleAlert size={16} /><span><strong>无法加载插件</strong><small>{state.error}</small></span><button type="button" className="secondary-button" onClick={onReload}>重试</button></div> : null}
+        {state.notice ? <div className="plugins-notice" role="status"><CheckCircle2 size={15} /><span>{state.notice}</span></div> : null}
+        {unavailableReason ? <div className="plugins-empty"><AtSign size={23} /><strong>桌面插件目录不可用</strong><p>{unavailableReason}</p></div> : null}
+        {state.loading && !state.result ? <div className="plugins-empty" role="status"><LoaderCircle size={23} className="status-running" /><strong>正在加载插件</strong><p>通过官方 Codex CLI 读取已安装和可用插件。</p></div> : null}
+
+        {!unavailableReason && state.result ? <>
+          <section className="plugins-section" aria-labelledby="installed-plugins-heading">
+            <header><h2 id="installed-plugins-heading">已安装</h2><span>{installed.length}</span></header>
+            {installed.length ? <div className="plugin-grid">{installed.map((plugin) => pluginCard(plugin, true))}</div> : <p className="plugins-section-empty">{normalizedQuery ? "没有匹配的已安装插件。" : "尚未安装插件。"}</p>}
+          </section>
+          <section className="plugins-section" aria-labelledby="available-plugins-heading">
+            <header><h2 id="available-plugins-heading">可用插件</h2><span>{available.length}</span></header>
+            {available.length ? <div className="plugin-grid">{available.map((plugin) => pluginCard(plugin, false))}</div> : <p className="plugins-section-empty">{normalizedQuery ? "没有匹配的可用插件。" : "当前目录没有其他可安装插件。"}</p>}
+          </section>
+        </> : null}
+      </div>
+    </section>
+  );
+}
+
+function PullRequestsSurface({ state, onClose, onReload }) {
+  if (!state.open) return null;
+  const items = state.result?.items || [];
+  const unavailableReason = state.result?.unavailableReason;
+  const stateCopy = (item) => item.isDraft ? "草稿" : item.state === "open" ? "打开" : item.state === "merged" ? "已合并" : "已关闭";
+  return (
+    <section className="plugins-surface pull-requests-surface" aria-labelledby="pull-requests-title">
+      <header className="plugins-header">
+        <div><span className="plugins-heading-icon"><GitPullRequest size={19} /></span><span><h1 id="pull-requests-title">拉取请求</h1><p>{state.result?.repository ? `${state.result.repository} · 通过本机 GitHub CLI 读取` : "查看当前仓库的拉取请求。"}</p></span></div>
+        <div className="plugins-header-actions">
+          <button type="button" className="icon-button" onClick={onReload} disabled={state.loading} aria-label="刷新拉取请求"><RefreshCw size={17} className={state.loading ? "status-running" : ""} /></button>
+          <button type="button" className="icon-button" onClick={onClose} aria-label="关闭拉取请求"><X size={17} /></button>
+        </div>
+      </header>
+      <div className="plugins-scroll">
+        {state.error ? <div className="plugins-error" role="alert"><CircleAlert size={16} /><span><strong>无法加载拉取请求</strong><small>{state.error}</small></span><button type="button" className="secondary-button" onClick={onReload}>重试</button></div> : null}
+        {unavailableReason ? <div className="plugins-empty"><GitPullRequest size={23} /><strong>拉取请求不可用</strong><p>{unavailableReason}</p></div> : null}
+        {state.loading && !state.result ? <div className="plugins-empty" role="status"><LoaderCircle size={23} className="status-running" /><strong>正在加载拉取请求</strong><p>读取当前工作区对应的 GitHub 仓库。</p></div> : null}
+        {!state.loading && !state.error && !unavailableReason && state.result ? (
+          <section className="plugins-section" aria-labelledby="pull-request-list-heading">
+            <header><h2 id="pull-request-list-heading">全部</h2><span>{items.length}</span></header>
+            {items.length ? <div className="pull-request-list">{items.map((item) => (
+              <button type="button" className="pull-request-card" key={item.number} onClick={() => window.open(item.url, "_blank", "noopener,noreferrer")}>
+                <span className={`pull-request-state is-${item.state}`}><GitPullRequest size={16} /></span>
+                <span className="pull-request-copy"><strong>{item.title}</strong><small>#{item.number} · {item.author ? `@${item.author} · ` : ""}{item.headRefName} → {item.baseRefName}</small></span>
+                <span className="pull-request-meta"><strong>{stateCopy(item)}</strong><small>{new Date(item.updatedAt).toLocaleDateString("zh-CN")}</small></span>
+              </button>
+            ))}</div> : <p className="plugins-section-empty">当前仓库没有拉取请求。</p>}
+          </section>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+function UnavailableFeatureSurface({ feature, onClose }) {
+  const sites = feature === "sites";
+  return (
+    <section className="plugins-surface unavailable-feature-surface" aria-labelledby="unavailable-feature-title">
+      <header className="plugins-header">
+        <div><span className="plugins-heading-icon">{sites ? <PanelsTopLeft size={19} /> : <Clock3 size={19} />}</span><span><h1 id="unavailable-feature-title">{sites ? "站点" : "已安排"}</h1><p>{sites ? "创建、查看和管理 Codex 站点" : "查看和管理计划任务"}</p></span></div>
+        <button type="button" className="icon-button" onClick={onClose} aria-label={`关闭${sites ? "站点" : "已安排"}`}><X size={17} /></button>
+      </header>
+      <div className="plugins-scroll">
+        <div className="plugins-empty" role="status">
+          {sites ? <PanelsTopLeft size={24} /> : <Clock3 size={24} />}
+          <strong>当前桌面边界尚不可用</strong>
+          <p>{sites
+            ? "当前官方 Codex 本地接口未提供站点列表和管理能力。Rux 不会显示虚构站点或把环境面板冒充为站点。"
+            : "当前官方 Codex 本地接口未提供计划任务列表和管理能力。Rux 不会把通知冒充为已安排任务。"}</p>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+const externalImportSourceLabels = {
+  "claude-code": "Claude Code",
+  "claude-cowork": "Claude Cowork",
+  cursor: "Cursor",
+};
+
+const externalImportItemLabels = {
+  AGENTS_MD: "项目指令",
+  CONFIG: "设置",
+  SKILLS: "Skills",
+  PLUGINS: "插件",
+  MCP_SERVER_CONFIG: "MCP 服务器",
+  SUBAGENTS: "子代理",
+  HOOKS: "钩子",
+  COMMANDS: "命令",
+  MEMORY: "项目记忆",
+  SESSIONS: "最近聊天",
+};
+
+function ExternalImportSettings({ state, onReload, onImport }) {
+  const [stage, setStage] = useState("sources");
+  const [selectedSources, setSelectedSources] = useState([]);
+  const [selectedItems, setSelectedItems] = useState({});
+  useEffect(() => {
+    const detections = Object.values(state.detections || {}).filter((result) => result?.items?.length);
+    setSelectedSources(detections.map((result) => result.source));
+    setSelectedItems(Object.fromEntries(detections.map((result) => [result.source, result.items.map((item) => item.id)])));
+    setStage("sources");
+  }, [state.scanId]);
+  const detections = Object.values(state.detections || {});
+  const selectedCount = selectedSources.reduce((sum, source) => sum + (selectedItems[source] || []).length, 0);
+  const toggleSource = (source) => setSelectedSources((sources) => sources.includes(source) ? sources.filter((item) => item !== source) : [...sources, source]);
+  const toggleItem = (source, id) => setSelectedItems((items) => ({ ...items, [source]: (items[source] || []).includes(id) ? items[source].filter((item) => item !== id) : [...(items[source] || []), id] }));
+  const submit = () => onImport(selectedSources.flatMap((source) => {
+    const detection = state.detections[source];
+    return detection?.detectionId && (selectedItems[source] || []).length ? [{ source, detectionId: detection.detectionId, itemIds: selectedItems[source] }] : [];
+  }));
+  return <div className="external-import-settings">
+    <section className="external-import-intro"><Download size={20} /><span><strong>从其他 AI 编码工具导入</strong><p>导入支持的设置、指令、Skills、插件、项目和最近聊天。来源内容不会被修改或删除。</p></span><button type="button" className="secondary-button" onClick={onReload} disabled={state.loading || state.importing}>{state.loading ? <LoaderCircle size={14} className="status-running" /> : <RefreshCw size={14} />}{state.loading ? "正在检测…" : "重新检测"}</button></section>
+    {state.error ? <div className="plugins-error" role="alert"><CircleAlert size={15} /><span><strong>导入检查失败</strong><small>{state.error}</small></span><button type="button" className="secondary-button" onClick={onReload}>重试</button></div> : null}
+    {state.notice ? <div className="plugins-notice" role="status"><CheckCircle2 size={15} /><span>{state.notice}</span></div> : null}
+    {state.loading && !detections.length ? <div className="plugins-empty" role="status"><LoaderCircle size={22} className="status-running" /><strong>正在查找可导入内容</strong><p>只在你打开此页面后，通过官方 Codex 边界检查用户级设置和当前项目。</p></div> : null}
+    {!state.loading && stage === "sources" ? <>
+      <section className="external-import-section"><header><span><strong>找到的应用</strong><small>选择要导入的来源</small></span></header><div className="external-import-source-list">{detections.map((detection) => <label key={detection.source} className={selectedSources.includes(detection.source) ? "is-selected" : ""}><input type="checkbox" checked={selectedSources.includes(detection.source)} disabled={!detection.items.length || detection.availability !== "available"} onChange={() => toggleSource(detection.source)} /><span><strong>{externalImportSourceLabels[detection.source]}</strong><small>{detection.availability !== "available" ? detection.unavailableReason : detection.items.length ? `${detection.items.length} 类内容 · ${detection.items.reduce((sum, item) => sum + item.itemCount, 0)} 项` : "未找到可导入内容"}</small></span></label>)}</div></section>
+      <footer className="external-import-footer"><span><ShieldCheck size={13} />现有来源配置不会受影响</span><button type="button" className="primary-button" disabled={!selectedSources.length} onClick={() => setStage("items")}>继续</button></footer>
+    </> : null}
+    {!state.loading && stage === "items" ? <>
+      <section className="external-import-section"><header><button type="button" className="secondary-button" onClick={() => setStage("sources")} disabled={state.importing}><ArrowLeft size={13} />返回</button><span><strong>选择要导入的内容</strong><small>{selectedCount} 项已选择</small></span></header><div className="external-import-item-list">{selectedSources.flatMap((source) => (state.detections[source]?.items || []).map((item) => <label key={item.id}><input type="checkbox" checked={(selectedItems[source] || []).includes(item.id)} onChange={() => toggleItem(source, item.id)} disabled={state.importing} /><span><strong>{externalImportItemLabels[item.itemType] || item.itemType}</strong><small>{externalImportSourceLabels[source]} · {item.scope === "workspace" ? "当前项目" : "用户设置"} · {item.description}</small></span><em>{item.itemCount}</em></label>))}</div></section>
+      <div className="external-import-review"><CircleAlert size={14} /><span><strong>导入前请审查权限与连接</strong><small>Skills、MCP、钩子和插件可能需要重新授权；确认后由官方 Codex 导入器写入目标配置。</small></span></div>
+      <footer className="external-import-footer"><span>将导入 {selectedCount} 项</span><button type="button" className="primary-button" disabled={!selectedCount || state.importing} onClick={submit}>{state.importing ? <LoaderCircle size={14} className="status-running" /> : <Download size={14} />}{state.importing ? "正在导入…" : "确认导入"}</button></footer>
+    </> : null}
+    <section className="external-import-section external-import-history"><header><span><strong>导入历史</strong><small>{state.history?.records?.length || 0} 次</small></span></header>{(state.history?.records || []).map((record) => <article key={record.importId}><span><strong>{record.source ? externalImportSourceLabels[record.source] : record.providerId || "外部来源"}</strong><small>{new Date(record.completedAt).toLocaleString("zh-CN")}</small></span><em>{record.successes.length} 成功 · {record.failures.length} 失败</em>{record.failures.map((failure) => <p key={`${failure.itemType}-${failure.stage}`}><CircleAlert size={12} />{externalImportItemLabels[failure.itemType] || failure.itemType}：{failure.message}</p>)}</article>)}{!state.history?.records?.length ? <p className="plugins-section-empty">尚无导入历史。</p> : null}</section>
+    <div className="external-import-auto"><span><strong>自动更新</strong><small>当前 App Server 尚未提供自动更新开关；Rux 不会伪造已同步状态。</small></span><label className="settings-switch"><input type="checkbox" disabled /><span aria-hidden="true" /></label></div>
+  </div>;
+}
+
+function CodexSettingsDialog({ open, connected, catalog, settings, externalImportState, onLoadExternalImport, onImportExternalConfig, boardEnabled, improvementSettings, improvementAgents, localMetrics, localEventMetrics, updateState, updateBusy, onCheckUpdate, onDownloadUpdate, onInstallUpdate, onConfirmUpdateHealthy, onClose, onReload, onSave, onBoardEnabledChange, onImprovementSettingsChange, onOpenAccounts, onOpenPlugins, onOpenLocalData }) {
   const [draft, setDraft] = useState(settings);
   const [query, setQuery] = useState("");
-  const [generalPreferences, setGeneralPreferences] = useState({
-    openTarget: "VS Code",
-    language: "自动检测",
-    showInMenuBar: true,
-    bottomPanel: true,
-    terminalPosition: "bottom",
-    preventSleep: true,
-    speed: "标准",
-  });
+  const [page, setPage] = useState("general");
   const dialogRef = useDialogFocus(open, onClose);
   useEffect(() => {
     if (open) {
       setDraft(settings);
       setQuery("");
+      setPage("general");
     }
   }, [open, settings]);
   if (!open) return null;
@@ -4363,12 +4756,13 @@ function CodexSettingsDialog({ open, connected, catalog, settings, boardEnabled,
   const showGeneral = matchesQuery("常规", "文件", "语言", "菜单栏", "底部面板", "终端", "休眠", "速度");
   const showFeatures = false;
   const showMetrics = false;
-  const showUpdates = matchesQuery("更新", "版本", "升级", "回滚", "签名");
+  const showUpdates = false;
   const applyDraft = (nextDraft) => {
     setDraft(nextDraft);
     onSave(nextDraft);
   };
   const choosePermission = (permissionMode) => applyDraft({ ...draft, permissionMode });
+  const updateGeneralPreference = (key, value) => applyDraft({ ...draft, [key]: value });
 
   return (
     <div className="rux-settings-surface" role="presentation">
@@ -4379,40 +4773,40 @@ function CodexSettingsDialog({ open, connected, catalog, settings, boardEnabled,
               <ArrowLeft size={17} />
               <span>返回应用</span>
             </button>
-            <div className="rux-settings-all"><ListFilter size={16} /><strong>所有设置</strong><ChevronDown size={14} /></div>
             <label className="rux-settings-search">
               <Search size={16} />
-              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索设置…" aria-label="搜索设置" />
+              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索设置…" aria-label="搜索设置" disabled={page !== "general"} />
+              <ListFilter size={15} aria-hidden="true" />
             </label>
           </div>
 
           <nav className="rux-settings-nav">
             <div className="rux-settings-nav-group">
               <p>个人</p>
-              <button type="button" className="is-active"><Settings size={16} /><span>常规</span></button>
-              <button type="button"><Download size={16} /><span>导入</span></button>
+              <button type="button" className={page === "general" ? "is-active" : ""} onClick={() => setPage("general")}><Settings size={16} /><span>常规</span></button>
+              <button type="button" className={page === "import" ? "is-active" : ""} onClick={() => { setPage("import"); setQuery(""); void onLoadExternalImport(); }}><Download size={16} /><span>导入</span></button>
               <button type="button" onClick={onOpenAccounts}><UserRound size={16} /><span>个人资料</span></button>
-              <button type="button"><Eye size={16} /><span>外观</span></button>
-              <button type="button"><Mic size={16} /><span>语音</span></button>
-              <button type="button"><SlidersHorizontal size={16} /><span>配置</span></button>
-              <button type="button"><Sparkles size={16} /><span>个性化</span></button>
-              <button type="button"><Zap size={16} /><span>键盘快捷键</span></button>
-              <button type="button"><Activity size={16} /><span>使用情况和计费</span></button>
+              <button type="button" disabled title="外观设置尚未完成目标客户端验收"><Eye size={16} /><span>外观</span></button>
+              <button type="button" disabled title="语音设置尚未完成目标客户端验收"><Mic size={16} /><span>语音</span></button>
+              <button type="button" disabled title="配置设置尚未完成目标客户端验收"><SlidersHorizontal size={16} /><span>配置</span></button>
+              <button type="button" disabled title="个性化设置尚未完成目标客户端验收"><Sparkles size={16} /><span>个性化</span></button>
+              <button type="button" disabled title="快捷键设置尚未完成目标客户端验收"><Zap size={16} /><span>键盘快捷键</span></button>
+              <button type="button" onClick={onOpenAccounts}><Activity size={16} /><span>使用情况和计费</span></button>
               <button type="button" onClick={onOpenAccounts}><AtSign size={16} /><span>账户</span><ArrowRight size={13} /></button>
             </div>
             <div className="rux-settings-nav-group">
               <p>集成</p>
-              <button type="button"><History size={16} /><span>计算机历史记录</span></button>
-              <button type="button"><Maximize2 size={16} /><span>应用快照</span></button>
-              <button type="button"><AtSign size={16} /><span>插件</span></button>
-              <button type="button"><Globe2 size={16} /><span>浏览器</span></button>
-              <button type="button"><Sparkles size={16} /><span>电脑操控</span></button>
+              <button type="button" disabled title="当前官方本地边界尚未提供计算机历史记录"><History size={16} /><span>计算机历史记录</span></button>
+              <button type="button" disabled title="当前官方本地边界尚未提供应用快照管理"><Maximize2 size={16} /><span>应用快照</span></button>
+              <button type="button" onClick={onOpenPlugins}><AtSign size={16} /><span>插件</span></button>
+              <button type="button" disabled title="当前官方本地边界尚未提供内置浏览器设置"><Globe2 size={16} /><span>浏览器</span></button>
+              <button type="button" disabled title="当前官方本地边界尚未提供电脑操控设置"><Sparkles size={16} /><span>电脑操控</span></button>
             </div>
             <div className="rux-settings-nav-group">
               <p>编码</p>
-              <button type="button"><GitCommitHorizontal size={16} /><span>钩子</span></button>
-              <button type="button"><Globe2 size={16} /><span>连接</span></button>
-              <button type="button"><GitBranch size={16} /><span>Git</span></button>
+              <button type="button" disabled title="钩子设置尚未完成目标客户端验收"><GitCommitHorizontal size={16} /><span>钩子</span></button>
+              <button type="button" disabled title="连接设置尚未完成目标客户端验收"><Globe2 size={16} /><span>连接</span></button>
+              <button type="button" disabled title="Git 设置尚未完成目标客户端验收"><GitBranch size={16} /><span>Git</span></button>
             </div>
           </nav>
         </aside>
@@ -4420,10 +4814,11 @@ function CodexSettingsDialog({ open, connected, catalog, settings, boardEnabled,
         <main className="rux-settings-main">
           <div className="rux-settings-content">
             <header className="rux-settings-title-row">
-              <h1 id="codex-settings-title">常规</h1>
+              <h1 id="codex-settings-title">{page === "import" ? "导入" : "常规"}</h1>
               <button type="button" className="icon-button rux-settings-close" onClick={onClose} aria-label="关闭 Rux 设置"><X size={17} /></button>
             </header>
 
+            {page === "import" ? <ExternalImportSettings state={externalImportState} onReload={onLoadExternalImport} onImport={onImportExternalConfig} /> : <>
             {!showPermissions && !showGeneral && !showFeatures && !showMetrics && !showUpdates ? (
               <div className="rux-settings-empty"><Search size={20} /><strong>没有匹配的设置</strong><span>请尝试搜索“权限”“模型”或“推理”。</span></div>
             ) : null}
@@ -4448,18 +4843,19 @@ function CodexSettingsDialog({ open, connected, catalog, settings, boardEnabled,
               <section className="rux-settings-section" id="rux-general-settings" aria-labelledby="rux-general-settings-heading">
                 <h2 id="rux-general-settings-heading">常规</h2>
                 <div className="rux-settings-card rux-general-card">
-                  <label>
+                  <label title="默认打开目标尚未连接到当前客户端文件操作路径">
                     <span><strong>默认文件打开目标</strong><small>默认打开文件和文件夹的位置</small></span>
-                    <select value={generalPreferences.openTarget} onChange={(event) => setGeneralPreferences((state) => ({ ...state, openTarget: event.target.value }))}><option>VS Code</option><option>Finder</option></select>
+                    <select value={draft.openTarget || defaultCodexSettings.openTarget} disabled><option>VS Code</option><option>Finder</option></select>
                   </label>
-                  <label>
+                  <label title="语言切换尚未连接到完整本地化资源">
                     <span><strong>语言</strong><small>应用 UI 语言</small></span>
-                    <select value={generalPreferences.language} onChange={(event) => setGeneralPreferences((state) => ({ ...state, language: event.target.value }))}><option>自动检测</option><option>简体中文</option><option>English</option></select>
+                    <select value={draft.language || defaultCodexSettings.language} disabled><option>自动检测</option><option>简体中文</option><option>English</option></select>
                   </label>
-                  {[['showInMenuBar', '在菜单栏中显示', '关闭主窗口后，仍在 macOS 菜单栏中保留 Rux'], ['bottomPanel', '底部面板', '在应用标题栏中显示底部面板控件']].map(([key, title, detail]) => <div className="rux-settings-action-row" key={key}><span><strong>{title}</strong><small>{detail}</small></span><label className="settings-switch"><input type="checkbox" checked={generalPreferences[key]} onChange={(event) => setGeneralPreferences((state) => ({ ...state, [key]: event.target.checked }))} /><span aria-hidden="true" /></label></div>)}
-                  <div className="rux-settings-action-row"><span><strong>默认终端位置</strong><small>选择终端快捷键和环境操作在何处打开终端标签页</small></span><div className="settings-segmented"><button type="button" className={generalPreferences.terminalPosition === 'bottom' ? 'is-active' : ''} onClick={() => setGeneralPreferences((state) => ({ ...state, terminalPosition: 'bottom' }))}>底部</button><button type="button" className={generalPreferences.terminalPosition === 'right' ? 'is-active' : ''} onClick={() => setGeneralPreferences((state) => ({ ...state, terminalPosition: 'right' }))}>右侧</button></div></div>
-                  <div className="rux-settings-action-row"><span><strong>运行时防止系统休眠</strong><small>在 Rux 运行任务时，让电脑保持唤醒状态</small></span><label className="settings-switch"><input type="checkbox" checked={generalPreferences.preventSleep} onChange={(event) => setGeneralPreferences((state) => ({ ...state, preventSleep: event.target.checked }))} /><span aria-hidden="true" /></label></div>
-                  <label><span><strong>速度</strong><small>选择 Rux 在聊天、子智能体和压缩中的运行速度</small></span><select value={generalPreferences.speed} onChange={(event) => setGeneralPreferences((state) => ({ ...state, speed: event.target.value }))}><option>标准</option><option>快速</option></select></label>
+                  <div className="rux-settings-action-row"><span><strong>在菜单栏中显示</strong><small>关闭主窗口后，仍在 macOS 菜单栏中保留 Rux</small></span><label className="settings-switch" title="macOS 菜单栏驻留尚未实现"><input type="checkbox" checked={draft.showInMenuBar ?? defaultCodexSettings.showInMenuBar} disabled /><span aria-hidden="true" /></label></div>
+                  <div className="rux-settings-action-row"><span><strong>底部面板</strong><small>在应用标题栏中显示底部面板控件</small></span><label className="settings-switch"><input type="checkbox" checked={draft.bottomPanel ?? defaultCodexSettings.bottomPanel} onChange={(event) => updateGeneralPreference('bottomPanel', event.target.checked)} /><span aria-hidden="true" /></label></div>
+                  <div className="rux-settings-action-row"><span><strong>默认终端位置</strong><small>选择终端快捷键和环境操作在何处打开终端标签页</small></span><div className="settings-segmented"><button type="button" className="is-active" onClick={() => updateGeneralPreference('terminalPosition', 'bottom')}>底部</button><button type="button" disabled title="右侧终端停靠尚未完成当前客户端验收">右侧</button></div></div>
+                  <div className="rux-settings-action-row"><span><strong>运行时防止系统休眠</strong><small>只在 Codex 运行或等待批准时阻止系统休眠</small></span><label className="settings-switch"><input type="checkbox" checked={draft.preventSleep ?? defaultCodexSettings.preventSleep} onChange={(event) => updateGeneralPreference('preventSleep', event.target.checked)} /><span aria-hidden="true" /></label></div>
+                  <label><span><strong>速度</strong><small>选择 Rux 在聊天、后台操作和上下文压缩中的运行速度</small></span><select value={draft.speed || defaultCodexSettings.speed} onChange={(event) => updateGeneralPreference('speed', event.target.value)}><option>标准</option><option>快速</option></select></label>
                 </div>
               </section>
             ) : null}
@@ -4512,6 +4908,7 @@ function CodexSettingsDialog({ open, connected, catalog, settings, boardEnabled,
                 </div>
               </section>
             ) : null}
+            </>}
           </div>
         </main>
       </section>
@@ -4530,11 +4927,11 @@ function RestoreDialog({ preview, busy, error, onClose, onConfirm }) {
       <section ref={dialogRef} tabIndex={-1} className="restore-dialog" role="alertdialog" aria-modal="true" aria-labelledby="restore-dialog-title">
         <header>
           <span className={`restore-dialog-icon ${hasDeletes ? "is-danger" : ""}`}><RotateCcw size={18} /></span>
-          <div><h2 id="restore-dialog-title">确认 Restore</h2><p>只修改下列 worktree 路径；已有 staged index 会原样保留，操作前会再次验证 Git snapshot。</p></div>
+          <div><h2 id="restore-dialog-title">确认恢复</h2><p>只修改下列工作区路径；已有 Git 暂存区会原样保留，操作前会再次验证 Git 快照。</p></div>
         </header>
         {error ? <div className="account-error" role="alert"><CircleAlert size={15} /><span>{error}</span></div> : null}
         <div className="restore-paths">
-          {preview.restoreFromHeadPaths.map((path) => <div key={`restore-${path}`}><FileCode2 size={14} /><span>恢复 HEAD 到 worktree</span><code>{path}</code></div>)}
+          {preview.restoreFromHeadPaths.map((path) => <div key={`restore-${path}`}><FileCode2 size={14} /><span>从 HEAD 恢复到工作区</span><code>{path}</code></div>)}
           {preview.deletePaths.map((path) => <div className="is-delete" key={`delete-${path}`}><Trash2 size={14} /><span>永久删除未跟踪文件</span><code>{path}</code></div>)}
         </div>
         {hasDeletes ? <p className="restore-warning"><CircleAlert size={15} /> 未跟踪文件没有 Git 恢复点，确认后会永久删除。</p> : null}
@@ -4542,7 +4939,7 @@ function RestoreDialog({ preview, busy, error, onClose, onConfirm }) {
           <button type="button" className="secondary-button" onClick={onClose} disabled={busy}>取消</button>
           <button type="button" className={hasDeletes ? "danger-button" : "primary-button"} onClick={onConfirm} disabled={busy}>
             {busy ? <LoaderCircle size={14} className="status-running" /> : <RotateCcw size={14} />}
-            {busy ? "正在 Restore…" : "确认 Restore"}
+            {busy ? "正在恢复…" : "确认恢复"}
           </button>
         </footer>
       </section>
@@ -4793,6 +5190,11 @@ export function App() {
   const [handoffState, setHandoffState] = useState({ open: false, loading: false, error: "", targetAgentId: "", messageIds: [], filePaths: [], agentSummary: "", agentSummaryGenerationId: "", summaryProvenance: null, constraints: "", preview: null, source: { messages: [], files: [] } });
   const [localDataState, setLocalDataState] = useState({ open: false, loading: false, error: "", notice: "", summary: null, preview: null, scope: "task", action: "unlink", format: "markdown", revisions: "current" });
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [pluginsState, setPluginsState] = useState({ open: false, loading: false, error: "", notice: "", busyPluginId: "", result: null });
+  const [pullRequestsState, setPullRequestsState] = useState({ open: false, loading: false, error: "", result: null });
+  const [unavailableFeature, setUnavailableFeature] = useState("");
+  const [reviewCommandState, setReviewCommandState] = useState({ open: false, busy: false, error: "" });
+  const [externalImportState, setExternalImportState] = useState({ loading: false, importing: false, error: "", notice: "", scanId: 0, detections: {}, history: null });
   const [boardState, setBoardState] = useState({ open: false, loading: false, error: "", projectId: "", snapshot: null, tasks: [] });
   const [boardSnapshotsByProject, setBoardSnapshotsByProject] = useState({});
   const [workingCopiesState, setWorkingCopiesState] = useState({ open: false, loading: false, error: "", projectId: "", items: [] });
@@ -4830,18 +5232,14 @@ export function App() {
     return {};
   });
   const [pendingImagesByTask, setPendingImagesByTask] = useState({});
+  const [queuedInputsByTask, setQueuedInputsByTask] = useState({});
   const runtimeRef = useRef(null);
   const cancellationsRef = useRef(new Map());
   const runTokensRef = useRef(new Map());
   const composerInputRef = useRef(null);
+  const queueDispatchingRef = useRef(new Set());
   const codexProvider = authState?.providers?.find((provider) => provider.id === "chatgpt");
   const codexConnected = codexProvider?.status === "connected";
-  const connectedProviderCount = authState?.providers?.filter((provider) => provider.status === "connected").length || 0;
-  const improvementAssetsForWorkspace = (workspace) => {
-    const projectId = workspace?.projectId || workspace?.id;
-    return (improvementState.summary?.assets || []).filter((asset) => asset.status === "active" && asset.scope !== "agent" && (asset.scope === "user" || asset.projectId === projectId)).map((asset) => ({ id: asset.id, type: asset.type, name: asset.name, content: asset.content, version: asset.version }));
-  };
-
   useEffect(() => {
     let disposed = false;
     const runtime = createRuntimeClient();
@@ -4851,37 +5249,18 @@ export function App() {
     if (window.rux) setHydratedWorkspaceId(null);
 
     const hydrate = async () => {
-      const [agentResult, profileResult, connectionResult, nextState, eventMetrics, nextUpdateState, improvementSummary] = await Promise.all([
+      const [agentResult, nextState] = await Promise.all([
         window.rux ? Promise.resolve({ adapters: cachedAgentDetection?.adapters || fallbackAdapters }) : runtime.listAgents(),
-        runtime.listAgentProfiles(),
-        runtime.listProviderConnections(),
         window.rux ? window.rux.getWorkspaceState() : Promise.resolve(null),
-        runtime.getLocalProductEventSummary(),
-        runtime.getUpdateState(),
-        window.rux ? window.rux.getImprovementSummary({}) : Promise.resolve(null),
       ]);
       if (disposed) return;
-      setAdapters(agentResult.adapters.map((adapter) => adapter.id === "rux-native" ? {
-        ...adapter,
-        available: connectionResult.length > 0,
-        detail: connectionResult.length ? `${connectionResult.length} 个原生 Provider Connection` : adapter.detail,
-      } : adapter));
-      setAgentProfiles(profileResult.profiles);
-      setNativeConnections(connectionResult);
-      setLocalProductEventMetrics(eventMetrics);
-      setUpdateState(nextUpdateState);
-      if (improvementSummary) setImprovementState((state) => ({ ...state, summary: improvementSummary }));
+      setAdapters(agentResult.adapters.filter((adapter) => adapter.id === "codex"));
       setAgentProfileError("");
 
       if (window.rux && nextState) {
         const snapshots = await Promise.all(nextState.recent.map((workspace) =>
           window.rux.loadTaskState(workspace.id)));
         if (disposed) return;
-        const projectIds = [...new Set(nextState.recent.filter((workspace) => !workspace.placeholder).map((workspace) => workspace.projectId || workspace.id))];
-        const boardSnapshots = await Promise.all(projectIds.map((projectId) => window.rux.loadBoard({ projectId })));
-        if (disposed) return;
-        setBoardSnapshotsByProject(Object.fromEntries(boardSnapshots.map((board) => [board.projectId, board])));
-
         const activeSnapshot = snapshots.find((snapshot) => snapshot.workspaceId === nextState.active.id);
         const storedActiveTasks = withoutSupersededWorkspaceStarter((activeSnapshot?.tasks || [])
           .filter((task) => !isLegacyShowcaseTask(task))
@@ -4928,28 +5307,13 @@ export function App() {
   useEffect(() => {
     if (!window.rux || hydratedWorkspaceId !== workspaceState.active.id) return;
     const snapshot = workspaceTaskSnapshot(workspaceState.active.id, tasks);
-    void window.rux.saveTaskState(snapshot).then(async () => {
+    void window.rux.saveTaskState(snapshot).then(() => {
       setPersistenceError("");
-      const activeProjectId = workspaceState.active.projectId || workspaceState.active.id;
-      if (boardState.open && boardState.projectId === activeProjectId) {
-        try {
-          const board = await window.rux.loadBoard({ projectId: activeProjectId });
-          setBoardState((state) => state.open && state.projectId === board.projectId
-            ? { ...state, snapshot: board, tasks: tasks.filter((task) => {
-                const workspace = workspaceState.recent.find((item) => item.id === task.workspaceId);
-                return (workspace?.projectId || workspace?.id) === activeProjectId;
-              }), error: "" }
-            : state);
-          setBoardSnapshotsByProject((boards) => ({ ...boards, [board.projectId]: board }));
-        } catch (error) {
-          setBoardState((state) => ({ ...state, error: error instanceof Error ? error.message : String(error) }));
-        }
-      }
     }).catch((error) => {
       setPersistenceError(error instanceof Error ? error.message : String(error));
       for (const activeRun of cancellationsRef.current.values()) activeRun.cancel();
     });
-  }, [boardState.open, boardState.projectId, hydratedWorkspaceId, tasks, workspaceState.active.id, workspaceState.active.projectId]);
+  }, [hydratedWorkspaceId, tasks, workspaceState.active.id]);
 
   useEffect(() => {
     if (showcaseMode) return;
@@ -4993,6 +5357,8 @@ export function App() {
   useEffect(() => {
     const handleGlobalShortcut = (event) => {
       if (event.key === "Escape") {
+        const interactiveOverlay = document.querySelector('[role="menu"], [role="dialog"], [role="alertdialog"], .composer-options-popover, .sidebar-search-wrap, .sidebar-notification-popover');
+        if (interactiveOverlay) return;
         setInspectorOpen(false);
         setTerminalOpen(false);
         setSidebarOpen(false);
@@ -5000,6 +5366,7 @@ export function App() {
         setAgentsOpen(false);
         setAccountsOpen(false);
         setSettingsOpen(false);
+        setPluginsState((state) => ({ ...state, open: false }));
         setBoardState((state) => ({ ...state, open: false }));
         setWorkingCopiesState((state) => ({ ...state, open: false }));
         setImprovementState((state) => ({ ...state, open: false }));
@@ -5024,6 +5391,35 @@ export function App() {
         setTerminalOpen(false);
         if (workspaceState.active.placeholder) void chooseWorkspace();
         else startEditableConversation();
+        return;
+      }
+
+      if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "g") {
+        event.preventDefault();
+        if (workspaceState.active.placeholder) {
+          void chooseWorkspace();
+          return;
+        }
+        setPluginsState((state) => ({ ...state, open: false }));
+        setBoardState((state) => ({ ...state, open: false }));
+        setTerminalOpen(false);
+        setInspectorTab("changes");
+        setInspectorOpen(true);
+        return;
+      }
+
+      if (event.ctrlKey && event.code === "Backquote") {
+        event.preventDefault();
+        if (workspaceState.active.placeholder) {
+          void chooseWorkspace();
+          return;
+        }
+        setPluginsState((state) => ({ ...state, open: false }));
+        setBoardState((state) => ({ ...state, open: false }));
+        setTerminalOpen((open) => {
+          if (!open) setInspectorOpen(false);
+          return !open;
+        });
       }
     };
 
@@ -5035,6 +5431,17 @@ export function App() {
     () => tasks.filter((task) => task.workspaceId === workspaceState.active.id),
     [tasks, workspaceState.active.id],
   );
+  const shouldPreventSleep = Boolean(codexSettings.preventSleep
+    && workspaceTasks.some((task) => ["running", "blocked"].includes(task.status)));
+  useEffect(() => {
+    if (!window.rux?.setPreventSleep) return;
+    void window.rux.setPreventSleep(shouldPreventSleep).catch((error) => {
+      if (shouldPreventSleep) setTaskActionError(`无法防止系统休眠：${error instanceof Error ? error.message : String(error)}`);
+    });
+  }, [shouldPreventSleep]);
+  useEffect(() => () => {
+    void window.rux?.setPreventSleep?.(false).catch(() => undefined);
+  }, []);
   const localSuccessMetrics = useMemo(() => computeLocalSuccessMetrics(tasks), [tasks]);
 
   const selectedTask = useMemo(
@@ -5045,6 +5452,7 @@ export function App() {
   );
   const draft = drafts[selectedTask.id] || "";
   const pendingImages = pendingImagesByTask[selectedTask.id] || [];
+  const queuedInputs = queuedInputsByTask[selectedTask.id] || [];
   const setDraft = (value) => {
     setDrafts((items) => {
       const current = items[selectedTask.id] || "";
@@ -5057,6 +5465,50 @@ export function App() {
       }
       return { ...items, [selectedTask.id]: nextValue };
     });
+  };
+
+  const updateQueuedInputs = (taskId, updater) => {
+    setQueuedInputsByTask((state) => {
+      const current = state[taskId] || [];
+      const nextItems = typeof updater === "function" ? updater(current) : updater;
+      if (nextItems === current) return state;
+      if (!nextItems.length) {
+        const next = { ...state };
+        delete next[taskId];
+        return next;
+      }
+      return { ...state, [taskId]: nextItems };
+    });
+  };
+
+  const queueCurrentInput = () => {
+    const taskId = selectedTask.id;
+    const images = pendingImagesByTask[taskId] || [];
+    const text = (drafts[taskId] || "").trim();
+    if (!text && !images.length) return;
+    const current = queuedInputsByTask[taskId] || [];
+    if (current.length >= 10) {
+      setTaskActionError("每个任务最多排队 10 条输入。请等待当前运行完成或取消一条排队输入。");
+      return;
+    }
+    const entry = {
+      id: globalThis.crypto?.randomUUID?.() || `queued-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      text,
+      images: images.map(({ id, name, mimeType, path }) => ({ id, name, mimeType, path })),
+      createdAt: isoNow(),
+    };
+    updateQueuedInputs(taskId, (items) => [...items, entry]);
+    setDrafts((items) => {
+      const next = { ...items };
+      delete next[taskId];
+      return next;
+    });
+    setPendingImagesByTask((state) => ({ ...state, [taskId]: [] }));
+    setTaskActionError("");
+  };
+
+  const removeQueuedInput = (entryId) => {
+    updateQueuedInputs(selectedTask.id, (items) => items.filter((entry) => entry.id !== entryId));
   };
 
   const addPastedImages = async (files) => {
@@ -5106,123 +5558,36 @@ export function App() {
   }, [workspaceState.active.id]);
 
   const agentChoices = useMemo(() => {
-    const builtIns = adapters.filter((adapter) => ["codex", "claude-code", "mock"].includes(adapter.id)).map((adapter) => {
-      const provider = authProviderForAdapter(authState, adapter.id);
-      const authenticationReady = adapter.id === "codex"
-        ? provider?.status !== "signed-out"
-        : adapter.id === "mock" || provider?.status === "connected";
-      const providerConnection = provider?.providerConnection || defaultProviderConnectionForAdapter(adapter.id);
-      const verifiedModels = verifiedModelHistory(tasks, adapter.id, providerConnection.id);
-      const defaultModel = adapter.id === "codex"
-        ? codexSettings.model
-        : adapter.id === "claude-code" ? "Claude default" : "Rux prototype";
-      return {
-        id: adapter.id,
-        name: adapter.id === "mock" ? "Rux Demo" : adapter.id === "claude-code" ? "Claude Code" : "Codex",
-        adapter: adapter.id,
-        available: adapter.available && authenticationReady,
-        detail: adapter.id === "codex" ? "Codex 本机 Agent" : adapter.detail,
-        unavailableReason: !adapter.available
-          ? authState
-            ? `未找到可用的 ${adapter.id === "claude-code" ? "Claude Code" : "Rux"} 本机组件`
-            : "请配置 Rux Native Provider，或检测可选的本机 Agent CLI"
-          : !authenticationReady
-            ? `请先在账户与登录中连接 ${adapter.id === "claude-code" ? "Claude Code" : "Rux"}`
-            : "",
-        requiresLogin: adapter.id !== "mock" && adapter.available && provider?.status === "signed-out",
-        agentRevisionId: builtInAgentRevisionId(adapter.id),
-        providerConnection,
-        model: defaultModel,
-        ...modelSelectionState(adapter.id, defaultModel, codexCatalog.models, verifiedModels),
-        verifiedModels,
-        reasoningEffort: adapter.id === "codex" ? codexSettings.reasoningEffort : "",
-        permissionMode: adapter.id === "codex" ? codexSettings.permissionMode : "acceptEdits",
-      };
-    });
-    const custom = agentProfiles.map((profile) => {
-      const backend = adapters.find((adapter) => adapter.id === profile.backend);
-      const provider = authProviderForAdapter(authState, profile.backend);
-      const nativeConnectionReady = profile.backend === "rux-native" && nativeConnections.some((connection) => connection.id === profile.providerConnection.id && connection.hasCredential);
-      const authenticationReady = profile.backend === "rux-native" ? nativeConnectionReady : provider?.status === "connected";
-      const verifiedModels = verifiedModelHistory(tasks, profile.backend, profile.providerConnection.id);
-      const nativeConnection = profile.backend === "rux-native" ? nativeConnections.find((connection) => connection.id === profile.providerConnection.id) : undefined;
-      const catalogModels = profile.backend === "codex" ? codexCatalog.models : nativeConnection?.modelCatalog?.models || [];
-      return {
-        id: profile.id,
-        name: profile.name,
-        adapter: profile.backend,
-        profileId: profile.id,
-        agentRevisionId: profile.latestRevisionId,
-        providerConnection: profile.providerConnection,
-        available: profile.enabled && Boolean(backend?.available) && authenticationReady,
-        detail: profile.description || "自定义 Agent",
-        unavailableReason: !profile.enabled
-          ? "这个自定义 Agent 已停用"
-          : !backend?.available
-            ? profile.backend === "rux-native"
-              ? "原生 Provider Connection 当前不可用"
-              : authState
-              ? `未找到可用的 ${profile.backend === "claude-code" ? "Claude Code" : "Rux"} 本机组件`
-              : "请配置 Rux Native Provider，或检测可选的本机 Agent CLI"
-            : !authenticationReady
-              ? `请先在账户与登录中连接 ${profile.backend === "claude-code" ? "Claude Code" : "Rux"}`
-              : "",
-        requiresLogin: Boolean(backend?.available) && provider?.status === "signed-out",
-        model: profile.model || (profile.backend === "codex" ? codexSettings.model : profile.backend === "rux-native" ? nativeConnections.find((connection) => connection.id === profile.providerConnection.id)?.defaultModel || "Provider default" : "Claude default"),
-        modelSource: profile.modelSource,
-        modelVerificationStatus: profile.modelVerificationStatus,
-        ...modelSelectionState(profile.backend, profile.model || nativeConnection?.defaultModel, catalogModels, verifiedModels),
-        autoModelPolicy: profile.autoModelPolicy,
-        catalogModels,
-        verifiedModels,
-        reasoningEffort: profile.reasoningEffort || (profile.backend === "codex" ? codexSettings.reasoningEffort : ""),
-        permissionMode: profile.permissionMode,
-      };
-    });
-    return [...builtIns.filter((item) => item.id !== "mock"), ...custom, ...builtIns.filter((item) => item.id === "mock")];
-  }, [adapters, agentProfiles, authState, codexCatalog.models, codexSettings, nativeConnections, tasks]);
+    const adapter = adapters.find((item) => item.id === "codex") || fallbackAdapters[0];
+    const provider = authProviderForAdapter(authState, "codex");
+    const providerConnection = provider?.providerConnection || defaultProviderConnectionForAdapter("codex");
+    const verifiedModels = verifiedModelHistory(tasks, "codex", providerConnection.id);
+    const authenticationReady = provider?.status !== "signed-out";
+    const defaultSpeedTier = codexSettings.speed === "快速"
+      ? codexServiceTierOptions(codexCatalog.models, codexSettings.model).find((tier) => tier.id)?.id || ""
+      : "";
+    return [{
+      id: "codex",
+      name: "Codex",
+      adapter: "codex",
+      available: adapter.available && authenticationReady,
+      detail: adapter.detail || "Codex 将在运行时检查安装与连接",
+      unavailableReason: authenticationReady ? "" : "请先使用 ChatGPT 登录",
+      requiresLogin: adapter.available && !authenticationReady,
+      agentRevisionId: builtInAgentRevisionId("codex"),
+      providerConnection,
+      model: codexSettings.model,
+      ...modelSelectionState("codex", codexSettings.model, codexCatalog.models, verifiedModels),
+      verifiedModels,
+      reasoningEffort: codexSettings.reasoningEffort,
+      serviceTier: defaultSpeedTier,
+      permissionMode: codexSettings.permissionMode,
+    }];
+  }, [adapters, authState, codexCatalog.models, codexSettings, tasks]);
 
   const taskAgentChoices = useMemo(() => {
-    if (!selectedTask.agentProfileId) return agentChoices;
-    const existing = agentChoices.find((choice) => choice.id === selectedTask.agentProfileId);
-    if (existing) return agentChoices;
-    const backend = adapters.find((adapter) => adapter.id === runtimeAdapterForTask(selectedTask));
-    const provider = authProviderForAdapter(authState, runtimeAdapterForTask(selectedTask));
-    const nativeReady = runtimeAdapterForTask(selectedTask) === "rux-native" && nativeConnections.some((connection) => connection.id === selectedTask.providerConnection?.id && connection.hasCredential);
-    const available = Boolean(backend?.available) && (nativeReady || provider?.status === "connected");
-    return [...agentChoices, {
-      id: selectedTask.agentProfileId,
-      name: selectedTask.agent,
-      adapter: runtimeAdapterForTask(selectedTask),
-      profileId: selectedTask.agentProfileId,
-      agentRevisionId: selectedTask.agentRevisionId,
-      providerConnection: selectedTask.providerConnection,
-      available,
-      detail: `已删除 Definition 的历史 Revision ${agentRevisionNumber(selectedTask.agentRevisionId) || ""}`.trim(),
-      unavailableReason: !backend?.available
-        ? "这个历史 Agent 的本机组件不可用"
-        : !nativeReady && provider?.status !== "connected" ? "请先在账户与登录中连接对应 Provider" : "",
-      requiresLogin: runtimeAdapterForTask(selectedTask) !== "rux-native" && Boolean(backend?.available) && provider?.status === "signed-out",
-      model: selectedTask.model,
-      modelSource: selectedTask.modelSource,
-      modelVerificationStatus: selectedTask.modelVerificationStatus,
-      verifiedModels: verifiedModelHistory(tasks, runtimeAdapterForTask(selectedTask), selectedTask.providerConnection?.id),
-      reasoningEffort: selectedTask.reasoningEffort || "",
-      permissionMode: selectedTask.permissionMode || "acceptEdits",
-      historical: true,
-    }];
-  }, [adapters, agentChoices, authState, nativeConnections, selectedTask, tasks]);
-
-  const selectedAgentRevisionUpdate = useMemo(() => {
-    const update = agentRevisionUpdateForTask(selectedTask, agentProfiles);
-    if (!update) return null;
-    const latestChoice = agentChoices.find((choice) => choice.id === update.profile.id);
-    return {
-      ...update,
-      available: Boolean(latestChoice?.available),
-      unavailableReason: latestChoice?.unavailableReason || "最新版 Agent 当前不可用",
-    };
-  }, [agentChoices, agentProfiles, selectedTask]);
+    return agentChoices.filter((choice) => choice.id === "codex");
+  }, [agentChoices]);
 
   const appReady = !workspaceState.active.placeholder
     && !startupLoading
@@ -5261,7 +5626,7 @@ export function App() {
   }
 
   useEffect(() => {
-    const fallback = agentChoices.find((choice) => choice.available);
+    const fallback = agentChoices.find((choice) => choice.id === "codex" && choice.available);
     if (!fallback) return;
     setTasks((items) => {
       let changed = false;
@@ -5473,7 +5838,7 @@ export function App() {
           ...task,
           status: "running",
           updatedAt: "现在",
-          preview: `${ruxAgentLabel(task.agent)} 正在运行`,
+          preview: "Codex 正在运行",
         };
       }
       if (event.type === "permission.requested") {
@@ -5483,8 +5848,8 @@ export function App() {
           status: "blocked",
           updatedAt: "现在",
           preview: singleAction
-            ? `等待你确认 ${event.request.toolName || "Agent 工具"} 操作`
-            : "等待你确认 Workspace 写入权限",
+            ? `等待你确认 ${event.request.toolName || "工具"} 操作`
+            : "等待你确认工作区写入权限",
         };
       }
       if (event.type === "permission.decided") {
@@ -5497,12 +5862,12 @@ export function App() {
             status: event.decision.decision === "cancelled" ? "stopped" : remainingRequest ? "blocked" : "running",
             updatedAt: "现在",
             preview: remainingRequest
-              ? `仍在等待你确认 ${remainingRequest.toolName || "Agent 工具"} 操作`
+              ? `仍在等待你确认 ${remainingRequest.toolName || "工具"} 操作`
               : event.decision.decision === "approved"
-              ? `已允许 ${decidedRequest.toolName || "Agent 工具"}，Agent 继续运行`
+              ? `已允许 ${decidedRequest.toolName || "工具"}，Codex 继续运行`
               : event.decision.decision === "denied"
-                ? `已拒绝 ${decidedRequest.toolName || "Agent 工具"}，Agent 继续运行`
-                : "正在停止 Agent",
+                ? `已拒绝 ${decidedRequest.toolName || "工具"}，Codex 继续运行`
+                : "正在停止 Codex",
           };
         }
         if (event.decision.decision === "approved") {
@@ -5510,7 +5875,7 @@ export function App() {
             ...task,
             status: "running",
             updatedAt: "现在",
-            preview: "权限已批准，正在启动 Agent",
+            preview: "权限已批准，正在启动 Codex",
           };
         }
         return {
@@ -5660,13 +6025,13 @@ export function App() {
     const selectedAgentId = taskSnapshot.agentProfileId || runtimeAdapterForTask(taskSnapshot);
     const selectedAgentChoice = agentChoices.find((choice) => choice.id === selectedAgentId);
     if (workspaceState.active.placeholder) {
-      return { ok: false, error: "请先打开项目，再启动 Agent。" };
+      return { ok: false, error: "请先打开项目，再开始运行。" };
     }
     if (!String(prompt || "").trim()) {
       return { ok: false, error: "请先在输入框中描述你想完成的任务。" };
     }
     if (!taskSnapshot.agentRevisionId || !taskSnapshot.providerConnection?.id) {
-      return { ok: false, error: "这个任务缺少可验证的 Agent Revision 或 Provider Connection，请新建任务。" };
+      return { ok: false, error: "这个历史任务缺少可验证的运行配置，无法继续；请新建对话。" };
     }
     if (taskSnapshot.model === "Auto") {
       const pinnedPolicy = taskSnapshot.agentRevisionSnapshot?.autoModelPolicy
@@ -5685,13 +6050,13 @@ export function App() {
       return {
         ok: false,
         error: selectedAgentChoice?.unavailableReason
-          || `Agent「${taskSnapshot.agent}」不可用或未登录。请选择一个可用 Agent 后再运行。`,
+          || "Codex 当前不可用或未登录。请在账户与登录中完成连接后重试。",
       };
     }
     return { ok: true, runtime, selectedAgentChoice };
   };
 
-  const launchRun = (taskId, prompt, taskSnapshot, messageId, prepared, imagePaths = []) => {
+  const launchRun = (taskId, prompt, taskSnapshot, messageId, prepared, imagePaths = [], runOptions = {}) => {
     const preflight = prepared || runPreflight(taskSnapshot, prompt);
     if (!preflight.ok) {
       setTaskActionError(preflight.error);
@@ -5729,14 +6094,11 @@ export function App() {
     const independentPrompt = !sessionLink && taskSnapshot.importedSession
       ? importedCopyPrompt(taskSnapshot, prompt)
       : prompt;
-    const pinnedImprovementContext = (taskSnapshot.improvementAssets || []).length
-      ? `Rux approved improvement assets pinned when this Task was created:\n\n${taskSnapshot.improvementAssets.map((asset) => `[${asset.type}] ${asset.name} · v${asset.version}\n${asset.content}`).join("\n\n")}\n\nCurrent user request:\n${independentPrompt}`
-      : independentPrompt;
     let run;
     try {
-      run = runtime.run(pinnedImprovementContext, {
+      run = runtime.run(independentPrompt, {
         adapter,
-        permissionMode: taskSnapshot.permissionMode || "acceptEdits",
+        permissionMode: runOptions.reviewTarget ? "plan" : taskSnapshot.permissionMode || "acceptEdits",
         model: requestedModel,
         modelMode: taskSnapshot.model === "Auto" ? "auto" : "fixed",
         modelSource: taskSnapshot.modelSource,
@@ -5749,6 +6111,7 @@ export function App() {
         providerConnectionId: taskSnapshot.providerConnection.id,
         contextFiles: taskSnapshot.contextFiles || [],
         imagePaths,
+        ...(runOptions.reviewTarget ? { reviewTarget: runOptions.reviewTarget } : {}),
         ...(adapter === "rux-native" ? { conversationHistory: conversationHistoryForRun(taskSnapshot, prompt) } : {}),
       }, (event) => receiveRunEvent(taskId, token, event));
     } catch (error) {
@@ -5803,46 +6166,11 @@ export function App() {
     }
   };
 
-  const validateCliAgentForRun = async (taskSnapshot) => {
-    const adapterId = runtimeAdapterForTask(taskSnapshot);
-    if (!["codex", "claude-code"].includes(adapterId)) return { ok: true };
-    const runtime = runtimeRef.current;
-    if (!runtime) return { ok: false, error: "Rux Runtime 尚未就绪" };
-    try {
-      const [nextAuthState, agentResult] = await Promise.all([
-        runtime.authStatus(),
-        runtime.listAgents({ refresh: true }),
-      ]);
-      setAuthState(nextAuthState);
-      setAdapters(agentResult.adapters);
-      const provider = authProviderForAdapter(nextAuthState, adapterId);
-      const adapter = agentResult.adapters.find((item) => item.id === adapterId);
-      if (provider?.status !== "connected" || !adapter?.available) {
-        return {
-          ok: false,
-          error: adapter?.detail || provider?.detail || `${ruxAdapterLabel(adapterId)} 当前未连接。请在“账户与登录”中重新检测或登录。`,
-        };
-      }
-      return { ok: true };
-    } catch (error) {
-      return { ok: false, error: `无法在运行前校验 Agent：${error instanceof Error ? error.message : String(error)}` };
-    }
-  };
-
-  const sendMessage = async () => {
-    const images = pendingImagesByTask[selectedTask.id] || [];
-    const writtenPrompt = draft.trim();
-    if ((!writtenPrompt && !images.length) || runValidationBusy) return;
-    const prompt = writtenPrompt || "请查看附加图片并按图片内容完成任务。";
-    const preflight = runPreflight(selectedTask, prompt);
-    if (!preflight.ok) {
-      setTaskActionError(preflight.error);
-      return;
-    }
-    const taskSnapshot = selectedTask;
+  const commitMessageAndLaunch = (taskSnapshot, writtenPrompt, images, preflight, runOptions = {}) => {
     const taskId = taskSnapshot.id;
+    const prompt = writtenPrompt || "请查看附加图片并按图片内容完成任务。";
     const createdAt = isoNow();
-    const messageId = `user-${Date.now()}`;
+    const messageId = `user-${globalThis.crypto?.randomUUID?.() || Date.now()}`;
     setTasks((items) => items.map((task) => task.id === taskId ? {
       ...task,
       ...(task.id === `workspace-${task.workspaceId}` && !task.messages.length && !(task.runs || []).length
@@ -5859,14 +6187,98 @@ export function App() {
         createdAt,
       }],
     } : task));
+    return launchRun(taskId, prompt, taskSnapshot, messageId, preflight, images.map((image) => image.path).filter((path) => !path.startsWith("blob:")), runOptions);
+  };
+
+  const sendMessage = async () => {
+    const images = pendingImagesByTask[selectedTask.id] || [];
+    const writtenPrompt = draft.trim();
+    if ((!writtenPrompt && !images.length) || runValidationBusy) return;
+    const prompt = writtenPrompt || "请查看附加图片并按图片内容完成任务。";
+    const preflight = runPreflight(selectedTask, prompt);
+    if (!preflight.ok) {
+      setTaskActionError(preflight.error);
+      return;
+    }
+    const taskId = selectedTask.id;
+    commitMessageAndLaunch(selectedTask, writtenPrompt, images, preflight);
     setDrafts((items) => {
       const next = { ...items };
       delete next[taskId];
       return next;
     });
     setPendingImagesByTask((state) => ({ ...state, [taskId]: [] }));
-    launchRun(taskId, prompt, taskSnapshot, messageId, preflight, images.map((image) => image.path).filter((path) => !path.startsWith("blob:")));
   };
+
+  const openCodeReviewCommand = () => {
+    if (["running", "blocked"].includes(selectedTask.status)) {
+      setTaskActionError("当前运行结束后才能开始代码审阅。");
+      return;
+    }
+    if (runtimeAdapterForTask(selectedTask) !== "codex") {
+      setTaskActionError("代码审阅需要当前任务使用 Codex。");
+      return;
+    }
+    setTaskActionError("");
+    setReviewCommandState({ open: true, busy: false, error: "" });
+  };
+
+  const startCodeReview = (reviewTarget) => {
+    const label = reviewTarget.type === "uncommittedChanges"
+      ? "/review · 未提交变更"
+      : reviewTarget.type === "baseBranch"
+        ? `/review · 与 ${reviewTarget.branch} 比较`
+        : reviewTarget.type === "commit"
+          ? `/review · 提交 ${reviewTarget.sha}`
+          : `/review · ${reviewTarget.instructions}`;
+    const preflight = runPreflight(selectedTask, label);
+    if (!preflight.ok) {
+      setReviewCommandState((state) => ({ ...state, error: preflight.error }));
+      return;
+    }
+    setReviewCommandState((state) => ({ ...state, busy: true, error: "" }));
+    const launched = commitMessageAndLaunch(selectedTask, label, [], preflight, { reviewTarget });
+    if (!launched) {
+      setReviewCommandState((state) => ({ ...state, busy: false, error: "无法启动代码审阅。" }));
+      return;
+    }
+    const taskId = selectedTask.id;
+    setDrafts((items) => {
+      const next = { ...items };
+      delete next[taskId];
+      return next;
+    });
+    setPendingImagesByTask((state) => ({ ...state, [taskId]: [] }));
+    setReviewCommandState({ open: false, busy: false, error: "" });
+  };
+
+  useEffect(() => {
+    if (workspaceState.active.placeholder || !appReady) return undefined;
+    const taskSnapshot = tasks.find((task) => task.workspaceId === workspaceState.active.id
+      && !["running", "blocked"].includes(task.status)
+      && (queuedInputsByTask[task.id] || []).length
+      && !queueDispatchingRef.current.has(task.id));
+    if (!taskSnapshot) return undefined;
+    const entry = queuedInputsByTask[taskSnapshot.id]?.[0];
+    if (!entry) return undefined;
+    queueDispatchingRef.current.add(taskSnapshot.id);
+    const timer = window.setTimeout(() => {
+      const prompt = entry.text || "请查看附加图片并按图片内容完成任务。";
+      const preflight = runPreflight(taskSnapshot, prompt);
+      if (!preflight.ok) {
+        queueDispatchingRef.current.delete(taskSnapshot.id);
+        if (taskSnapshot.id === selectedTask.id) setTaskActionError(preflight.error);
+        return;
+      }
+      updateQueuedInputs(taskSnapshot.id, (items) => items.filter((queued) => queued.id !== entry.id));
+      commitMessageAndLaunch(taskSnapshot, entry.text, entry.images || [], preflight);
+      queueDispatchingRef.current.delete(taskSnapshot.id);
+    }, 80);
+    return () => {
+      window.clearTimeout(timer);
+      queueDispatchingRef.current.delete(taskSnapshot.id);
+    };
+  }, [appReady, queuedInputsByTask, tasks, workspaceState.active.id, workspaceState.active.placeholder]);
 
   const toggleRun = () => {
     if (workspaceState.active.placeholder) return;
@@ -5933,7 +6345,6 @@ export function App() {
       plan: [],
       activity: [],
       runs: [],
-      improvementAssets: improvementAssetsForWorkspace(workspaceState.active),
     };
     const preflight = runPreflight(task, prompt);
     if (!preflight.ok) {
@@ -5945,57 +6356,6 @@ export function App() {
     setNewTaskOpen(false);
     setSidebarOpen(false);
     launchRun(id, prompt, task, `m-${id}`, preflight);
-  };
-
-  const createTaskWithLatestAgent = () => {
-    if (!selectedAgentRevisionUpdate || workspaceState.active.placeholder) return;
-    if (["running", "blocked"].includes(selectedTask.status)) {
-      setTaskActionError("请先停止当前 Run，再基于新版 Agent 创建新任务。");
-      return;
-    }
-    const choice = agentChoices.find((item) => item.id === selectedAgentRevisionUpdate.profile.id);
-    if (!choice?.available) {
-      setTaskActionError(choice?.unavailableReason || "最新版 Agent 当前不可用，请先检查 Provider 连接。");
-      return;
-    }
-    const id = `task-${Date.now()}`;
-    const createdAt = isoNow();
-    const revisionNumber = selectedAgentRevisionUpdate.latestRevisionNumber || choice.agentRevisionId;
-    const task = {
-      id,
-      workspaceId: selectedTask.workspaceId,
-      title: `${selectedTask.title.slice(0, 80)} · Revision ${revisionNumber}`,
-      preview: `使用 ${choice.name} 最新 Revision 创建的空白任务`,
-      status: "waiting",
-      updatedAt: "现在",
-      updatedAtIso: createdAt,
-      createdAt,
-      agent: choice.name,
-      adapter: choice.adapter,
-      agentProfileId: choice.profileId,
-      agentRevisionId: choice.agentRevisionId,
-      providerConnection: choice.providerConnection,
-      permissionMode: choice.permissionMode || "acceptEdits",
-      model: choice.model,
-      modelSource: choice.modelSource,
-      modelVerificationStatus: choice.modelVerificationStatus,
-      ...(choice.reasoningEffort ? { reasoningEffort: choice.reasoningEffort } : {}),
-      contextFiles: [],
-      branch: selectedTask.branch || workspaceState.active.branch,
-      elapsed: "—",
-      tokens: "—",
-      messages: [],
-      plan: [],
-      activity: [],
-      runs: [],
-      improvementAssets: improvementAssetsForWorkspace(workspaceState.active),
-    };
-    setTaskActionError("");
-    setTasks((items) => [task, ...items.filter((item) => item.id !== `workspace-${selectedTask.workspaceId}`)]);
-    setSelectedTaskId(id);
-    setInspectorOpen(false);
-    setSidebarOpen(false);
-    window.setTimeout(() => composerInputRef.current?.focus(), 0);
   };
 
   const retryFailedSession = () => {
@@ -6057,6 +6417,43 @@ export function App() {
 
   const createBlankTask = (choice, workspace = workspaceState.active, sourceTask = selectedTask, initialDraft = "", boardSource = null) => {
     if (!choice || workspace.placeholder) return false;
+    const reusableBlankTask = !initialDraft && !boardSource
+      ? tasks.find((task) => task.workspaceId === workspace.id
+        && !task.importedSession
+        && !(task.messages || []).length
+        && !(task.runs || []).length
+        && !(drafts[task.id] || "").trim()
+        && task.id !== `workspace-${workspace.id}`)
+      : null;
+    if (reusableBlankTask) {
+      const updatedAtIso = isoNow();
+      setTaskActionError("");
+      setTasks((items) => items.map((task) => task.id === reusableBlankTask.id ? {
+        ...task,
+        agent: choice.name,
+        adapter: choice.adapter,
+        agentProfileId: choice.profileId,
+        agentRevisionId: choice.agentRevisionId,
+        providerConnection: choice.providerConnection,
+        permissionMode: choice.permissionMode || "acceptEdits",
+        model: choice.model,
+        modelSource: choice.modelSource,
+        modelVerificationStatus: choice.modelVerificationStatus,
+        reasoningEffort: choice.reasoningEffort || undefined,
+        serviceTier: choice.serviceTier || undefined,
+        updatedAt: "现在",
+        updatedAtIso,
+      } : task));
+      setSelectedTaskId(reusableBlankTask.id);
+      setInspectorOpen(false);
+      setTerminalOpen(false);
+      setBoardState((state) => ({ ...state, open: false }));
+      setPluginsState((state) => ({ ...state, open: false }));
+      setSidebarOpen(false);
+      if (choice.adapter === "codex") void loadCodexModels();
+      window.setTimeout(() => composerInputRef.current?.focus(), 0);
+      return reusableBlankTask.id;
+    }
     const id = `task-${Date.now()}`;
     const createdAt = isoNow();
     const task = {
@@ -6078,6 +6475,7 @@ export function App() {
       modelSource: choice.modelSource,
       modelVerificationStatus: choice.modelVerificationStatus,
       ...(choice.reasoningEffort ? { reasoningEffort: choice.reasoningEffort } : {}),
+      ...(choice.serviceTier ? { serviceTier: choice.serviceTier } : {}),
       contextFiles: [],
       branch: workspace.branch || sourceTask?.branch || "main",
       elapsed: "—",
@@ -6086,7 +6484,6 @@ export function App() {
       plan: [],
       activity: [],
       runs: [],
-      improvementAssets: improvementAssetsForWorkspace(workspace),
       ...(boardSource ? { boardSource } : {}),
     };
     setTaskActionError("");
@@ -6096,6 +6493,7 @@ export function App() {
     setInspectorOpen(false);
     setTerminalOpen(false);
     setBoardState((state) => ({ ...state, open: false }));
+    setPluginsState((state) => ({ ...state, open: false }));
     setSidebarOpen(false);
     if (choice.adapter === "codex") void loadCodexModels();
     window.setTimeout(() => composerInputRef.current?.focus(), 0);
@@ -6118,6 +6516,9 @@ export function App() {
 
   const selectTask = (id) => {
     setBoardState((state) => ({ ...state, open: false }));
+    setPluginsState((state) => ({ ...state, open: false }));
+    setPullRequestsState((state) => ({ ...state, open: false }));
+    setUnavailableFeature("");
     setSelectedTaskId(id);
     setTaskActionError("");
     setSidebarOpen(false);
@@ -6132,6 +6533,7 @@ export function App() {
     runTokensRef.current.clear();
     setTerminalOpen(false);
     setInspectorOpen(false);
+    setPluginsState((state) => ({ ...state, open: false }));
 
     const stoppedAt = isoNow();
     const stoppedTasks = tasks.map((task) => {
@@ -6679,8 +7081,18 @@ export function App() {
       permissionMode: permissionOptions.some((option) => option.id === nextSettings.permissionMode)
         ? nextSettings.permissionMode
         : "acceptEdits",
+      openTarget: ["VS Code", "Finder"].includes(nextSettings.openTarget) ? nextSettings.openTarget : defaultCodexSettings.openTarget,
+      language: ["自动检测", "简体中文", "English"].includes(nextSettings.language) ? nextSettings.language : defaultCodexSettings.language,
+      showInMenuBar: nextSettings.showInMenuBar !== false,
+      bottomPanel: nextSettings.bottomPanel !== false,
+      terminalPosition: "bottom",
+      preventSleep: nextSettings.preventSleep !== false,
+      speed: nextSettings.speed === "快速" ? "快速" : "标准",
     };
     setCodexSettings(normalized);
+    const normalizedServiceTier = normalized.speed === "快速"
+      ? codexServiceTierOptions(codexCatalog.models, normalized.model).find((tier) => tier.id)?.id || ""
+      : "";
     const updatedAtIso = isoNow();
     setTasks((items) => items.map((task) => {
       if (task.id !== selectedTask.id || runtimeAdapterForTask(task) !== "codex" || ["running", "blocked"].includes(task.status)) return task;
@@ -6691,6 +7103,7 @@ export function App() {
         ...modelSelectionState("codex", normalized.model, codexCatalog.models, verifiedModels),
         permissionMode: normalized.permissionMode,
         reasoningEffort: normalized.reasoningEffort || undefined,
+        serviceTier: normalizedServiceTier || undefined,
         updatedAtIso,
       };
     }));
@@ -6916,6 +7329,7 @@ export function App() {
   const openAccounts = () => {
     setAccountsOpen(true);
     setSettingsOpen(false);
+    setPluginsState((state) => ({ ...state, open: false }));
     setNewTaskOpen(false);
     setAgentsOpen(false);
     setSessionDiscoveryOpen(false);
@@ -6931,8 +7345,6 @@ export function App() {
     try {
       const snapshot = await runtime.syncChatGptAccount();
       setChatGptAccount(snapshot);
-      const nextAuthState = await runtime.authStatus().catch(() => null);
-      if (nextAuthState) setAuthState((current) => mergeAuthState(current, nextAuthState));
     } catch (error) {
       setChatGptSyncError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -7374,8 +7786,12 @@ export function App() {
     try {
       const result = await runtime.login(provider);
       setAuthState((current) => mergeAuthState(current, result));
+      if (provider === "chatgpt") setAdapters((items) => items.map((adapter) => adapter.id === "codex" ? { ...adapter, available: true, detail: "Codex 已通过官方登录边界连接" } : adapter));
       setAuthNotice(`${providerName} 已连接，可以创建或继续任务。`);
-      if (provider === "chatgpt") setCodexCatalog({ loading: false, models: [], error: "" });
+      if (provider === "chatgpt") {
+        setCodexCatalog({ loading: false, models: [], error: "" });
+        window.setTimeout(() => void loadCodexModels(), 0);
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (message.includes("已取消")) {
@@ -7406,7 +7822,7 @@ export function App() {
     const runtime = runtimeRef.current;
     if (!runtime || authLoginProvider || authLogoutProvider || authChecking) return;
     const providerName = provider === "claude-code" ? "Claude Code" : "Codex";
-    if (!window.confirm(`退出 ${providerName} 登录？\n\nRux 将委托官方本机 CLI 删除其持有的认证凭据。已有 Task 和历史记录会保留，但在重新登录前不能继续运行该 Agent。`)) return;
+    if (!window.confirm(`退出 ${providerName} 登录？\n\nRux 将委托官方本机 CLI 删除其持有的认证凭据。已有任务和历史记录会保留，但在重新登录前不能继续使用 ${providerName}。`)) return;
     setAuthLogoutProvider(provider);
     setAuthError("");
     setAuthNotice(`正在通过官方 CLI 退出 ${providerName}…`);
@@ -7443,13 +7859,147 @@ export function App() {
 
   const openSettings = () => {
     setSettingsOpen(true);
+    setPluginsState((state) => ({ ...state, open: false }));
+    setPullRequestsState((state) => ({ ...state, open: false }));
+    setUnavailableFeature("");
     setAccountsOpen(false);
     setNewTaskOpen(false);
     setAgentsOpen(false);
     setSidebarOpen(false);
-    void runtimeRef.current?.getLocalProductEventSummary().then(setLocalProductEventMetrics).catch(() => undefined);
-    void runtimeRef.current?.getUpdateState().then(setUpdateState).catch(() => undefined);
     if (codexConnected) window.setTimeout(() => void loadCodexModels(), 0);
+  };
+
+  const loadExternalImport = async () => {
+    const runtime = runtimeRef.current;
+    if (!runtime) return;
+    setExternalImportState((state) => ({ ...state, loading: true, error: "", notice: "" }));
+    const sources = ["claude-code", "claude-cowork", "cursor"];
+    const [detectionResults, history] = await Promise.all([
+      Promise.all(sources.map(async (source) => {
+        try {
+          return await runtime.detectExternalConfig({ source });
+        } catch (error) {
+          return { source, availability: "unavailable", detectedAt: isoNow(), items: [], connectors: [], unavailableReason: error instanceof Error ? error.message : String(error) };
+        }
+      })),
+      runtime.externalConfigHistory().catch(() => null),
+    ]);
+    const detections = Object.fromEntries(detectionResults.map((result) => [result.source, result]));
+    const allUnavailable = detectionResults.every((result) => result.availability !== "available");
+    setExternalImportState((state) => ({ ...state, loading: false, scanId: state.scanId + 1, detections, history: history || state.history, error: allUnavailable ? "当前未检测到可用的官方导入来源。" : "" }));
+  };
+
+  const importExternalConfigSelections = async (selections) => {
+    const runtime = runtimeRef.current;
+    if (!runtime || !selections.length) return;
+    setExternalImportState((state) => ({ ...state, importing: true, error: "", notice: "" }));
+    const results = [];
+    try {
+      for (const selection of selections) {
+        results.push(await runtime.importExternalConfig({ ...selection, confirmed: true }));
+      }
+      const successes = results.reduce((sum, result) => sum + result.successes.length, 0);
+      const failures = results.reduce((sum, result) => sum + result.failures.length, 0);
+      setExternalImportState((state) => ({ ...state, importing: false }));
+      await loadExternalImport();
+      setExternalImportState((state) => ({ ...state, notice: `导入完成：${successes} 项成功${failures ? `，${failures} 项失败` : ""}。` }));
+    } catch (error) {
+      setExternalImportState((state) => ({ ...state, importing: false, error: error instanceof Error ? error.message : String(error) }));
+    }
+  };
+
+  const loadCodexPlugins = async () => {
+    const runtime = runtimeRef.current;
+    if (!runtime) return;
+    setPluginsState((state) => ({ ...state, loading: true, error: "", notice: "" }));
+    try {
+      const result = await runtime.listCodexPlugins();
+      setPluginsState((state) => ({ ...state, loading: false, error: "", result }));
+    } catch (error) {
+      setPluginsState((state) => ({ ...state, loading: false, error: error instanceof Error ? error.message : String(error) }));
+    }
+  };
+
+  const openPlugins = () => {
+    setPluginsState((state) => ({ ...state, open: true, error: "", notice: "" }));
+    setPullRequestsState((state) => ({ ...state, open: false }));
+    setUnavailableFeature("");
+    setSettingsOpen(false);
+    setAccountsOpen(false);
+    setNewTaskOpen(false);
+    setAgentsOpen(false);
+    setInspectorOpen(false);
+    setTerminalOpen(false);
+    setBoardState((state) => ({ ...state, open: false }));
+    setSidebarOpen(false);
+    void loadCodexPlugins();
+  };
+
+  const loadPullRequests = async () => {
+    const runtime = runtimeRef.current;
+    if (!runtime) return;
+    setPullRequestsState((state) => ({ ...state, loading: true, error: "" }));
+    try {
+      const result = await runtime.listPullRequests();
+      setPullRequestsState((state) => ({ ...state, loading: false, error: "", result }));
+    } catch (error) {
+      setPullRequestsState((state) => ({ ...state, loading: false, error: error instanceof Error ? error.message : String(error) }));
+    }
+  };
+
+  const openPullRequests = () => {
+    setPullRequestsState((state) => ({ ...state, open: true, error: "" }));
+    setPluginsState((state) => ({ ...state, open: false }));
+    setUnavailableFeature("");
+    setSettingsOpen(false);
+    setAccountsOpen(false);
+    setNewTaskOpen(false);
+    setAgentsOpen(false);
+    setInspectorOpen(false);
+    setTerminalOpen(false);
+    setBoardState((state) => ({ ...state, open: false }));
+    setSidebarOpen(false);
+    void loadPullRequests();
+  };
+
+  const openUnavailableFeature = (feature) => {
+    setUnavailableFeature(feature);
+    setPullRequestsState((state) => ({ ...state, open: false }));
+    setPluginsState((state) => ({ ...state, open: false }));
+    setSettingsOpen(false);
+    setAccountsOpen(false);
+    setNewTaskOpen(false);
+    setAgentsOpen(false);
+    setInspectorOpen(false);
+    setTerminalOpen(false);
+    setBoardState((state) => ({ ...state, open: false }));
+    setSidebarOpen(false);
+  };
+
+  const installCodexPlugin = async (plugin) => {
+    const runtime = runtimeRef.current;
+    if (!runtime || pluginsState.busyPluginId) return;
+    if (!window.confirm(`安装插件「${pluginDisplayName(plugin)}」？\n\n插件将在新的 Codex 对话中提供其 Skills、Connectors 或 MCP 工具。`)) return;
+    setPluginsState((state) => ({ ...state, busyPluginId: plugin.pluginId, error: "", notice: "" }));
+    try {
+      const result = await runtime.installCodexPlugin({ pluginId: plugin.pluginId, confirmed: true });
+      setPluginsState((state) => ({ ...state, busyPluginId: "", result, notice: `已安装 ${pluginDisplayName(plugin)}。请开始新对话以加载插件。` }));
+    } catch (error) {
+      setPluginsState((state) => ({ ...state, busyPluginId: "", error: error instanceof Error ? error.message : String(error) }));
+    }
+  };
+
+  const removeCodexPlugin = async (plugin) => {
+    const runtime = runtimeRef.current;
+    if (!runtime || pluginsState.busyPluginId) return;
+    if (!window.confirm(`移除插件「${pluginDisplayName(plugin)}」？\n\n现有 Task 历史会保留；新的 Codex 对话不再加载该插件。`)) return;
+    setPluginsState((state) => ({ ...state, busyPluginId: plugin.pluginId, error: "", notice: "" }));
+    try {
+      const result = await runtime.removeCodexPlugin({ pluginId: plugin.pluginId, confirmed: true });
+      setPluginsState((state) => ({ ...state, busyPluginId: "", result, notice: `已移除 ${pluginDisplayName(plugin)}。` }));
+    } catch (error) {
+      setPluginsState((state) => ({ ...state, busyPluginId: "", error: error instanceof Error ? error.message : String(error) }));
+    }
   };
 
   const runUpdateAction = async (action) => {
@@ -7537,9 +8087,6 @@ export function App() {
         : codexConnected || showcaseMode || syncedChatGptConnected
           ? "已连接"
           : "未登录";
-  const accountSyncedAt = chatGptAccount?.syncedAt
-    ? new Date(chatGptAccount.syncedAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })
-    : "";
   const composerInteractionLockReason = !appReady
     ? "工作台仍在初始化，完成后即可编辑。"
     : "";
@@ -7551,7 +8098,7 @@ export function App() {
           <section>
             <span className={`startup-gate-icon ${startupError ? "is-error" : ""}`}>{startupError ? <CircleAlert size={22} /> : <LoaderCircle size={22} className="status-running" />}</span>
             <h1>{startupError ? "Rux 无法安全启动" : "正在恢复工作区"}</h1>
-            <p>{startupError ? "任务历史或 Runtime 未能完成初始化。为避免在未保存状态下运行 Agent，编辑器已暂停。" : "正在初始化工作台与任务历史；不会自动导入项目或启动登录。"}</p>
+            <p>{startupError ? "任务历史或运行环境未能完成初始化。为避免在未保存状态下运行 Codex，编辑器已暂停。" : "正在初始化工作台与任务历史；不会自动导入项目或启动登录。"}</p>
             {startupError ? <pre>{startupError}</pre> : null}
             {startupError ? (
               <div className="startup-gate-actions">
@@ -7568,6 +8115,9 @@ export function App() {
         selectedTaskId={selectedTask.id}
         onSelectTask={selectWorkspaceTask}
         onNewTask={() => {
+          setPluginsState((state) => ({ ...state, open: false }));
+          setPullRequestsState((state) => ({ ...state, open: false }));
+          setUnavailableFeature("");
           if (workspaceState.active.placeholder) void chooseWorkspace();
           else startEditableConversation();
         }}
@@ -7583,18 +8133,19 @@ export function App() {
         pinnedProjectIds={pinnedProjectIds}
         onTogglePinProject={(projectId) => setPinnedProjectIds((ids) => ids.includes(projectId) ? ids.filter((id) => id !== projectId) : [projectId, ...ids])}
         onCreateTaskInWorkspace={createTaskInWorkspace}
-        onOpenBoard={openProjectBoard}
-        boardEnabledByWorkspace={Object.fromEntries(Object.entries(boardSnapshotsByProject).map(([projectId, board]) => [projectId, board.enabled]))}
-        onOpenWorkingCopies={(projectId) => void loadProjectWorkingCopies(projectId)}
-        onOpenImprovements={() => void analyzeCurrentProjectImprovements(workspaceState.active.projectId || workspaceState.active.id)}
-        improvementPendingCount={improvementState.summary?.pendingCount || 0}
         onCollapse={() => setSidebarCollapsed(true)}
         onOpenAccounts={openAccounts}
         onOpenSettings={openSettings}
+        onOpenPlugins={openPlugins}
+        pluginsOpen={pluginsState.open}
+        onOpenPullRequests={openPullRequests}
+        pullRequestsOpen={pullRequestsState.open}
+        onOpenSites={() => openUnavailableFeature("sites")}
+        sitesOpen={unavailableFeature === "sites"}
+        onOpenScheduled={() => openUnavailableFeature("scheduled")}
+        scheduledOpen={unavailableFeature === "scheduled"}
         onLogout={() => void logoutWithProvider("chatgpt")}
         onSyncChatGpt={syncChatGptAccount}
-        onOpenAgents={() => { setAgentsOpen(true); setSidebarOpen(false); setAgentProfileError(""); if (codexConnected) void loadCodexModels(); }}
-        onOpenSessionDiscovery={openSessionDiscovery}
         onOpenEnvironment={openEnvironment}
         onOpenChanges={() => openChanges()}
         onRenameTask={renameTask}
@@ -7607,7 +8158,6 @@ export function App() {
         accountUsageLabel={accountUsageLabel}
         accountSyncing={chatGptSyncing}
         accountSyncError={chatGptSyncError}
-        accountSyncedAt={accountSyncedAt}
         collapsed={sidebarCollapsed}
       />
 
@@ -7622,18 +8172,21 @@ export function App() {
       ) : null}
 
       <main className={`main-surface ${terminalOpen ? "terminal-is-open" : ""} ${inspectorOpen ? "inspector-is-open" : ""}`}>
-        {boardState.open ? (
-          <ProjectBoard
-            state={boardState}
-            workspace={workspaceState.active}
-            onClose={() => setBoardState((state) => ({ ...state, open: false }))}
-            onReload={() => void loadProjectBoard(boardState.projectId)}
-            onCreateRequirement={(requirement) => mutateProjectBoard({ action: "create-requirement", ...requirement })}
-            onCreateTaskForRequirement={(requirement) => void createTaskForBoardRequirement(requirement)}
-            onMoveItem={(itemId, stateId) => mutateProjectBoard({ action: "move-item", itemId, stateId })}
-            onDeleteRequirement={deleteBoardRequirement}
-            onMutateBoard={mutateProjectBoard}
-            onOpenTask={selectTask}
+        {unavailableFeature ? (
+          <UnavailableFeatureSurface feature={unavailableFeature} onClose={() => setUnavailableFeature("")} />
+        ) : pullRequestsState.open ? (
+          <PullRequestsSurface
+            state={pullRequestsState}
+            onClose={() => setPullRequestsState((state) => ({ ...state, open: false }))}
+            onReload={() => void loadPullRequests()}
+          />
+        ) : pluginsState.open ? (
+          <PluginsSurface
+            state={pluginsState}
+            onClose={() => setPluginsState((state) => ({ ...state, open: false }))}
+            onReload={() => void loadCodexPlugins()}
+            onInstall={(plugin) => void installCodexPlugin(plugin)}
+            onRemove={(plugin) => void removeCodexPlugin(plugin)}
           />
         ) : (
         <section className="task-workspace">
@@ -7662,6 +8215,7 @@ export function App() {
             onArchiveTask={(archived) => void archiveTask(selectedTask.id, archived)}
             inspectorOpen={inspectorOpen}
             changesCount={changesState.snapshot?.totals.files || 0}
+            showBottomPanelControl={codexSettings.bottomPanel}
             canRun={appReady && (["running", "blocked"].includes(selectedTask.status) || selectedAgentReady)}
             canArchive={tasks.filter((task) => task.workspaceId === selectedTask.workspaceId && !task.archived).length > 1}
           />
@@ -7684,12 +8238,8 @@ export function App() {
             permissionError={permissionError}
             taskActionError={taskActionError}
             onDismissTaskActionError={() => setTaskActionError("")}
-            agentRevisionUpdate={selectedAgentRevisionUpdate}
-            onCreateTaskWithLatestAgent={createTaskWithLatestAgent}
             onRetrySession={retryFailedSession}
             onCreateFreshTask={createFreshTaskAfterSessionFailure}
-            onOpenHandoff={openContextHandoff}
-            onOpenLocalData={() => void openLocalData("task")}
             workspacePlaceholder={workspaceState.active.placeholder}
           />
           <Composer
@@ -7697,7 +8247,10 @@ export function App() {
             draft={draft}
             onDraft={setDraft}
             onSend={sendMessage}
-            onAgentChange={changeSelectedAgent}
+            onQueue={queueCurrentInput}
+            onOpenReviewCommand={openCodeReviewCommand}
+            queuedInputs={queuedInputs}
+            onRemoveQueuedInput={removeQueuedInput}
             onModelChange={changeSelectedModel}
             onReasoningEffortChange={changeSelectedReasoningEffort}
             onServiceTierChange={changeSelectedServiceTier}
@@ -7717,12 +8270,11 @@ export function App() {
             onPasteImages={addPastedImages}
             onRemoveImage={removePastedImage}
             canRun={!composerInteractionLockReason && !runValidationBusy}
-            canSwitchAgent={!workspaceState.active.placeholder}
           />
         </section>
         )}
 
-        {!boardState.open ? <Inspector
+        {!pluginsState.open ? <Inspector
           open={inspectorOpen}
           onClose={() => setInspectorOpen(false)}
           tab={inspectorTab}
@@ -7753,110 +8305,35 @@ export function App() {
           onCancelRunRestore={() => setRunRestorePreview(null)}
         /> : null}
 
-        {!boardState.open ? <TerminalPanel open={terminalOpen} onClose={() => setTerminalOpen(false)} /> : null}
+        {!pluginsState.open && !pullRequestsState.open && !unavailableFeature ? <TerminalPanel open={terminalOpen} onClose={() => setTerminalOpen(false)} /> : null}
       </main>
 
-      <NewTaskDialog
-        open={newTaskOpen}
-        onClose={() => setNewTaskOpen(false)}
-        onCreate={createTask}
-        onOpenAccounts={openAccounts}
-        agentChoices={agentChoices}
-        initialAgentId={newTaskAgentId}
-        codexSettings={codexSettings}
-        codexModels={codexCatalog.models}
-        workspace={workspaceState.active}
-        contextCandidates={changesState.snapshot?.files || []}
-        onValidateContext={(paths) => runtimeRef.current?.contextSnapshot(paths) ?? Promise.reject(new Error("Rux Runtime 尚未就绪"))}
+      <CodeReviewDialog
+        open={reviewCommandState.open}
+        busy={reviewCommandState.busy}
+        error={reviewCommandState.error}
+        onClose={() => setReviewCommandState({ open: false, busy: false, error: "" })}
+        onStart={startCodeReview}
       />
       <CodexAccountDialog
         open={accountsOpen}
         state={authState}
         adapters={adapters}
-        agentChoices={agentChoices}
-        selectedAgentId={selectedTask.agentProfileId || runtimeAdapterForTask(selectedTask)}
-        canCreateTask={!workspaceState.active.placeholder}
-        nativeConnections={nativeConnections}
-        nativeDiagnostics={nativeCredentialDiagnostics}
-        nativeBusy={nativeProviderBusy}
-        checking={authChecking}
         loginProvider={authLoginProvider}
         logoutProvider={authLogoutProvider}
         error={authError}
         notice={authNotice}
         onClose={closeAccounts}
-        onDetect={() => void detectProviders()}
         onLogin={loginWithProvider}
         onLogout={logoutWithProvider}
         onCancelLogin={cancelLoginWithProvider}
-        onSaveNative={saveNativeProvider}
-        onTestNative={(id) => void testNativeProvider(id)}
-        onDeleteNative={(id) => void deleteNativeProvider(id)}
-        onDiagnoseNative={() => void diagnoseNativeCredentials()}
-        onMigrateNative={() => void migrateNativeCredentials()}
-        onUseAgent={useAgentForNewTask}
         onOpenSettings={openSettings}
-      />
-      <SessionDiscoveryDialog
-        open={sessionDiscoveryOpen}
-        workspace={workspaceState.active}
-        engine={sessionDiscoveryEngine}
-        state={sessionDiscoveryState}
-        previewState={sessionPreviewState}
-        importedTasks={workspaceTasks}
-        onEngine={(engine) => {
-          setSessionDiscoveryEngine(engine);
-          setSessionDiscoveryState({ status: "idle", operationId: "", result: null, error: "" });
-          setSessionPreviewState({ status: "idle", operationId: "", item: null, preview: null, error: "" });
-        }}
-        onDiscover={() => void discoverSessions()}
-        onCancel={cancelSessionDiscovery}
-        onPreview={(item) => void previewDiscoveredSession(item)}
-        onImport={(mode) => void importDiscoveredSession(mode)}
-        onMigrate={(item) => void migrateDiscoveredSession(item)}
-        onClose={() => {
-          if (sessionDiscoveryState.status === "loading") cancelSessionDiscovery();
-          setSessionDiscoveryOpen(false);
-        }}
-        onOpenWorkspace={() => {
-          setSessionDiscoveryOpen(false);
-          void chooseWorkspace();
-        }}
-      />
-      <WorkingCopiesDialog
-        state={workingCopiesState}
-        onClose={() => setWorkingCopiesState((state) => ({ ...state, open: false }))}
-        onReload={() => void loadProjectWorkingCopies()}
-        onAuthorize={(workingCopy) => void authorizeProjectWorkingCopy(workingCopy)}
-        onCreate={createProjectWorkingCopy}
-      />
-      <ImprovementCenter
-        state={improvementState}
-        agents={agentProfiles}
-        evaluationAgents={agentChoices.filter((agent) => agent.available && ["codex", "claude-code"].includes(agent.adapter))}
-        onClose={() => setImprovementState((state) => ({ ...state, open: false }))}
-        onAnalyze={() => void analyzeCurrentProjectImprovements()}
-        onDecide={(candidate, action, editedContent) => void decideImprovementCandidate(candidate, action, editedContent)}
-        onPropose={proposeImprovementCandidate}
-        onEvaluate={evaluateImprovementCandidate}
-        onPreviewExport={(asset, target) => void previewImprovementExport(asset, target)}
-        onCommitExport={() => void commitImprovementExport()}
-        onCancelExport={() => setImprovementState((state) => ({ ...state, exportPreview: null }))}
       />
       <SessionSyncDialog
         state={sessionSyncState}
         onClose={() => setSessionSyncState((state) => ({ ...state, open: false }))}
         onRebuild={(revisionId) => void rebuildImportedSession(revisionId)}
         onRestore={(revisionId) => void restoreImportedRevision(revisionId)}
-      />
-      <ContextHandoffDialog
-        state={handoffState}
-        agents={agentChoices.filter((agent) => agent.id !== "mock")}
-        onChange={(patch) => setHandoffState((state) => ({ ...state, ...patch }))}
-        onPreview={() => void previewContextHandoff()}
-        onGenerateSummary={() => void generateContextHandoffSummary()}
-        onCommit={() => void commitContextHandoff()}
-        onClose={() => setHandoffState((state) => ({ ...state, open: false }))}
       />
       <LocalDataDialog
         state={localDataState}
@@ -7874,6 +8351,9 @@ export function App() {
         connected={codexConnected}
         catalog={codexCatalog}
         settings={codexSettings}
+        externalImportState={externalImportState}
+        onLoadExternalImport={() => void loadExternalImport()}
+        onImportExternalConfig={(selections) => void importExternalConfigSelections(selections)}
         boardEnabled={boardSnapshotsByProject[workspaceState.active.projectId || workspaceState.active.id]?.enabled !== false}
         improvementSettings={improvementState.summary?.settings}
         improvementAgents={agentChoices.filter((agent) => agent.available && ["codex", "claude-code"].includes(agent.adapter))}
@@ -7891,20 +8371,8 @@ export function App() {
         onBoardEnabledChange={(enabled) => void setProjectBoardEnabled(enabled)}
         onImprovementSettingsChange={(patch) => void updateImprovementSettings(patch)}
         onOpenAccounts={openAccounts}
+        onOpenPlugins={openPlugins}
         onOpenLocalData={() => void openLocalData("workspace")}
-      />
-      <AgentsDialog
-        open={agentsOpen}
-        profiles={agentProfiles}
-        adapters={adapters}
-        nativeConnections={nativeConnections}
-        codexModels={codexCatalog.models}
-        tasks={tasks}
-        busy={agentProfileBusy}
-        error={agentProfileError}
-        onClose={() => setAgentsOpen(false)}
-        onSave={saveAgentProfile}
-        onDelete={deleteAgentProfile}
       />
       <RestoreDialog
         preview={restorePreview}

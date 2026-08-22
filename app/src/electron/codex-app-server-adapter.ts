@@ -1,4 +1,5 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { createHash, randomUUID } from "node:crypto";
 import { accessSync, constants, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, delimiter, resolve } from "node:path";
@@ -7,12 +8,26 @@ import type {
   AgentModelListResult,
   AgentAdapterInfo,
   ChatGptAccountSyncResult,
+  CodexPluginInfo,
+  CodexPluginListResult,
+  CodexReviewTarget,
+  ExternalConfigDetectResult,
+  ExternalConfigHistoryResult,
+  ExternalConfigImportResult,
+  ExternalConfigSource,
   PermissionMode,
   ReasoningEffort,
   RunActivity,
   RuntimeEvent,
 } from "../shared/protocol.ts";
-import { agentModelListResultSchema, chatGptAccountSyncResultSchema } from "../shared/protocol.ts";
+import {
+  agentModelListResultSchema,
+  chatGptAccountSyncResultSchema,
+  codexPluginListResultSchema,
+  externalConfigDetectResultSchema,
+  externalConfigHistoryResultSchema,
+  externalConfigImportResultSchema,
+} from "../shared/protocol.ts";
 import { createVerificationEvidence, redactSensitiveText } from "./verification-evidence.ts";
 import {
   forceKillChildProcessGroup,
@@ -25,6 +40,8 @@ type RequestId = string | number;
 // historical Thread in one JSON-RPC line. Keep a hard transport bound while
 // allowing the Session Connector to normalize and apply its tighter limits.
 const MAX_PROVIDER_JSONL_LINE_BYTES = 32 * 1024 * 1024;
+const MAX_CODEX_PLUGIN_JSON_BYTES = 8 * 1024 * 1024;
+const CODEX_PLUGIN_COMMAND_TIMEOUT_MS = 30_000;
 
 type RpcPending = {
   method: string;
@@ -85,6 +102,7 @@ export interface CodexAppServerStartParams {
   profileId?: string;
   agentRevisionId?: string;
   imagePaths?: string[];
+  reviewTarget?: CodexReviewTarget;
   /** Internal one-shot work that must not be materialized in provider history. */
   ephemeral?: boolean;
 }
@@ -209,6 +227,87 @@ function requestKey(id: RequestId): string {
 function redactedText(value: unknown, maximumLength = 20_000): string | undefined {
   const text = stringValue(value);
   return text ? redactSensitiveText(text, maximumLength).text : undefined;
+}
+
+function normalizePluginInfo(value: unknown, expectedInstalled: boolean): CodexPluginInfo {
+  if (!isRecord(value)) throw new Error("Codex plugin list returned an invalid plugin record");
+  return {
+    pluginId: value.pluginId,
+    name: value.name,
+    marketplaceName: value.marketplaceName,
+    version: value.version,
+    installed: value.installed ?? expectedInstalled,
+    enabled: value.enabled ?? expectedInstalled,
+    ...(stringValue(value.installPolicy) ? { installPolicy: value.installPolicy } : {}),
+    ...(stringValue(value.authPolicy) ? { authPolicy: value.authPolicy } : {}),
+  } as CodexPluginInfo;
+}
+
+async function runCodexCliJson(
+  executable: string,
+  args: string[],
+  cwd: string,
+  environment: NodeJS.ProcessEnv = {},
+  timeoutMs = CODEX_PLUGIN_COMMAND_TIMEOUT_MS,
+): Promise<unknown> {
+  const child = spawn(executable, args, {
+    cwd,
+    env: { ...process.env, ...environment, NO_COLOR: "1", FORCE_COLOR: "0" },
+    detached: process.platform !== "win32",
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
+  });
+  child.stdout?.setEncoding("utf8");
+  child.stderr?.setEncoding("utf8");
+  let stdout = "";
+  let stderr = "";
+  let overflow = false;
+
+  child.stdout?.on("data", (chunk: string) => {
+    if (overflow) return;
+    stdout += chunk;
+    if (Buffer.byteLength(stdout, "utf8") > MAX_CODEX_PLUGIN_JSON_BYTES) {
+      overflow = true;
+      forceKillChildProcessGroup(child);
+    }
+  });
+  child.stderr?.on("data", (chunk: string) => {
+    stderr = `${stderr}${chunk}`.slice(-32_000);
+  });
+
+  return new Promise((resolveResult, rejectResult) => {
+    let settled = false;
+    const settle = (error?: Error, value?: unknown) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error) rejectResult(error);
+      else resolveResult(value);
+    };
+    const timer = setTimeout(() => {
+      void ensureChildProcessGroupTerminated(child, { gracePeriodMs: 250, forceKillWaitMs: 1_000 })
+        .then(() => settle(new Error("Codex plugin command timed out")))
+        .catch((error) => settle(error instanceof Error ? error : new Error(String(error))));
+    }, timeoutMs);
+    timer.unref();
+    child.once("error", (error) => settle(error));
+    child.once("close", (code, signal) => {
+      if (overflow) {
+        settle(new Error("Codex plugin command exceeded the bounded JSON response size"));
+        return;
+      }
+      if (code !== 0) {
+        const detail = redactedText(stderr, 8_000);
+        settle(new Error(`Codex plugin command failed with ${code ?? signal ?? "unknown"}${detail ? `: ${detail}` : ""}`));
+        return;
+      }
+      try {
+        settle(undefined, JSON.parse(stdout));
+      } catch {
+        settle(new Error("Codex plugin command returned invalid JSON"));
+      }
+    });
+  });
 }
 
 function executableCandidates(): string[] {
@@ -366,6 +465,61 @@ export class CodexAppServerRpcError extends Error {
   }
 }
 
+type ExternalDetectionCache = {
+  source: ExternalConfigSource;
+  expiresAt: number;
+  items: Map<string, JsonRecord>;
+};
+
+type ExternalImportCompletionWaiter = {
+  source: ExternalConfigSource;
+  resolve: (value: ExternalConfigImportResult) => void;
+  reject: (error: Error) => void;
+  timer: NodeJS.Timeout;
+};
+
+function externalItemCount(details: unknown): number {
+  if (!isRecord(details)) return 1;
+  const keys = ["commands", "hooks", "mcpServers", "memory", "plugins", "sessions", "skills", "subagents"];
+  const count = keys.reduce((sum, key) => sum + (Array.isArray(details[key]) ? details[key].length : 0), 0);
+  return Math.max(1, count);
+}
+
+function normalizedExternalImportResult(importId: string, source: ExternalConfigSource, params: JsonRecord): ExternalConfigImportResult {
+  const typeResults = Array.isArray(params.itemTypeResults) ? params.itemTypeResults : [];
+  const successes = typeResults.flatMap((result) => {
+    if (!isRecord(result) || !Array.isArray(result.successes)) return [];
+    return result.successes.flatMap((success) => {
+      if (!isRecord(success) || !stringValue(success.itemType)) return [];
+      return [{
+        itemType: success.itemType,
+        ...(stringValue(success.cwd) ? { cwd: success.cwd } : {}),
+        ...(stringValue(success.target) ? { target: success.target } : {}),
+        ...(stringValue(success.title) ? { title: success.title } : {}),
+      }];
+    });
+  });
+  const failures = typeResults.flatMap((result) => {
+    if (!isRecord(result) || !Array.isArray(result.failures)) return [];
+    return result.failures.flatMap((failure) => {
+      if (!isRecord(failure) || !stringValue(failure.itemType) || !stringValue(failure.message)) return [];
+      return [{
+        itemType: failure.itemType,
+        stage: stringValue(failure.failureStage) ?? "import",
+        message: redactSensitiveText(String(failure.message), 2_000).text,
+        ...(stringValue(failure.cwd) ? { cwd: failure.cwd } : {}),
+      }];
+    });
+  });
+  return externalConfigImportResultSchema.parse({
+    importId,
+    source,
+    completedAt: new Date().toISOString(),
+    successes,
+    failures,
+  });
+}
+
 /**
  * Bidirectional Codex rich-client adapter.
  *
@@ -380,6 +534,9 @@ export class CodexAppServerAdapter {
   private readonly threadToRun = new Map<string, string>();
   private readonly pendingRpc = new Map<string, RpcPending>();
   private readonly approvals = new Map<string, PendingApproval>();
+  private readonly externalDetections = new Map<string, ExternalDetectionCache>();
+  private readonly externalImportWaiters = new Map<string, ExternalImportCompletionWaiter>();
+  private readonly completedExternalImports = new Map<string, JsonRecord>();
   private readonly workspaceRoot: string;
   private readonly emit: (event: CodexAppServerAdapterEvent) => void;
   private readonly options: CodexAppServerAdapterOptions;
@@ -461,6 +618,138 @@ export class CodexAppServerAdapter {
       models,
       ...(Object.hasOwn(rawResult, "nextCursor") ? { nextCursor: rawResult.nextCursor } : {}),
     });
+  }
+
+  async listPlugins(): Promise<CodexPluginListResult> {
+    if (this.disposed) throw new Error("Rux service is disposed");
+    const adapter = this.info();
+    if (!adapter.available || !adapter.executable) throw new Error("Codex CLI is unavailable");
+    const raw = await runCodexCliJson(
+      adapter.executable,
+      ["plugin", "list", "--available", "--json"],
+      this.workspaceRoot,
+      this.options.environment,
+    );
+    if (!isRecord(raw) || !Array.isArray(raw.installed) || !Array.isArray(raw.available)) {
+      throw new Error("Codex plugin list returned an invalid response");
+    }
+    return codexPluginListResultSchema.parse({
+      source: "codex-cli",
+      fetchedAt: new Date().toISOString(),
+      installed: raw.installed.map((plugin) => normalizePluginInfo(plugin, true)),
+      available: raw.available.map((plugin) => normalizePluginInfo(plugin, false)),
+    });
+  }
+
+  async installPlugin(pluginId: string): Promise<CodexPluginListResult> {
+    if (this.disposed) throw new Error("Rux service is disposed");
+    const adapter = this.info();
+    if (!adapter.available || !adapter.executable) throw new Error("Codex CLI is unavailable");
+    await runCodexCliJson(
+      adapter.executable,
+      ["plugin", "add", pluginId, "--json"],
+      this.workspaceRoot,
+      this.options.environment,
+      120_000,
+    );
+    return this.listPlugins();
+  }
+
+  async removePlugin(pluginId: string): Promise<CodexPluginListResult> {
+    if (this.disposed) throw new Error("Rux service is disposed");
+    const adapter = this.info();
+    if (!adapter.available || !adapter.executable) throw new Error("Codex CLI is unavailable");
+    await runCodexCliJson(
+      adapter.executable,
+      ["plugin", "remove", pluginId, "--json"],
+      this.workspaceRoot,
+      this.options.environment,
+      120_000,
+    );
+    return this.listPlugins();
+  }
+
+  async detectExternalConfig(source: ExternalConfigSource): Promise<ExternalConfigDetectResult> {
+    if (this.disposed) throw new Error("Rux service is disposed");
+    await this.ensureInitialized();
+    const rawResult = await this.request("externalAgentConfig/detect", {
+      migrationSource: source,
+      includeHome: true,
+      cwds: [this.workspaceRoot],
+      maxSessions: 50,
+      maxSessionAgeDays: 30,
+    });
+    if (!isRecord(rawResult) || !Array.isArray(rawResult.items)) throw new Error("Codex import detection returned an invalid response");
+    const detectionId = `external-detection:${randomUUID()}`;
+    const rawItems = new Map<string, JsonRecord>();
+    const items = rawResult.items.map((rawItem, index) => {
+      if (!isRecord(rawItem)) throw new Error(`Codex import detection returned an invalid item at ${index}`);
+      const itemType = stringValue(rawItem.itemType);
+      const description = redactedText(rawItem.description, 1_000);
+      if (!itemType || !description) throw new Error(`Codex import detection omitted item metadata at ${index}`);
+      const cwd = stringValue(rawItem.cwd);
+      const id = `external-item:${createHash("sha256").update(`${source}\0${itemType}\0${cwd ?? ""}\0${description}\0${index}`).digest("hex").slice(0, 32)}`;
+      rawItems.set(id, rawItem);
+      return { id, itemType, description, scope: cwd ? "workspace" : "user", ...(cwd ? { cwd } : {}), itemCount: externalItemCount(rawItem.details) };
+    });
+    const connectors = Array.isArray(rawResult.connectors) ? rawResult.connectors.flatMap((connector) => {
+      if (!isRecord(connector) || !stringValue(connector.name) || !stringValue(connector.source)) return [];
+      return [{ name: connector.name, sessionCount: numberValue(connector.sessionCount) ?? 0, source: connector.source }];
+    }) : [];
+    this.externalDetections.set(detectionId, { source, expiresAt: Date.now() + 10 * 60_000, items: rawItems });
+    return externalConfigDetectResultSchema.parse({ source, availability: "available", detectionId, detectedAt: new Date().toISOString(), items, connectors });
+  }
+
+  async importExternalConfig(source: ExternalConfigSource, detectionId: string, itemIds: string[]): Promise<ExternalConfigImportResult> {
+    if (this.disposed) throw new Error("Rux service is disposed");
+    const detection = this.externalDetections.get(detectionId);
+    if (!detection || detection.source !== source || detection.expiresAt < Date.now()) {
+      this.externalDetections.delete(detectionId);
+      throw new Error("EXTERNAL_IMPORT_DETECTION_STALE: 请重新检测后再确认导入");
+    }
+    const uniqueIds = [...new Set(itemIds)];
+    const migrationItems = uniqueIds.map((id) => detection.items.get(id));
+    if (migrationItems.some((item) => !item)) throw new Error("EXTERNAL_IMPORT_ITEM_STALE: 所选导入条目已变化，请重新检测");
+    const rawResult = await this.request("externalAgentConfig/import", {
+      migrationItems,
+      migrationSource: source,
+      providerId: source,
+      source: "rux-desktop",
+    });
+    if (!isRecord(rawResult) || !stringValue(rawResult.importId)) throw new Error("Codex import response omitted importId");
+    const importId = String(rawResult.importId);
+    const alreadyCompleted = this.completedExternalImports.get(importId);
+    if (alreadyCompleted) {
+      this.completedExternalImports.delete(importId);
+      return normalizedExternalImportResult(importId, source, alreadyCompleted);
+    }
+    return new Promise((resolveImport, rejectImport) => {
+      const timer = setTimeout(() => {
+        this.externalImportWaiters.delete(importId);
+        rejectImport(new Error("EXTERNAL_IMPORT_TIMEOUT: Codex 配置导入超时"));
+      }, 3 * 60_000);
+      timer.unref();
+      this.externalImportWaiters.set(importId, { source, resolve: resolveImport, reject: rejectImport, timer });
+    });
+  }
+
+  async externalConfigHistory(): Promise<ExternalConfigHistoryResult> {
+    if (this.disposed) throw new Error("Rux service is disposed");
+    await this.ensureInitialized();
+    const rawResult = await this.request("externalAgentConfig/import/readHistories", {});
+    if (!isRecord(rawResult) || !Array.isArray(rawResult.data)) throw new Error("Codex import history returned an invalid response");
+    const records = rawResult.data.flatMap((record) => {
+      if (!isRecord(record) || !stringValue(record.importId)) return [];
+      const providerId = stringValue(record.providerId);
+      const source = providerId && ["claude-code", "claude-cowork", "cursor"].includes(providerId) ? providerId : undefined;
+      const normalized = normalizedExternalImportResult(String(record.importId), (source ?? "claude-code") as ExternalConfigSource, { itemTypeResults: [{ itemType: "CONFIG", successes: record.successes, failures: record.failures }] });
+      return [{ ...normalized, completedAt: new Date(numberValue(record.completedAtMs) ?? Date.now()).toISOString(), ...(source ? { source } : { source: undefined }), ...(providerId ? { providerId } : {}) }];
+    });
+    const connectors = Array.isArray(rawResult.connectors) ? rawResult.connectors.flatMap((connector) => {
+      if (!isRecord(connector) || !stringValue(connector.name) || !stringValue(connector.source)) return [];
+      return [{ name: connector.name, sessionCount: numberValue(connector.sessionCount) ?? 0, source: connector.source }];
+    }) : [];
+    return externalConfigHistoryResultSchema.parse({ fetchedAt: new Date().toISOString(), records, connectors });
   }
 
   async syncChatGptAccount(): Promise<ChatGptAccountSyncResult> {
@@ -600,23 +889,35 @@ export class CodexAppServerAdapter {
       });
       if (run.cancelled) throw new Error("Run was cancelled before turn start");
 
-      const rawTurnResult = await this.request("turn/start", {
-        threadId,
-        input: [
-          { type: "text", text: params.prompt, text_elements: [] },
-          ...(params.imagePaths ?? []).map((path) => ({ type: "localImage", path })),
-        ],
-        ...(params.model ? { model: params.model } : {}),
-        ...(params.serviceTier ? { serviceTier: params.serviceTier } : {}),
-        ...(params.reasoningEffort ? { effort: params.reasoningEffort } : {}),
-      });
+      const rawTurnResult = params.reviewTarget
+        ? await this.request("review/start", {
+            threadId,
+            target: params.reviewTarget,
+            delivery: "inline",
+          })
+        : await this.request("turn/start", {
+            threadId,
+            input: [
+              { type: "text", text: params.prompt, text_elements: [] },
+              ...(params.imagePaths ?? []).map((path) => ({ type: "localImage", path })),
+            ],
+            ...(params.model ? { model: params.model } : {}),
+            ...(params.serviceTier ? { serviceTier: params.serviceTier } : {}),
+            ...(params.reasoningEffort ? { effort: params.reasoningEffort } : {}),
+          });
       const turnResult = isRecord(rawTurnResult) ? rawTurnResult : {};
       const turn = isRecord(turnResult.turn) ? turnResult.turn : {};
       const turnId = stringValue(turn.id);
       if (!turnId) throw new Error("Rux service turn response omitted turn.id");
+      const reviewThreadId = params.reviewTarget ? stringValue(turnResult.reviewThreadId) : undefined;
+      if (reviewThreadId && reviewThreadId !== run.threadId) {
+        this.threadToRun.delete(threadId);
+        run.threadId = reviewThreadId;
+        this.threadToRun.set(reviewThreadId, params.runId);
+      }
       run.turnId = turnId;
       if (run.cancelled) void this.cancel(params.runId);
-      return { runId: params.runId, adapter: "codex", threadId, turnId };
+      return { runId: params.runId, adapter: "codex", threadId: reviewThreadId ?? threadId, turnId };
     } catch (error) {
       if (!run.terminal) {
         if (run.cancelled) this.finishRun(run, "cancelled");
@@ -664,6 +965,11 @@ export class CodexAppServerAdapter {
       this.cancelPendingApprovals(run.params.runId);
       this.finishRun(run, "cancelled");
     }
+    for (const waiter of this.externalImportWaiters.values()) {
+      clearTimeout(waiter.timer);
+      waiter.reject(new Error("Codex import stopped because the Runtime is shutting down"));
+    }
+    this.externalImportWaiters.clear();
     const child = this.child;
     if (!child) return;
     await ensureChildProcessGroupTerminated(child);
@@ -1074,6 +1380,25 @@ export class CodexAppServerAdapter {
   }
 
   private handleNotification(method: string, params: JsonRecord): void {
+    if (method === "externalAgentConfig/import/completed") {
+      const importId = stringValue(params.importId);
+      if (!importId) return;
+      const waiter = this.externalImportWaiters.get(importId);
+      if (waiter) {
+        clearTimeout(waiter.timer);
+        this.externalImportWaiters.delete(importId);
+        try {
+          waiter.resolve(normalizedExternalImportResult(importId, waiter.source, params));
+        } catch (error) {
+          waiter.reject(error instanceof Error ? error : new Error(String(error)));
+        }
+      } else {
+        this.completedExternalImports.set(importId, params);
+        while (this.completedExternalImports.size > 100) this.completedExternalImports.delete(this.completedExternalImports.keys().next().value!);
+      }
+      return;
+    }
+    if (method === "externalAgentConfig/import/progress") return;
     if (method === "thread/started") {
       const thread = isRecord(params.thread) ? params.thread : {};
       const threadId = stringValue(thread.id);

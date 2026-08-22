@@ -18,6 +18,9 @@ const MUTATING_METHODS = new Set<RuntimeMethod>([
   "agent.profile.create",
   "agent.profile.update",
   "agent.profile.delete",
+  "plugin.install",
+  "plugin.remove",
+  "externalConfig.import",
   "session.cancel",
   "handoff.summary.generate",
   "improvement.evaluation.run",
@@ -40,14 +43,14 @@ export function runtimeRequestPolicy(method: RuntimeMethod): RuntimeRequestPolic
     ? 10 * 60_000 + 5_000
     : method === "improvement.evaluation.run"
       ? 25 * 60_000
-    : ["handoff.summary.generate", "run.start", "permission.decide", "run.changes.restore", "git.branch.switch", "git.worktree.create", "git.commit", "git.push"].includes(method)
+    : ["handoff.summary.generate", "plugin.install", "plugin.remove", "externalConfig.import", "run.start", "permission.decide", "run.changes.restore", "git.branch.switch", "git.worktree.create", "git.commit", "git.push"].includes(method)
       ? 3 * 60_000
       : method.startsWith("changes.")
           || method === "git.branches.list"
           || method === "git.compare"
           || ["run.changes.diff", "run.changes.accept", "run.changes.previewRestore"].includes(method)
         ? 60_000
-        : method === "auth.status" || method === "agent.model.list"
+        : method === "auth.status" || method === "agent.model.list" || method === "plugin.list" || method === "pullRequest.list" || method === "externalConfig.detect" || method === "externalConfig.history"
           ? 30_000
           : 15_000;
   return {

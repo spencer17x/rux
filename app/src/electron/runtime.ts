@@ -8,6 +8,7 @@ import { ClaudeCodeAdapter } from "./claude-adapter";
 import { CodexRuntimeAdapter } from "./codex-runtime-adapter";
 import { NativeProviderAdapter, type NativeRunStartParams } from "./native-provider-adapter.ts";
 import { GitChangesService, type GitRunBaseline } from "./git-service";
+import { GitHubPullRequestService } from "./github-pull-request-service";
 import { TaskStore } from "./task-store";
 import { ClaudeSessionConnector, CodexSessionConnector, SessionConnectorService } from "./session-connector";
 import {
@@ -18,6 +19,9 @@ import {
 import {
   agentListParamsSchema,
   agentModelListParamsSchema,
+  codexPluginMutationParamsSchema,
+  externalConfigDetectParamsSchema,
+  externalConfigImportParamsSchema,
   agentProfileDeleteParamsSchema,
   agentProfileInputSchema,
   agentProfileUpdateParamsSchema,
@@ -218,6 +222,7 @@ const sessions = new SessionConnectorService([
   new ClaudeSessionConnector(workspaceRoot),
 ]);
 const gitChanges = new GitChangesService(workspaceRoot);
+const pullRequests = new GitHubPullRequestService(workspaceRoot);
 const authManager = new AuthManager(workspaceRoot);
 const workspaceId = createHash("sha256").update(workspaceRoot).digest("hex").slice(0, 12);
 const clipboardImageRoot = resolve(
@@ -761,6 +766,35 @@ async function handleRequest(input: unknown): Promise<void> {
         result = await codex.listModels(params);
         break;
       }
+      case "plugin.list":
+        result = await codex.listPlugins();
+        break;
+      case "plugin.install": {
+        const params = codexPluginMutationParamsSchema.parse(request.params);
+        result = await codex.installPlugin(params.pluginId);
+        break;
+      }
+      case "plugin.remove": {
+        const params = codexPluginMutationParamsSchema.parse(request.params);
+        result = await codex.removePlugin(params.pluginId);
+        break;
+      }
+      case "pullRequest.list":
+        result = await pullRequests.list();
+        break;
+      case "externalConfig.detect": {
+        const params = externalConfigDetectParamsSchema.parse(request.params);
+        result = await codex.detectExternalConfig(params.source);
+        break;
+      }
+      case "externalConfig.import": {
+        const params = externalConfigImportParamsSchema.parse(request.params);
+        result = await codex.importExternalConfig(params.source, params.detectionId, params.itemIds);
+        break;
+      }
+      case "externalConfig.history":
+        result = await codex.externalConfigHistory();
+        break;
       case "session.list":
         result = await sessions.list(sessionListParamsSchema.parse(request.params));
         break;

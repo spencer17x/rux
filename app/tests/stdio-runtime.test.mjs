@@ -63,6 +63,8 @@ test("standalone JSONL Runtime runs Codex and custom Agent profiles over stdio",
     encoding: "utf8",
   }).trim();
   const codex = fakeCodex(bin);
+  const pluginState = join(directory, "plugin-state.json");
+  writeFileSync(pluginState, JSON.stringify({ documents: true, github: false }), "utf8");
   const child = spawn(process.execPath, [hostPath], {
     cwd: workspace,
     env: {
@@ -75,6 +77,7 @@ test("standalone JSONL Runtime runs Codex and custom Agent profiles over stdio",
       RUX_FAKE_CODEX_AUTH_METHOD: "api-key",
       RUX_FAKE_CODEX_REQUIRE_CUSTOM_PROVIDER: "1",
       RUX_FAKE_CODEX_DROP_DEFAULT_AFTER_CATALOG: "1",
+      RUX_FAKE_CODEX_PLUGIN_STATE: pluginState,
       OPENAI_BASE_URL: "https://provider.example.invalid/v1",
       OPENAI_API_KEY: "sk-proj-rux-fixture-secret-123456",
     },
@@ -178,6 +181,32 @@ test("standalone JSONL Runtime runs Codex and custom Agent profiles over stdio",
   assert.equal(models.result.models[0].model, "fake-model");
   assert.equal(models.result.models[0].defaultReasoningEffort, "medium");
   assert.equal(models.result.nextCursor, "models-page-2");
+
+  child.stdin.write(`${JSON.stringify({
+    kind: "request",
+    id: "plugin-list",
+    method: "plugin.list",
+    params: {},
+  })}\n`);
+  const plugins = await waitFor(messages, (message) =>
+    message.kind === "response" && message.id === "plugin-list");
+  assert.equal(plugins.ok, true);
+  assert.deepEqual(plugins.result.installed.map((plugin) => plugin.pluginId), ["documents@openai-primary-runtime"]);
+  assert.deepEqual(plugins.result.available.map((plugin) => plugin.pluginId), ["github@openai-curated"]);
+
+  child.stdin.write(`${JSON.stringify({ kind: "request", id: "external-config-detect", method: "externalConfig.detect", params: { source: "cursor" } })}\n`);
+  const externalDetect = await waitFor(messages, (message) => message.kind === "response" && message.id === "external-config-detect");
+  assert.equal(externalDetect.ok, true);
+  assert.equal(externalDetect.result.source, "cursor");
+  assert.equal(externalDetect.result.items.length, 3);
+  child.stdin.write(`${JSON.stringify({ kind: "request", id: "external-config-import", method: "externalConfig.import", params: { source: "cursor", detectionId: externalDetect.result.detectionId, itemIds: [externalDetect.result.items[0].id], confirmed: true } })}\n`);
+  const externalImport = await waitFor(messages, (message) => message.kind === "response" && message.id === "external-config-import");
+  assert.equal(externalImport.ok, true);
+  assert.equal(externalImport.result.successes.length, 1);
+  child.stdin.write(`${JSON.stringify({ kind: "request", id: "external-config-history", method: "externalConfig.history", params: {} })}\n`);
+  const externalHistory = await waitFor(messages, (message) => message.kind === "response" && message.id === "external-config-history");
+  assert.equal(externalHistory.ok, true);
+  assert.equal(externalHistory.result.records[0].source, "cursor");
 
   child.stdin.write(`${JSON.stringify({
     kind: "request",
@@ -534,6 +563,31 @@ test("standalone JSONL Runtime runs Codex and custom Agent profiles over stdio",
     message.kind === "event" && message.event.type === "verification.recorded" && message.event.runId === "stdio-run");
   assert.equal(verification.event.verification.status, "passed");
   assert.equal(verification.event.verification.cwd, realpathSync(workspace));
+
+  child.stdin.write(`${JSON.stringify({
+    kind: "request",
+    id: "review-start",
+    method: "run.start",
+    params: {
+      runId: "stdio-review",
+      adapter: "codex",
+      prompt: "/review · 未提交变更",
+      modelMode: "fixed",
+      permissionMode: "plan",
+      agentRevisionId: "builtin:codex@1",
+      providerConnectionId: "cli:codex:default",
+      contextFiles: [],
+      reviewTarget: { type: "uncommittedChanges" },
+    },
+  })}\n`);
+  const inlineReviewCompleted = await waitFor(messages, (message) =>
+    message.kind === "event"
+      && message.event.type === "run.completed"
+      && message.event.runId === "stdio-review");
+  assert.equal(inlineReviewCompleted.event.runId, "stdio-review");
+  const inlineReviewAssistant = messages.find((message) =>
+    message.kind === "event" && message.event.type === "assistant.message" && message.event.runId === "stdio-review");
+  assert.equal(inlineReviewAssistant.event.text, "[P1] Review finding from the selected diff");
 
   child.stdin.write(`${JSON.stringify({
     kind: "request",

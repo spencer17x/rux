@@ -638,6 +638,8 @@ test("interrupts an orphaned provider-native approval because its CLI callback c
     const run = task.runs[0];
     assert.equal(task.status, "interrupted");
     assert.equal(run.status, "interrupted");
+    assert.equal(run.error, "Rux 上次退出后，这项权限请求已失效；请重新开始运行。");
+    assert.doesNotMatch(run.error, /provider-native|Agent/);
     assert.equal(run.finishedAt, interruptedAt);
     assert.equal(run.permissionRequests[0].status, "cancelled");
     assert.equal(run.permissionDecisions[0].decision, "cancelled");

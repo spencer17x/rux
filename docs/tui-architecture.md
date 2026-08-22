@@ -1,6 +1,6 @@
 # Rux TUI architecture, installation, and release
 
-更新时间：2026-08-20 · Runtime protocol v21
+更新时间：2026-08-22 · Runtime protocol v25
 
 > Compatibility status: the Rust TUI is not part of the Rux v1 ChatGPT Codex desktop parity surface. It may remain buildable while historical Runtime contracts are removed or migrated, but its commands and feature set do not define v1 product requirements.
 

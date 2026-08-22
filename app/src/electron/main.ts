@@ -5,9 +5,11 @@ import {
   ipcMain,
   type IpcMainInvokeEvent,
   MessageChannelMain,
+  powerSaveBlocker,
   powerMonitor,
   safeStorage,
   type MessagePortMain,
+  type MediaAccessPermissionRequest,
   shell,
   utilityProcess,
   type UtilityProcess,
@@ -67,6 +69,7 @@ import {
   taskStateLoadParamsSchema,
   workspaceActivateParamsSchema,
   workspaceOpenParamsSchema,
+  preventSleepParamsSchema,
   workspaceTaskStateSchema,
   boardLoadParamsSchema,
   boardMutationParamsSchema,
@@ -128,6 +131,7 @@ type StoredWorkspaceState = Partial<WorkspaceState> & {
 };
 
 let mainWindow: BrowserWindow | null = null;
+let preventSleepBlockerId: number | undefined;
 let runtimeProcess: UtilityProcess | null = null;
 let runtimePort: MessagePortMain | null = null;
 let workspaceState: WorkspaceState | null = null;
@@ -160,8 +164,6 @@ let runtimeStopPromise: Promise<void> | null = null;
 let workspaceTransition: Promise<void> = Promise.resolve();
 let quitCleanupStarted = false;
 let allowQuit = false;
-let backgroundImprovementTimer: NodeJS.Timeout | undefined;
-let backgroundImprovementRunning = false;
 const pendingRequests = new Map<string, PendingRequest>();
 const runtimeExitPromises = new WeakMap<UtilityProcess, Promise<number>>();
 
@@ -192,7 +194,7 @@ function gitValue(workspacePath: string, args: string[]): string | undefined {
 
 function defaultWorkspacePath(): string {
   const welcomePlaceholder = resolve(app.getPath("userData"), "welcome-workspace");
-  if (!process.env.RUX_WORKSPACE_ROOT) mkdirSync(welcomePlaceholder, { recursive: true });
+  mkdirSync(welcomePlaceholder, { recursive: true });
   const configured = resolve(process.env.RUX_WORKSPACE_ROOT ?? welcomePlaceholder);
   return gitValue(configured, ["rev-parse", "--show-toplevel"]) ?? configured;
 }
@@ -436,8 +438,24 @@ function requireAuthorizedWorkspaceId(workspaceId?: string): string {
   return requestedId;
 }
 
+function updatePreventSleep(enabled: boolean): { requested: boolean; active: boolean } {
+  if (enabled) {
+    if (preventSleepBlockerId === undefined || !powerSaveBlocker.isStarted(preventSleepBlockerId)) {
+      preventSleepBlockerId = powerSaveBlocker.start("prevent-display-sleep");
+    }
+  } else if (preventSleepBlockerId !== undefined) {
+    if (powerSaveBlocker.isStarted(preventSleepBlockerId)) powerSaveBlocker.stop(preventSleepBlockerId);
+    preventSleepBlockerId = undefined;
+  }
+  return {
+    requested: enabled,
+    active: preventSleepBlockerId !== undefined && powerSaveBlocker.isStarted(preventSleepBlockerId),
+  };
+}
+
 function activateWorkspace(inputPath: string, allowNew: boolean): Promise<WorkspaceState> {
   const transition = workspaceTransition.catch(() => undefined).then(async () => {
+    updatePreventSleep(false);
     const current = requireWorkspaceState();
     const resolvedPath = realpathSync(resolve(inputPath));
     if (!allowNew && !current.recent.some((workspace) => workspace.path === resolvedPath)) {
@@ -853,29 +871,6 @@ async function performImprovementEvaluation(parsed: ImprovementEvaluateParams): 
   }
 }
 
-async function maybeRunBackgroundImprovementEvaluation(): Promise<void> {
-  if (backgroundImprovementRunning || !improvementStore || !workspaceState || workspaceState.active.placeholder) return;
-  const projectId = workspaceState.active.projectId ?? workspaceState.active.id;
-  const summary = improvementStore.summary(projectId);
-  const settings = summary.settings;
-  if (!settings.backgroundModelReview || settings.paused || !settings.evaluatorAgentId) return;
-  const today = new Date().toISOString().slice(0, 10);
-  const candidate = summary.candidates.find((item) => ["pending", "snoozed"].includes(item.status)
-    && summary.evaluations.some((evaluation) => evaluation.candidateId === item.id)
-    && !summary.evaluations.some((evaluation) => evaluation.candidateId === item.id && evaluation.createdAt.startsWith(today)));
-  if (!candidate) return;
-  const prior = [...summary.evaluations].reverse().find((evaluation) => evaluation.candidateId === candidate.id);
-  if (!prior) return;
-  backgroundImprovementRunning = true;
-  try {
-    await performImprovementEvaluation({ candidateId: candidate.id, evaluatorAgentId: settings.evaluatorAgentId, cases: prior.cases });
-  } catch (error) {
-    console.error(`[improvement-background] ${error instanceof Error ? error.message : String(error)}`);
-  } finally {
-    backgroundImprovementRunning = false;
-  }
-}
-
 function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.desktopInfo, (event): DesktopInfo => {
     assertTrustedRenderer(event);
@@ -903,6 +898,12 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.workspaceState, (event): WorkspaceState => {
     assertTrustedRenderer(event);
     return requireWorkspaceState();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.preventSleepSet, (event, input: unknown) => {
+    assertTrustedRenderer(event);
+    const parsed = preventSleepParamsSchema.parse(input ?? {});
+    return updatePreventSleep(parsed.enabled);
   });
 
   ipcMain.handle(IPC_CHANNELS.workspaceChoose, async (event): Promise<WorkspaceState | null> => {
@@ -1601,9 +1602,17 @@ function createMainWindow(): BrowserWindow {
     void stopRuntimeProcess(`renderer process gone: ${details.reason}`);
   });
 
-  window.webContents.session.setPermissionCheckHandler(() => false);
-  window.webContents.session.setPermissionRequestHandler((_webContents, _permission, callback) => {
-    callback(false);
+  window.webContents.session.setPermissionCheckHandler((webContents, permission, _origin, details) => {
+    return webContents === window.webContents
+      && permission === "media"
+      && details.mediaType === "audio";
+  });
+  window.webContents.session.setPermissionRequestHandler((webContents, permission, callback, details) => {
+    const mediaTypes = (details as MediaAccessPermissionRequest).mediaTypes || [];
+    callback(webContents === window.webContents
+      && permission === "media"
+      && mediaTypes.length > 0
+      && mediaTypes.every((mediaType) => mediaType === "audio"));
   });
 
   window.webContents.on("will-attach-webview", (event) => {
@@ -1690,8 +1699,6 @@ if (ownsSingleInstanceLock) app.whenReady().then(() => {
   registerIpcHandlers();
   startRuntimeProcess();
   mainWindow = createMainWindow();
-  backgroundImprovementTimer = setInterval(() => void maybeRunBackgroundImprovementEvaluation(), 15 * 60_000);
-  backgroundImprovementTimer.unref();
   setTimeout(() => {
     if (!updateManager) return;
     if (updateManager.getState().rollbackPending) void updateManager.recoverIfNeeded();
@@ -1712,7 +1719,7 @@ app.on("before-quit", (event) => {
   event.preventDefault();
   if (quitCleanupStarted) return;
   quitCleanupStarted = true;
-  if (backgroundImprovementTimer) clearInterval(backgroundImprovementTimer);
+  updatePreventSleep(false);
   void stopRuntimeProcess("application quit").finally(() => {
     try {
       taskStore?.close();

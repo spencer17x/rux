@@ -46,7 +46,7 @@ mac:
     NSBluetoothAlwaysUsageDescription: null
     NSBluetoothPeripheralUsageDescription: null
     NSCameraUsageDescription: null
-    NSMicrophoneUsageDescription: null
+    NSMicrophoneUsageDescription: Rux uses the microphone only when you choose Voice input in the Composer.
   target:
     - dmg
     - zip

@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const RUX_PROTOCOL_VERSION = 21 as const;
+export const RUX_PROTOCOL_VERSION = 25 as const;
 
 export const IPC_CHANNELS = {
   request: "rux:runtime:request",
@@ -12,6 +12,7 @@ export const IPC_CHANNELS = {
   clipboardImageSave: "rux:clipboard-image:save",
   workspaceActivate: "rux:workspace:activate",
   workspaceOpen: "rux:workspace:open",
+  preventSleepSet: "rux:power:prevent-sleep-set",
   taskStateLoad: "rux:task-state:load",
   taskStateSave: "rux:task-state:save",
   boardLoad: "rux:board:load",
@@ -69,6 +70,13 @@ export const runtimeMethods = [
   "terminal.dispose",
   "agent.list",
   "agent.model.list",
+  "plugin.list",
+  "plugin.install",
+  "plugin.remove",
+  "pullRequest.list",
+  "externalConfig.detect",
+  "externalConfig.import",
+  "externalConfig.history",
   "session.list",
   "session.discover",
   "session.attribution.migrate",
@@ -289,6 +297,105 @@ export interface AgentModelListResult {
   fetchedAt: string;
   models: CodexModelInfo[];
   nextCursor?: string | null;
+}
+
+export interface CodexPluginInfo {
+  pluginId: string;
+  name: string;
+  marketplaceName: string;
+  version: string;
+  installed: boolean;
+  enabled: boolean;
+  installPolicy?: string;
+  authPolicy?: string;
+}
+
+export interface CodexPluginListResult {
+  source: "codex-cli" | "web-unavailable";
+  fetchedAt: string;
+  installed: CodexPluginInfo[];
+  available: CodexPluginInfo[];
+  unavailableReason?: string;
+}
+
+export interface CodexPluginMutationParams {
+  pluginId: string;
+  confirmed: true;
+}
+
+export interface PullRequestInfo {
+  number: number;
+  title: string;
+  url: string;
+  state: "open" | "closed" | "merged";
+  isDraft: boolean;
+  author?: string;
+  headRefName: string;
+  baseRefName: string;
+  updatedAt: string;
+  reviewDecision?: string;
+}
+
+export interface PullRequestListResult {
+  source: "github-cli" | "unavailable" | "web-unavailable";
+  fetchedAt: string;
+  repository?: string;
+  repositoryUrl?: string;
+  items: PullRequestInfo[];
+  unavailableReason?: string;
+}
+
+export const externalConfigSources = ["claude-code", "claude-cowork", "cursor"] as const;
+export type ExternalConfigSource = (typeof externalConfigSources)[number];
+export const externalConfigItemTypes = ["AGENTS_MD", "CONFIG", "SKILLS", "PLUGINS", "MCP_SERVER_CONFIG", "SUBAGENTS", "HOOKS", "COMMANDS", "MEMORY", "SESSIONS"] as const;
+export type ExternalConfigItemType = (typeof externalConfigItemTypes)[number];
+
+export interface ExternalConfigDetectParams { source: ExternalConfigSource; }
+export interface ExternalConfigDetectedItem {
+  id: string;
+  itemType: ExternalConfigItemType;
+  description: string;
+  scope: "user" | "workspace";
+  cwd?: string;
+  itemCount: number;
+}
+export interface ExternalConfigConnectorCandidate { name: string; sessionCount: number; source: string; }
+export interface ExternalConfigDetectResult {
+  source: ExternalConfigSource;
+  availability: "available" | "unavailable" | "web-unavailable";
+  detectionId?: string;
+  detectedAt: string;
+  items: ExternalConfigDetectedItem[];
+  connectors: ExternalConfigConnectorCandidate[];
+  unavailableReason?: string;
+}
+export interface ExternalConfigImportParams {
+  source: ExternalConfigSource;
+  detectionId: string;
+  itemIds: string[];
+  confirmed: true;
+}
+export interface ExternalConfigImportSuccess { itemType: ExternalConfigItemType; cwd?: string; target?: string; title?: string; }
+export interface ExternalConfigImportFailure { itemType: ExternalConfigItemType; stage: string; message: string; cwd?: string; }
+export interface ExternalConfigImportResult {
+  importId: string;
+  source: ExternalConfigSource;
+  completedAt: string;
+  successes: ExternalConfigImportSuccess[];
+  failures: ExternalConfigImportFailure[];
+}
+export interface ExternalConfigImportHistoryRecord {
+  importId: string;
+  source?: ExternalConfigSource;
+  completedAt: string;
+  successes: ExternalConfigImportSuccess[];
+  failures: ExternalConfigImportFailure[];
+  providerId?: string;
+}
+export interface ExternalConfigHistoryResult {
+  fetchedAt: string;
+  records: ExternalConfigImportHistoryRecord[];
+  connectors: ExternalConfigConnectorCandidate[];
 }
 
 export const agentBackends = ["claude-code", "codex", "rux-native"] as const;
@@ -645,7 +752,14 @@ export interface RunStartParams {
   contextFiles?: string[];
   imagePaths?: string[];
   conversationHistory?: Array<{ role: "user" | "assistant"; content: string }>;
+  reviewTarget?: CodexReviewTarget;
 }
+
+export type CodexReviewTarget =
+  | { type: "uncommittedChanges" }
+  | { type: "baseBranch"; branch: string }
+  | { type: "commit"; sha: string; title?: string }
+  | { type: "custom"; instructions: string };
 
 export const clipboardImageMimeTypes = ["image/png", "image/jpeg", "image/gif", "image/webp"] as const;
 export type ClipboardImageMimeType = (typeof clipboardImageMimeTypes)[number];
@@ -1970,6 +2084,34 @@ export interface RuntimeRequestMap {
     params: AgentModelListParams;
     result: AgentModelListResult;
   };
+  "plugin.list": {
+    params: Record<string, never>;
+    result: CodexPluginListResult;
+  };
+  "plugin.install": {
+    params: CodexPluginMutationParams;
+    result: CodexPluginListResult;
+  };
+  "plugin.remove": {
+    params: CodexPluginMutationParams;
+    result: CodexPluginListResult;
+  };
+  "pullRequest.list": {
+    params: Record<string, never>;
+    result: PullRequestListResult;
+  };
+  "externalConfig.detect": {
+    params: ExternalConfigDetectParams;
+    result: ExternalConfigDetectResult;
+  };
+  "externalConfig.import": {
+    params: ExternalConfigImportParams;
+    result: ExternalConfigImportResult;
+  };
+  "externalConfig.history": {
+    params: Record<string, never>;
+    result: ExternalConfigHistoryResult;
+  };
   "session.list": {
     params: SessionListParams;
     result: SessionListResult;
@@ -2362,52 +2504,19 @@ export interface RuxDesktopApi {
   saveClipboardImage(params: ClipboardImageSaveParams): Promise<LocalImageAttachment>;
   activateWorkspace(path: string): Promise<WorkspaceState>;
   openWorkspaceLocation(target?: WorkspaceOpenTarget): Promise<WorkspaceOpenResult>;
+  setPreventSleep(enabled: boolean): Promise<PreventSleepResult>;
   loadTaskState(workspaceId?: string): Promise<WorkspaceTaskState>;
   saveTaskState(state: WorkspaceTaskState): Promise<TaskStateSaveResult>;
-  loadBoard(params: BoardLoadParams): Promise<BoardSnapshot>;
-  mutateBoard(params: BoardMutationParams): Promise<BoardSnapshot>;
-  listProjectWorkingCopies(params: ProjectWorkingCopiesParams): Promise<ProjectWorkingCopy[]>;
-  authorizeProjectWorkingCopy(params: ProjectWorkingCopyAuthorizeParams): Promise<WorkspaceState>;
-  createProjectWorkingCopy(params: ProjectWorkingCopyCreateParams): Promise<WorkspaceState>;
-  getImprovementSummary(params?: ImprovementSummaryParams): Promise<ImprovementSummary>;
-  analyzeImprovements(params: ImprovementAnalyzeParams): Promise<ImprovementSummary>;
-  decideImprovement(params: ImprovementDecideParams): Promise<ImprovementSummary>;
-  updateImprovementSettings(params: ImprovementSettingsUpdateParams): Promise<ImprovementSummary>;
-  proposeImprovement(params: ImprovementProposeParams): Promise<ImprovementSummary>;
-  previewImprovementExport(params: ImprovementExportPreviewParams): Promise<ImprovementExportPreview | null>;
-  commitImprovementExport(params: ImprovementExportCommitParams): Promise<ImprovementExportResult>;
-  evaluateImprovement(params: ImprovementEvaluateParams): Promise<ImprovementSummary>;
-  importSession(params: SessionImportParams): Promise<SessionImportResult>;
-  migrateSessionAttribution(params: SessionAttributionMigrateParams): Promise<SessionAttributionMigrateResult>;
-  refreshSession(params: SessionRefreshParams): Promise<SessionRefreshResult>;
-  rebuildSession(params: SessionRebuildParams): Promise<SessionRefreshResult>;
-  listSessionRevisions(params: SessionRevisionListParams): Promise<SessionRevisionListResult>;
-  restoreSessionRevision(params: SessionRevisionRestoreParams): Promise<SessionRefreshResult>;
-  previewHandoff(params: HandoffPreviewParams): Promise<HandoffPreviewResult>;
-  generateHandoffSummary(params: HandoffSummaryGenerateParams): Promise<HandoffSummaryGenerateResult>;
-  commitHandoff(params: HandoffCommitParams): Promise<HandoffCommitResult>;
-  getLocalDataSummary(): Promise<LocalDataSummary>;
-  previewLocalData(params: LocalDataPreviewParams): Promise<LocalDataImpactPreview>;
-  executeLocalData(params: LocalDataExecuteParams): Promise<LocalDataExecuteResult>;
-  exportLocalData(params: LocalDataExportParams): Promise<LocalDataExportResult>;
-  listProviderConnections(): Promise<NativeProviderConnection[]>;
-  previewProviderConnectionImpact(params: NativeProviderConnectionImpactPreviewParams): Promise<NativeProviderConnectionImpactPreview>;
-  saveProviderConnection(input: NativeProviderConnectionInput): Promise<NativeProviderConnection>;
-  deleteProviderConnection(params: NativeProviderConnectionDeleteParams): Promise<{ ok: true }>;
-  testProviderConnection(params: NativeProviderConnectionTestParams): Promise<NativeProviderConnectionTestResult>;
-  getProviderCredentialDiagnostics(): Promise<NativeProviderCredentialDiagnostics>;
-  migrateProviderCredentials(params: NativeProviderCredentialMigrationParams): Promise<NativeProviderCredentialMigrationResult>;
-  getLocalProductEventSummary(): Promise<LocalProductEventSummary>;
-  getUpdateState(): Promise<UpdateState>;
-  checkForUpdates(): Promise<UpdateState>;
-  downloadUpdate(): Promise<UpdateState>;
-  installUpdate(): Promise<{ accepted: boolean }>;
-  confirmUpdateHealthy(): Promise<UpdateState>;
   request<M extends RendererRuntimeMethod>(
     method: M,
     params: RuntimeRequestMap[M]["params"],
   ): Promise<RuntimeRequestMap[M]["result"]>;
   onRuntimeEvent(listener: (event: RuntimeEvent) => void): () => void;
+}
+
+export interface PreventSleepResult {
+  requested: boolean;
+  active: boolean;
 }
 
 export const runtimeRequestSchema = z.object({
@@ -2488,6 +2597,95 @@ export const agentModelListResultSchema = z.object({
   nextCursor: z.string().min(1).max(4_096).nullable().optional(),
 }).strict();
 
+export const codexPluginIdSchema = z.string().trim().min(3).max(240)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*@[A-Za-z0-9][A-Za-z0-9._-]*$/);
+
+export const codexPluginInfoSchema = z.object({
+  pluginId: codexPluginIdSchema,
+  name: z.string().trim().min(1).max(160),
+  marketplaceName: z.string().trim().min(1).max(160),
+  version: z.string().trim().min(1).max(120),
+  installed: z.boolean(),
+  enabled: z.boolean(),
+  installPolicy: z.string().trim().min(1).max(80).optional(),
+  authPolicy: z.string().trim().min(1).max(80).optional(),
+}).strict();
+
+export const codexPluginListResultSchema = z.object({
+  source: z.enum(["codex-cli", "web-unavailable"]),
+  fetchedAt: z.iso.datetime(),
+  installed: z.array(codexPluginInfoSchema).max(1_000),
+  available: z.array(codexPluginInfoSchema).max(2_000),
+  unavailableReason: z.string().trim().min(1).max(500).optional(),
+}).strict();
+
+export const codexPluginMutationParamsSchema = z.object({
+  pluginId: codexPluginIdSchema,
+  confirmed: z.literal(true),
+}).strict();
+
+export const pullRequestInfoSchema = z.object({
+  number: z.number().int().positive().max(2_147_483_647),
+  title: z.string().trim().min(1).max(500),
+  url: z.url().refine((value) => value.startsWith("https://")),
+  state: z.enum(["open", "closed", "merged"]),
+  isDraft: z.boolean(),
+  author: z.string().trim().min(1).max(120).optional(),
+  headRefName: z.string().trim().min(1).max(500),
+  baseRefName: z.string().trim().min(1).max(500),
+  updatedAt: z.iso.datetime(),
+  reviewDecision: z.string().trim().min(1).max(120).optional(),
+}).strict();
+
+export const pullRequestListResultSchema = z.object({
+  source: z.enum(["github-cli", "unavailable", "web-unavailable"]),
+  fetchedAt: z.iso.datetime(),
+  repository: z.string().trim().min(1).max(300).optional(),
+  repositoryUrl: z.url().refine((value) => value.startsWith("https://")).optional(),
+  items: z.array(pullRequestInfoSchema).max(100),
+  unavailableReason: z.string().trim().min(1).max(500).optional(),
+}).strict();
+
+export const externalConfigSourceSchema = z.enum(externalConfigSources);
+export const externalConfigItemTypeSchema = z.enum(externalConfigItemTypes);
+export const externalConfigDetectParamsSchema = z.object({ source: externalConfigSourceSchema }).strict();
+export const externalConfigDetectedItemSchema = z.object({
+  id: z.string().min(12).max(160),
+  itemType: externalConfigItemTypeSchema,
+  description: z.string().trim().min(1).max(1_000),
+  scope: z.enum(["user", "workspace"]),
+  cwd: z.string().trim().min(1).max(4_096).optional(),
+  itemCount: z.number().int().nonnegative().max(10_000),
+}).strict();
+export const externalConfigConnectorCandidateSchema = z.object({ name: z.string().trim().min(1).max(240), sessionCount: z.number().int().nonnegative().max(100_000), source: z.string().trim().min(1).max(120) }).strict();
+export const externalConfigDetectResultSchema = z.object({
+  source: externalConfigSourceSchema,
+  availability: z.enum(["available", "unavailable", "web-unavailable"]),
+  detectionId: z.string().min(12).max(160).optional(),
+  detectedAt: z.iso.datetime(),
+  items: z.array(externalConfigDetectedItemSchema).max(2_000),
+  connectors: z.array(externalConfigConnectorCandidateSchema).max(500),
+  unavailableReason: z.string().trim().min(1).max(1_000).optional(),
+}).strict();
+export const externalConfigImportParamsSchema = z.object({
+  source: externalConfigSourceSchema,
+  detectionId: z.string().min(12).max(160),
+  itemIds: z.array(z.string().min(12).max(160)).min(1).max(2_000),
+  confirmed: z.literal(true),
+}).strict();
+export const externalConfigImportSuccessSchema = z.object({ itemType: externalConfigItemTypeSchema, cwd: z.string().trim().min(1).max(4_096).optional(), target: z.string().trim().min(1).max(4_096).optional(), title: z.string().trim().min(1).max(500).optional() }).strict();
+export const externalConfigImportFailureSchema = z.object({ itemType: externalConfigItemTypeSchema, stage: z.string().trim().min(1).max(160), message: z.string().trim().min(1).max(2_000), cwd: z.string().trim().min(1).max(4_096).optional() }).strict();
+export const externalConfigImportResultSchema = z.object({ importId: z.string().min(1).max(240), source: externalConfigSourceSchema, completedAt: z.iso.datetime(), successes: z.array(externalConfigImportSuccessSchema).max(5_000), failures: z.array(externalConfigImportFailureSchema).max(5_000) }).strict();
+export const externalConfigImportHistoryRecordSchema = z.object({ importId: z.string().min(1).max(240), source: externalConfigSourceSchema.optional(), completedAt: z.iso.datetime(), successes: z.array(externalConfigImportSuccessSchema).max(5_000), failures: z.array(externalConfigImportFailureSchema).max(5_000), providerId: z.string().trim().min(1).max(240).optional() }).strict();
+export const externalConfigHistoryResultSchema = z.object({ fetchedAt: z.iso.datetime(), records: z.array(externalConfigImportHistoryRecordSchema).max(500), connectors: z.array(externalConfigConnectorCandidateSchema).max(500) }).strict();
+
+export const codexReviewTargetSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("uncommittedChanges") }).strict(),
+  z.object({ type: z.literal("baseBranch"), branch: z.string().trim().min(1).max(500) }).strict(),
+  z.object({ type: z.literal("commit"), sha: z.string().trim().min(4).max(128).regex(/^[0-9a-f]+$/i), title: z.string().trim().min(1).max(500).optional() }).strict(),
+  z.object({ type: z.literal("custom"), instructions: z.string().trim().min(1).max(20_000) }).strict(),
+]);
+
 export const runStartParamsSchema = z.object({
   runId: z.string().min(1).max(120),
   adapter: z.enum(runAdapters),
@@ -2508,9 +2706,16 @@ export const runStartParamsSchema = z.object({
     role: z.enum(["user", "assistant"]),
     content: z.string().min(1).max(100_000),
   }).strict()).max(200).optional(),
+  reviewTarget: codexReviewTargetSchema.optional(),
 }).strict().superRefine((params, context) => {
   if (params.imagePaths.length && params.adapter !== "codex") {
     context.addIssue({ code: "custom", path: ["imagePaths"], message: "Image attachments require the Codex adapter" });
+  }
+  if (params.reviewTarget && params.adapter !== "codex") {
+    context.addIssue({ code: "custom", path: ["reviewTarget"], message: "Code review requires the Codex adapter" });
+  }
+  if (params.reviewTarget && params.imagePaths.length) {
+    context.addIssue({ code: "custom", path: ["imagePaths"], message: "Code review does not accept image attachments" });
   }
   if (!params.profileId) {
     const builtInAdapter = builtInAgentRevisionAdapter(params.agentRevisionId);
@@ -3242,6 +3447,10 @@ export const workspaceActivateParamsSchema = z.object({
 
 export const workspaceOpenParamsSchema = z.object({
   target: z.enum(workspaceOpenTargets).default("vscode"),
+}).strict();
+
+export const preventSleepParamsSchema = z.object({
+  enabled: z.boolean(),
 }).strict();
 
 const persistedIsoDateSchema = z.iso.datetime({ offset: true });
