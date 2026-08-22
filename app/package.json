@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "author": "Rux",
+  "packageManager": "pnpm@11.18.0",
   "type": "module",
   "main": "./out/main/main.js",
   "description": "Blank Rux desktop client",
@@ -11,13 +12,13 @@
     "dev:web": "vite",
     "preview": "electron-vite preview",
     "preview:web": "vite preview",
-    "build": "npm run build:web && npm run build:desktop",
+    "build": "pnpm build:web && pnpm build:desktop",
     "build:web": "vite build",
     "build:desktop": "electron-vite build",
-    "package": "npm run build:desktop && electron-builder --dir",
-    "dist": "npm run build:desktop && electron-builder",
+    "package": "pnpm build:desktop && electron-builder --dir",
+    "dist": "pnpm build:desktop && electron-builder",
     "typecheck": "tsc --noEmit",
-    "test": "npm run typecheck && npm run build"
+    "test": "pnpm typecheck && pnpm build"
   },
   "dependencies": {
     "react": "19.2.0",
@@ -26,7 +27,7 @@
   "devDependencies": {
     "@types/node": "^26.2.0",
     "@vitejs/plugin-react": "5.0.4",
-    "electron": "^43.3.0",
+    "electron": "43.3.0",
     "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",
     "typescript": "^7.0.2",

@@ -15,10 +15,10 @@ the user supplies a new design.
 Run development and verification commands from `app/`:
 
 ```bash
-npm install
-npm run dev
-npm test
-npm run package
+pnpm install
+pnpm dev
+pnpm test
+pnpm package
 ```
 
 Preserve unrelated user changes. Do not stage, commit, or push unless explicitly
