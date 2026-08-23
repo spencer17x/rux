@@ -5,10 +5,10 @@ let mainWindow: BrowserWindow | null = null;
 
 async function createWindow(): Promise<void> {
   const window = new BrowserWindow({
-    width: 1200,
-    height: 800,
-    minWidth: 600,
-    minHeight: 400,
+    width: 1440,
+    height: 900,
+    minWidth: 900,
+    minHeight: 600,
     show: false,
     title: "Rux",
     backgroundColor: "#ffffff",
