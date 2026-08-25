@@ -1,6 +1,7 @@
 import {
   app,
   BrowserWindow,
+  clipboard,
   dialog,
   ipcMain,
   safeStorage,
@@ -12,6 +13,7 @@ import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 
 type ReasoningEffort = "none" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
+type SandboxMode = "read-only" | "workspace-write" | "danger-full-access";
 
 type CodexReasoningEffort = {
   reasoningEffort: ReasoningEffort;
@@ -37,6 +39,8 @@ type RuxSettings = {
   hasApiKey: boolean;
   model: string;
   reasoning: ReasoningEffort;
+  sandboxMode: SandboxMode;
+  uiFontSize: number;
   allowConversationOverride: boolean;
 };
 
@@ -105,6 +109,8 @@ function defaultSettings(): RuxSettings {
     hasApiKey: false,
     model: "",
     reasoning: "high",
+    sandboxMode: "workspace-write",
+    uiFontSize: 14,
     allowConversationOverride: true,
   };
 }
@@ -130,6 +136,10 @@ async function saveSettings(input: Partial<RuxSettings> & { apiKey?: string }): 
     reasoning: ["none", "low", "medium", "high", "xhigh", "max", "ultra"].includes(String(input.reasoning))
       ? (input.reasoning as ReasoningEffort)
       : current.reasoning,
+    sandboxMode: ["read-only", "workspace-write", "danger-full-access"].includes(String(input.sandboxMode))
+      ? (input.sandboxMode as SandboxMode)
+      : current.sandboxMode,
+    uiFontSize: Math.min(16, Math.max(12, Number(input.uiFontSize ?? current.uiFontSize) || 14)),
     allowConversationOverride:
       typeof input.allowConversationOverride === "boolean"
         ? input.allowConversationOverride
@@ -156,12 +166,14 @@ function decryptApiKey(settings: RuxSettings): string {
 async function loadWorkspace(): Promise<WorkspaceState> {
   const fallback: WorkspaceState = {
     projects: [],
-    standaloneThreads: [
-      { id: "compare", title: "比较模型响应" },
-      { id: "logs", title: "解释错误日志" },
-    ],
+    standaloneThreads: [],
   };
   const workspace = await readJson(userDataFile("workspace.json"), fallback);
+  const filteredThreads = workspace.standaloneThreads.filter((thread) => !["compare", "logs"].includes(thread.id));
+  if (filteredThreads.length !== workspace.standaloneThreads.length) {
+    workspace.standaloneThreads = filteredThreads;
+    await saveWorkspace(workspace);
+  }
 
   if (workspace.projects.length === 0 && process.env.ELECTRON_RENDERER_URL) {
     const cwd = process.cwd();
@@ -242,7 +254,7 @@ async function runProcess(
   });
 }
 
-async function loadCodexModels(): Promise<{ models: CodexModel[] }> {
+async function codexAppServerRequest<T>(method: string, params: unknown): Promise<T> {
   return await new Promise((resolvePromise, reject) => {
     const child = spawn(findExecutable("codex"), ["app-server", "--stdio"], {
       env: { ...process.env, NO_COLOR: "1" },
@@ -251,13 +263,13 @@ async function loadCodexModels(): Promise<{ models: CodexModel[] }> {
     let stdout = "";
     let settled = false;
 
-    const finish = (error?: Error, models?: CodexModel[]) => {
+    const finish = (error?: Error, result?: T) => {
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
       child.kill("SIGTERM");
       if (error) reject(error);
-      else resolvePromise({ models: models ?? [] });
+      else resolvePromise(result as T);
     };
 
     const send = (message: unknown) => child.stdin.write(`${JSON.stringify(message)}\n`);
@@ -267,15 +279,15 @@ async function loadCodexModels(): Promise<{ models: CodexModel[] }> {
         const message = JSON.parse(line) as {
           id?: number;
           error?: { message?: string };
-          result?: { data?: CodexModel[] };
+          result?: T;
         };
         if (message.id === 1) {
           send({ method: "initialized", params: {} });
-          send({ id: 2, method: "model/list", params: { includeHidden: false, limit: 100 } });
+          send({ id: 2, method, params });
         }
         if (message.id === 2) {
-          if (message.error) finish(new Error(message.error.message || "无法读取 Codex 模型"));
-          else finish(undefined, (message.result?.data ?? []).filter((model) => !model.hidden));
+          if (message.error) finish(new Error(message.error.message || `Codex ${method} 请求失败`));
+          else finish(undefined, message.result);
         }
       } catch {
         // Ignore diagnostics that are not JSON-RPC messages.
@@ -291,9 +303,9 @@ async function loadCodexModels(): Promise<{ models: CodexModel[] }> {
     });
     child.on("error", (error) => finish(error));
     child.on("close", (code) => {
-      if (!settled) finish(new Error(`Codex 模型服务已退出（${code ?? 1}）`));
+      if (!settled) finish(new Error(`Codex 服务已退出（${code ?? 1}）`));
     });
-    const timeout = setTimeout(() => finish(new Error("读取 Codex 模型超时")), 20_000);
+    const timeout = setTimeout(() => finish(new Error(`Codex ${method} 请求超时`)), 20_000);
     send({
       id: 1,
       method: "initialize",
@@ -302,10 +314,33 @@ async function loadCodexModels(): Promise<{ models: CodexModel[] }> {
   });
 }
 
+async function loadCodexModels(): Promise<{ models: CodexModel[] }> {
+  const result = await codexAppServerRequest<{ data?: CodexModel[] }>("model/list", { includeHidden: false, limit: 100 });
+  return { models: (result.data ?? []).filter((model) => !model.hidden) };
+}
+
+type CodexAccount = { type: string; email?: string | null; planType?: string };
+
+async function loadCodexAccount(): Promise<{ connected: boolean; account: CodexAccount | null; message: string }> {
+  try {
+    const result = await codexAppServerRequest<{ account?: CodexAccount | null }>("account/read", { refreshToken: false });
+    const account = result.account ?? null;
+    return { connected: Boolean(account), account, message: account?.email || account?.type || "" };
+  } catch (error) {
+    const status = await runProcess(findExecutable("codex"), ["login", "status"], { timeoutMs: 20_000 });
+    return { connected: status.code === 0, account: null, message: (status.stdout || status.stderr || String(error)).trim() };
+  }
+}
+
 async function runGit(projectPath: string, args: string[]): Promise<string> {
   const result = await runProcess(findExecutable("git"), args, { cwd: projectPath, timeoutMs: 30_000 });
   if (result.code !== 0) throw new Error(result.stderr.trim() || "Git 操作失败");
   return result.stdout;
+}
+
+async function isGitWorkTree(path: string): Promise<boolean> {
+  const result = await runProcess(findExecutable("git"), ["rev-parse", "--is-inside-work-tree"], { cwd: path, timeoutMs: 20_000 });
+  return result.code === 0 && result.stdout.trim() === "true";
 }
 
 function parseCodexOutput(stdout: string): { text: string; threadId?: string } {
@@ -335,23 +370,46 @@ async function sendWithCodex(input: {
   prompt: string;
   model?: string;
   reasoning?: ReasoningEffort;
+  sandboxMode?: SandboxMode;
+  images?: string[];
+  webSearch?: boolean;
   threadId?: string;
 }): Promise<{ text: string; threadId?: string; diagnostics: string }> {
   const project = input.projectId ? await resolveProject(input.projectId) : null;
   const cwd = project?.path ?? join(app.getPath("userData"), "standalone-workspace");
   await mkdir(cwd, { recursive: true });
-  const prompt = input.prompt.trim();
+  let prompt = input.prompt.trim();
   if (!prompt) throw new Error("消息不能为空");
   const codex = findExecutable("codex");
   const settings = await loadSettings();
   const model = (input.model ?? settings.model).trim();
   const reasoning = input.reasoning ?? settings.reasoning;
-  const args = input.threadId
-    ? ["exec", "resume", "--json"]
-    : ["exec", "--json", "-s", "workspace-write", "-C", cwd];
-  if (!project && !input.threadId) args.push("--skip-git-repo-check");
+  const sandboxMode = input.sandboxMode ?? settings.sandboxMode;
+  const fullAccess = sandboxMode === "danger-full-access";
+  const autoApprove = sandboxMode === "workspace-write";
+  const args = input.threadId ? ["exec", "resume", "--json"] : ["exec", "--json", "-C", cwd];
+  if (fullAccess) args.push("--dangerously-bypass-approvals-and-sandbox");
+  else if (!input.threadId && autoApprove) args.push("--approve-for-me");
+  else if (!input.threadId) args.push("-s", "workspace-write");
+  if (!await isGitWorkTree(cwd)) args.push("--skip-git-repo-check");
+  if (input.threadId && !fullAccess) {
+    args.push("-c", 'sandbox_mode="workspace-write"');
+    args.push("-c", `approval_policy=\"${autoApprove ? "never" : "on-request"}\"`);
+  }
+  if (input.webSearch) {
+    if (input.threadId) args.push("-c", 'web_search="live"');
+    else args.push("--search");
+  }
   if (model && model !== "default") args.push("-m", model);
   args.push("-c", `model_reasoning_effort=\"${reasoning}\"`);
+  const contextFiles: string[] = [];
+  for (const image of (input.images ?? []).slice(0, 8)) {
+    const imagePath = resolve(String(image));
+    if (!await pathExists(imagePath)) continue;
+    if (/\.(png|jpe?g|gif|webp)$/i.test(imagePath)) args.push("-i", imagePath);
+    else contextFiles.push(imagePath);
+  }
+  if (contextFiles.length) prompt += `\n\n用户选择的上下文文件：\n${contextFiles.map((path) => `- ${path}`).join("\n")}`;
   if (input.threadId) args.push(input.threadId);
   args.push(prompt);
   const result = await runProcess(codex, args, { cwd, timeoutMs: 10 * 60_000 });
@@ -408,13 +466,23 @@ async function gitStatus(projectId: string): Promise<{ branch: string; files: Gi
       const match = line.match(/^(\d+|-)\s+(\d+|-)\s+(.+)$/);
       if (match) counts.set(match[3], { plus: Number(match[1]) || 0, minus: Number(match[2]) || 0 });
     }
-    const files = porcelain.split(/\r?\n/).filter(Boolean).map((line) => {
+    const files = await Promise.all(porcelain.split(/\r?\n/).filter(Boolean).map(async (line) => {
       const statusCode = line.slice(0, 2);
       const rawPath = line.slice(3).trim();
       const filePath = rawPath.includes(" -> ") ? rawPath.split(" -> ").pop()! : rawPath;
-      const count = counts.get(filePath) ?? { plus: 0, minus: 0 };
+      let count = counts.get(filePath) ?? { plus: 0, minus: 0 };
+      if (statusCode === "??") {
+        try {
+          const content = await readFile(resolve(project.path, filePath));
+          if (content.length <= 512_000 && !content.subarray(0, 8_000).includes(0)) {
+            count = { plus: content.toString("utf8").split(/\r?\n/).filter(Boolean).length, minus: 0 };
+          }
+        } catch {
+          // Keep zero counts for directories and unreadable files.
+        }
+      }
       return { path: filePath, status: statusCode, untracked: statusCode === "??", ...count };
-    });
+    }));
     return { branch, files };
   } catch (error) {
     if (String(error).includes("not a git repository")) return { branch: "—", files: [] };
@@ -432,7 +500,9 @@ async function gitDiff(projectId: string, filePath: string): Promise<string> {
   if (file.untracked) {
     const info = await stat(absolute);
     if (!info.isFile() || info.size > 512_000) return "无法预览此未跟踪文件";
-    return (await readFile(absolute, "utf8")).split("\n").map((line) => `+ ${line}`).join("\n");
+    const content = await readFile(absolute);
+    if (content.subarray(0, 8_000).includes(0)) return `二进制文件 · ${Math.ceil(info.size / 1024)} KB`;
+    return content.toString("utf8").split("\n").map((line) => `+ ${line}`).join("\n");
   }
   const staged = await runGit(project.path, ["diff", "--cached", "--", filePath]);
   const unstaged = await runGit(project.path, ["diff", "--", filePath]);
@@ -468,8 +538,7 @@ export function registerBackend(getWindow: () => BrowserWindow | null): void {
   });
 
   ipcMain.handle("auth:status", async () => {
-    const result = await runProcess(findExecutable("codex"), ["login", "status"], { timeoutMs: 20_000 });
-    return { connected: result.code === 0, message: (result.stdout || result.stderr).trim() };
+    return await loadCodexAccount();
   });
   ipcMain.handle("auth:login", async () => {
     const child = spawn(findExecutable("codex"), ["login", "--device-auth"], { detached: true, stdio: "ignore" });
@@ -497,20 +566,20 @@ export function registerBackend(getWindow: () => BrowserWindow | null): void {
       : await dialog.showOpenDialog(options);
     return result.canceled ? null : result.filePaths[0];
   });
-  ipcMain.handle("projects:import", async (_event, input: { path: string }) => {
+  ipcMain.handle("projects:import", async (_event, input: { path: string; createThread?: boolean }) => {
     const path = resolve(String(input?.path ?? ""));
     const info = await stat(path);
     if (!info.isDirectory()) throw new Error("请选择项目文件夹");
     const workspace = await loadWorkspace();
     let project = workspace.projects.find((item) => item.path === path);
     if (!project) {
-      project = { id: randomUUID(), name: basename(path), path, threads: [{ id: randomUUID(), title: "项目会话" }] };
+      project = { id: randomUUID(), name: basename(path), path, threads: input?.createThread === false ? [] : [{ id: randomUUID(), title: "项目会话" }] };
       workspace.projects.push(project);
       await saveWorkspace(workspace);
     }
     return project;
   });
-  ipcMain.handle("projects:clone", async (_event, input: { url: string; parent: string }) => {
+  ipcMain.handle("projects:clone", async (_event, input: { url: string; parent: string; createThread?: boolean }) => {
     const url = String(input?.url ?? "").trim();
     if (!/^(https?:\/\/|git@)/.test(url)) throw new Error("Git 地址无效");
     const parent = resolve(String(input?.parent ?? ""));
@@ -520,12 +589,12 @@ export function registerBackend(getWindow: () => BrowserWindow | null): void {
     const folder = basename(url.replace(/\.git$/, ""));
     const path = join(parent, folder);
     const workspace = await loadWorkspace();
-    const project = { id: randomUUID(), name: folder, path, threads: [{ id: randomUUID(), title: "项目会话" }] };
+    const project = { id: randomUUID(), name: folder, path, threads: input.createThread === false ? [] : [{ id: randomUUID(), title: "项目会话" }] };
     workspace.projects.push(project);
     await saveWorkspace(workspace);
     return project;
   });
-  ipcMain.handle("projects:create", async (_event, input: { name: string; parent: string; template: string; initGit: boolean }) => {
+  ipcMain.handle("projects:create", async (_event, input: { name: string; parent: string; template: string; initGit: boolean; createThread?: boolean }) => {
     const name = validateProjectName(String(input?.name ?? ""));
     const parent = resolve(String(input?.parent ?? ""));
     if (!isAbsolute(parent)) throw new Error("保存位置无效");
@@ -536,7 +605,7 @@ export function registerBackend(getWindow: () => BrowserWindow | null): void {
     await ensureProjectTemplate(path, String(input?.template ?? "empty"), name);
     if (input?.initGit) await runGit(path, ["init"]);
     const workspace = await loadWorkspace();
-    const project = { id: randomUUID(), name, path, threads: [{ id: randomUUID(), title: "项目会话" }] };
+    const project = { id: randomUUID(), name, path, threads: input.createThread === false ? [] : [{ id: randomUUID(), title: "项目会话" }] };
     workspace.projects.push(project);
     await saveWorkspace(workspace);
     return project;
@@ -586,6 +655,18 @@ export function registerBackend(getWindow: () => BrowserWindow | null): void {
     await saveWorkspace(workspace);
     return thread;
   });
+  ipcMain.handle("threads:remove", async (_event, input: { type: "project" | "standalone"; projectId?: string; threadId: string }) => {
+    const workspace = await loadWorkspace();
+    const threads = input.type === "project"
+      ? workspace.projects.find((project) => project.id === input.projectId)?.threads
+      : workspace.standaloneThreads;
+    if (!threads) throw new Error("会话不存在");
+    const index = threads.findIndex((thread) => thread.id === input.threadId);
+    if (index < 0) throw new Error("会话不存在");
+    const [thread] = threads.splice(index, 1);
+    await saveWorkspace(workspace);
+    return { thread, workspace };
+  });
 
   ipcMain.handle("agent:send", async (_event, input) => {
     const settings = await loadSettings();
@@ -595,6 +676,41 @@ export function registerBackend(getWindow: () => BrowserWindow | null): void {
 
   ipcMain.handle("git:status", async (_event, projectId: string) => await gitStatus(projectId));
   ipcMain.handle("git:diff", async (_event, input: { projectId: string; path: string }) => await gitDiff(input.projectId, input.path));
+  ipcMain.handle("git:branches", async (_event, projectId: string) => {
+    const project = await resolveProject(projectId);
+    try {
+      const output = await runGit(project.path, ["branch", "--format=%(refname:short)"]);
+      return output.split(/\r?\n/).filter(Boolean);
+    } catch { return []; }
+  });
+  ipcMain.handle("git:switch", async (_event, input: { projectId: string; branch: string }) => {
+    const project = await resolveProject(input.projectId);
+    const branches = (await runGit(project.path, ["branch", "--format=%(refname:short)"])).split(/\r?\n/).filter(Boolean);
+    if (!branches.includes(input.branch)) throw new Error("分支不存在");
+    await runGit(project.path, ["switch", input.branch]);
+    return await gitStatus(input.projectId);
+  });
+  ipcMain.handle("git:remote", async (_event, projectId: string) => {
+    const project = await resolveProject(projectId);
+    try { return (await runGit(project.path, ["remote", "get-url", "origin"])).trim(); } catch { return ""; }
+  });
+  ipcMain.handle("git:commit-push", async (_event, input: { projectId: string; message: string; push: boolean }) => {
+    const project = await resolveProject(input.projectId);
+    const message = String(input.message ?? "").trim();
+    if (message) {
+      const staged = await runProcess(findExecutable("git"), ["diff", "--cached", "--quiet"], { cwd: project.path, timeoutMs: 30_000 });
+      if (staged.code === 0) throw new Error("没有已暂存的变更，请先在审查页暂存文件");
+      await runGit(project.path, ["commit", "-m", message]);
+    }
+    if (input.push) {
+      const remote = (await runGit(project.path, ["remote", "get-url", "origin"])).trim();
+      if (!remote) throw new Error("当前项目没有 origin 远程仓库");
+      const branch = (await runGit(project.path, ["branch", "--show-current"])).trim();
+      if (!branch) throw new Error("当前不在可推送的本地分支上");
+      await runGit(project.path, ["push", "-u", "origin", branch]);
+    }
+    return await gitStatus(input.projectId);
+  });
   ipcMain.handle("git:stage", async (_event, input: { projectId: string; paths: string[] }) => {
     const project = await resolveProject(input.projectId);
     const allowed = (await gitStatus(input.projectId)).files.map((item) => item.path);
@@ -649,6 +765,35 @@ export function registerBackend(getWindow: () => BrowserWindow | null): void {
     const error = await shell.openPath(project.path);
     if (error) throw new Error(error);
     return { opened: true };
+  });
+  ipcMain.handle("system:choose-files", async () => {
+    const window = getWindow();
+    const options = { properties: ["openFile", "multiSelections"] as Array<"openFile" | "multiSelections"> };
+    const result = window ? await dialog.showOpenDialog(window, options) : await dialog.showOpenDialog(options);
+    return result.canceled ? [] : result.filePaths;
+  });
+  ipcMain.handle("system:copy", async (_event, value: string) => {
+    clipboard.writeText(String(value ?? ""));
+    return { copied: true };
+  });
+  ipcMain.handle("system:open-external", async (_event, url: string) => {
+    const value = String(url ?? "").trim();
+    if (!/^https?:\/\//.test(value)) throw new Error("仅支持 HTTP(S) 地址");
+    await shell.openExternal(value);
+    return { opened: true };
+  });
+  ipcMain.handle("system:info", async () => {
+    const codex = await runProcess(findExecutable("codex"), ["--version"], { timeoutMs: 20_000 });
+    return {
+      appVersion: app.getVersion(),
+      electronVersion: process.versions.electron,
+      chromeVersion: process.versions.chrome,
+      nodeVersion: process.versions.node,
+      platform: process.platform,
+      arch: process.arch,
+      codexVersion: (codex.stdout || codex.stderr).trim(),
+      codexPath: findExecutable("codex"),
+    };
   });
 }
 
