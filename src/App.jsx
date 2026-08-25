@@ -9,6 +9,7 @@ import {
   CaretLeft,
   CaretRight,
   ChatCircle,
+  Check,
   CheckCircle,
   CircleNotch,
   Code,
@@ -36,6 +37,7 @@ import {
   SidebarSimple,
   SlidersHorizontal,
   TerminalWindow,
+  Trash,
   WarningCircle,
   X,
 } from "@phosphor-icons/react";
@@ -60,7 +62,7 @@ const fallbackSettings = {
   allowConversationOverride: true,
 };
 
-const reasoningLabels = { low: "低", medium: "中", high: "高", xhigh: "极高" };
+const reasoningLabels = { none: "无", low: "低", medium: "中", high: "高", xhigh: "极高", max: "最大", ultra: "Ultra" };
 
 function loadMessages() {
   try {
@@ -93,6 +95,7 @@ function Sidebar({
   onSelectProjectThread,
   onSelectStandalone,
   onAddProject,
+  onRemoveProject,
   onNewProjectThread,
   onNewStandalone,
   onOpenSettings,
@@ -136,10 +139,13 @@ function Sidebar({
               const expanded = expandedProjects.includes(project.id);
               return (
                 <div className="project-node" key={project.id}>
-                  <button type="button" className="project-row" onClick={() => onToggleProject(project.id)}>
-                    {expanded ? <CaretDown size={14} /> : <CaretRight size={14} />}
-                    <Folder size={18} /><span>{project.name}</span>
-                  </button>
+                  <div className="project-row-wrap">
+                    <button type="button" className="project-row" onClick={() => onToggleProject(project.id)}>
+                      {expanded ? <CaretDown size={14} /> : <CaretRight size={14} />}
+                      <Folder size={18} /><span>{project.name}</span>
+                    </button>
+                    <IconButton label={`移除项目 ${project.name}`} className="remove-project-button" onClick={() => onRemoveProject(project)}><Trash size={15} /></IconButton>
+                  </div>
                   {expanded && (
                     <div className="thread-children">
                       {project.threads.map((thread) => (
@@ -231,22 +237,52 @@ function ToolLauncher() {
   );
 }
 
-function ModelPopover({ settings, auth }) {
+function selectedCodexModel(settings, models) {
+  return models.find((model) => model.model === settings.model)
+    || models.find((model) => model.isDefault)
+    || models[0];
+}
+
+function modelDisplayName(settings, models) {
+  return selectedCodexModel(settings, models)?.displayName || settings.model || "默认模型";
+}
+
+function ModelPopover({ mode, settings, auth, models, loading, error, onSelectModel, onSelectReasoning }) {
+  const selectedModel = selectedCodexModel(settings, models);
+  const efforts = selectedModel?.supportedReasoningEfforts
+    || Object.keys(reasoningLabels).map((reasoningEffort) => ({ reasoningEffort, description: "" }));
   return (
-    <div className="model-popover">
-      <div className="popover-heading"><strong>会话设置</strong><span className={auth.connected ? "status-dot" : "status-dot offline"} /></div>
-      <div className="popover-row"><span>连接</span><strong>{settings.provider === "codex" ? "GPT OAuth" : settings.serviceName}</strong><span className={auth.connected ? "connected" : "error-text"}>{auth.connected ? "已连接" : "未登录"}</span></div>
-      <div className="popover-row"><span>模型</span><strong>{settings.model || "默认模型"}</strong><CaretRight size={14} /></div>
-      <div className="popover-row"><span>思考程度</span><strong>{reasoningLabels[settings.reasoning]}</strong><CaretRight size={14} /></div>
-      <div className="popover-footer">在“模型与连接”中管理服务</div>
+    <div className={`model-popover ${mode === "models" ? "model-picker-popover" : "reasoning-picker-popover"}`} role="dialog" aria-label={mode === "models" ? "选择模型" : "选择思考程度"}>
+      <div className="popover-heading"><strong>{mode === "models" ? "选择模型" : "思考程度"}</strong><span className={auth.connected ? "status-dot" : "status-dot offline"} /></div>
+      {loading && <div className="picker-state"><CircleNotch size={16} className="spin" />正在读取 Codex 配置…</div>}
+      {error && <div className="picker-state error-text">{error}</div>}
+      {!loading && mode === "models" && models.map((model) => {
+        const selected = selectedModel?.model === model.model;
+        return (
+          <button type="button" className={`picker-option ${selected ? "is-selected" : ""}`} key={model.id} onClick={() => onSelectModel(model)}>
+            <span><strong>{model.displayName}</strong><small>{model.description}</small></span>
+            {model.isDefault && <em>默认</em>}{selected && <Check size={17} weight="bold" />}
+          </button>
+        );
+      })}
+      {!loading && mode === "reasoning" && efforts.map((effort) => {
+        const selected = settings.reasoning === effort.reasoningEffort;
+        return (
+          <button type="button" className={`picker-option ${selected ? "is-selected" : ""}`} key={effort.reasoningEffort} onClick={() => onSelectReasoning(effort.reasoningEffort)}>
+            <span><strong>{reasoningLabels[effort.reasoningEffort] || effort.reasoningEffort}</strong><small>{effort.description}</small></span>
+            {selected && <Check size={17} weight="bold" />}
+          </button>
+        );
+      })}
+      <div className="popover-footer">{settings.provider === "codex" ? `${modelDisplayName(settings, models)} · GPT OAuth` : settings.serviceName}</div>
     </div>
   );
 }
 
-function Composer({ standalone, settings, auth, modelOpen, onToggleModel, onAssociateProject, value, onChange, onSend, sending }) {
+function Composer({ standalone, settings, auth, models, modelsLoading, modelsError, modelOpen, onToggleModel, onSelectModel, onSelectReasoning, onAssociateProject, value, onChange, onSend, sending }) {
   return (
     <form className="composer-wrap" onSubmit={(event) => { event.preventDefault(); onSend(); }}>
-      {modelOpen && <ModelPopover settings={settings} auth={auth} />}
+      {modelOpen && <ModelPopover mode={modelOpen} settings={settings} auth={auth} models={models} loading={modelsLoading} error={modelsError} onSelectModel={onSelectModel} onSelectReasoning={onSelectReasoning} />}
       <div className="composer">
         <textarea aria-label="消息" placeholder="向 Rux 发送消息" rows={2} value={value} onChange={(event) => onChange(event.target.value)} disabled={sending} />
         <div className="composer-controls">
@@ -259,8 +295,8 @@ function Composer({ standalone, settings, auth, modelOpen, onToggleModel, onAsso
             )}
           </div>
           <div className="composer-right">
-            <button type="button" className="composer-menu" onClick={onToggleModel}>{settings.model || "默认模型"}<CaretDown size={13} /></button>
-            <button type="button" className="composer-menu">{reasoningLabels[settings.reasoning]}<CaretDown size={13} /></button>
+            <button type="button" className={`composer-menu ${modelOpen === "models" ? "is-active" : ""}`} aria-expanded={modelOpen === "models"} onClick={() => onToggleModel("models")}>{modelDisplayName(settings, models)}<CaretDown size={13} /></button>
+            <button type="button" className={`composer-menu ${modelOpen === "reasoning" ? "is-active" : ""}`} aria-expanded={modelOpen === "reasoning"} onClick={() => onToggleModel("reasoning")}>{reasoningLabels[settings.reasoning] || settings.reasoning}<CaretDown size={13} /></button>
             <IconButton label="语音输入"><Microphone size={19} /></IconButton>
             <button type="submit" className="send-button" aria-label="发送" disabled={sending || !value.trim()}>{sending ? <CircleNotch size={20} className="spin" /> : <ArrowUp size={20} weight="bold" />}</button>
           </div>
@@ -372,13 +408,17 @@ function ModalHeader({ title, subtitle, onBack, onClose }) {
   return <div className="modal-header"><div className="modal-title-row">{onBack && <IconButton label="返回" onClick={onBack}><ArrowLeft size={20} /></IconButton>}<h2>{title}</h2><IconButton label="关闭" className="modal-close" onClick={onClose}><X size={20} /></IconButton></div><p>{subtitle}</p></div>;
 }
 
-function SettingsScreen({ settings, auth, onBack, onSave, onTest, onLogin, onLogout, onNotify }) {
+function SettingsScreen({ settings, auth, models, onBack, onSave, onTest, onLogin, onLogout, onNotify }) {
   const [draft, setDraft] = useState(settings);
   const [apiKey, setApiKey] = useState("");
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
   useEffect(() => setDraft(settings), [settings]);
   const update = (patch) => setDraft((current) => ({ ...current, ...patch }));
+  const draftModel = selectedCodexModel(draft, models);
+  const availableEfforts = draft.provider === "codex" && draftModel
+    ? draftModel.supportedReasoningEfforts.map((effort) => effort.reasoningEffort)
+    : Object.keys(reasoningLabels).filter((effort) => effort !== "ultra");
   async function execute(action) { setBusy(true); setStatus(""); try { const message = await action(); if (message) setStatus(message); } catch (error) { setStatus(String(error.message || error)); } finally { setBusy(false); } }
   return (
     <div className="settings-shell">
@@ -387,7 +427,24 @@ function SettingsScreen({ settings, auth, onBack, onSave, onTest, onLogin, onLog
         <section className="settings-section"><h2>GPT OAuth</h2><div className="settings-group oauth-group"><div className="settings-row provider-row"><div className="provider-mark"><CircleNotch size={24} /></div><strong>Codex CLI</strong><span className={auth.connected ? "connected-badge" : "disconnected-badge"}>{auth.connected ? "已连接" : "未登录"}</span><span className="provider-email">{auth.message || "本机 ChatGPT 登录"}</span><button type="button" className="secondary-button" onClick={() => execute(async () => { await onLogin(); return "已启动设备登录"; })}>重新登录</button></div><button type="button" className="danger-link disconnect-link" onClick={() => { if (window.confirm("确认退出本机 Codex 登录？")) execute(onLogout); }}>断开连接</button></div></section>
         <section className="settings-section"><h2>连接方式</h2><div className="settings-group"><div className="settings-row provider-choice"><button type="button" className={draft.provider === "codex" ? "is-selected" : ""} onClick={() => update({ provider: "codex" })}>GPT OAuth</button><button type="button" className={draft.provider === "custom" ? "is-selected" : ""} onClick={() => update({ provider: "custom" })}>自定义服务</button></div></div></section>
         <section className="settings-section"><h2>自定义服务</h2><div className="settings-group form-settings"><label className="settings-row"><span>服务名称</span><input value={draft.serviceName} onChange={(event) => update({ serviceName: event.target.value })} /></label><label className="settings-row"><span>Base URL</span><input value={draft.baseUrl} onChange={(event) => update({ baseUrl: event.target.value })} /></label><label className="settings-row"><span>API key</span><span className="secret-input"><input type="password" value={apiKey} placeholder={draft.hasApiKey ? "已安全保存" : "输入 API key"} onChange={(event) => setApiKey(event.target.value)} /><Eye size={18} /></span></label><div className="settings-row settings-actions"><button type="button" className="secondary-button" disabled={busy} onClick={() => execute(async () => (await onTest({ ...draft, apiKey })).message)}>测试连接</button><span className={status.includes("失败") || status.includes("错误") ? "error-text" : "connected"}>{status}</span><button type="button" className="primary-button" disabled={busy} onClick={() => execute(async () => { await onSave({ ...draft, apiKey }); setApiKey(""); onNotify("设置已持久化"); return "已保存"; })}>保存服务</button></div></div></section>
-        <section className="settings-section"><h2>默认模型</h2><div className="settings-group form-settings"><label className="settings-row"><span>模型</span><input value={draft.model} placeholder="留空使用 Codex 默认模型" onChange={(event) => update({ model: event.target.value })} /><button type="button" className="secondary-button"><ArrowsClockwise size={16} />使用默认</button></label><div className="settings-row"><span>思考程度</span><div className="reasoning-control">{Object.entries(reasoningLabels).map(([value, label]) => <button type="button" key={value} className={draft.reasoning === value ? "is-selected" : ""} onClick={() => update({ reasoning: value })}>{label}</button>)}</div></div><label className="settings-row toggle-setting"><span>允许会话覆盖默认设置</span><input type="checkbox" checked={draft.allowConversationOverride} onChange={(event) => update({ allowConversationOverride: event.target.checked })} /><span className="toggle-control" /></label></div><p className="settings-help">API key 由 Electron 主进程使用系统安全存储加密，Renderer 不会读取明文。</p></section>
+        <section className="settings-section">
+          <h2>默认模型</h2>
+          <div className="settings-group form-settings">
+            <label className="settings-row">
+              <span>模型</span>
+              {draft.provider === "codex" ? (
+                <select value={draftModel?.model || ""} onChange={(event) => { const model = models.find((item) => item.model === event.target.value); if (model) update({ model: model.model, reasoning: model.supportedReasoningEfforts.some((effort) => effort.reasoningEffort === draft.reasoning) ? draft.reasoning : model.defaultReasoningEffort }); }}>
+                  {models.map((model) => <option key={model.id} value={model.model}>{model.displayName}{model.isDefault ? "（Codex 默认）" : ""}</option>)}
+                </select>
+              ) : <input value={draft.model} placeholder="输入服务支持的模型 ID" onChange={(event) => update({ model: event.target.value })} />}
+              <button type="button" className="secondary-button" onClick={() => { const model = models.find((item) => item.isDefault); update({ model: "", reasoning: model?.defaultReasoningEffort || "medium" }); }}><ArrowsClockwise size={16} />使用默认</button>
+            </label>
+            <div className="settings-row"><span>思考程度</span><div className="reasoning-control">{availableEfforts.map((value) => <button type="button" key={value} className={draft.reasoning === value ? "is-selected" : ""} onClick={() => update({ reasoning: value })}>{reasoningLabels[value] || value}</button>)}</div></div>
+            <label className="settings-row toggle-setting"><span>允许会话覆盖默认设置</span><input type="checkbox" checked={draft.allowConversationOverride} onChange={(event) => update({ allowConversationOverride: event.target.checked })} /><span className="toggle-control" /></label>
+            <div className="settings-row settings-actions"><span className={status.includes("失败") || status.includes("错误") ? "error-text" : "connected"}>{status}</span><button type="button" className="primary-button" disabled={busy} onClick={() => execute(async () => { await onSave(draft); onNotify("默认模型设置已保存"); return "已保存"; })}>保存默认设置</button></div>
+          </div>
+          <p className="settings-help">Codex 模型与推理级别来自本机 Codex App Server；API key 由 Electron 主进程使用系统安全存储加密。</p>
+        </section>
       </main>
     </div>
   );
@@ -397,6 +454,9 @@ function App() {
   const [workspace, setWorkspace] = useState(fallbackWorkspace);
   const [settings, setSettings] = useState(fallbackSettings);
   const [auth, setAuth] = useState({ connected: false, message: "" });
+  const [models, setModels] = useState([]);
+  const [modelsLoading, setModelsLoading] = useState(true);
+  const [modelsError, setModelsError] = useState("");
   const [defaultParent, setDefaultParent] = useState("");
   const [expandedProjects, setExpandedProjects] = useState([]);
   const [activeThread, setActiveThread] = useState(null);
@@ -406,7 +466,7 @@ function App() {
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [terminalOutput, setTerminalOutput] = useState("");
   const [terminalCommand, setTerminalCommand] = useState("");
-  const [modelOpen, setModelOpen] = useState(false);
+  const [modelOpen, setModelOpen] = useState(null);
   const [messages, setMessages] = useState(loadMessages);
   const [composerValue, setComposerValue] = useState("");
   const [sending, setSending] = useState(false);
@@ -438,6 +498,13 @@ function App() {
         setActiveThread({ type: "project", projectId: firstProject.id, projectName: firstProject.name, projectPath: firstProject.path, ...firstThread });
       } else if (nextWorkspace.standaloneThreads[0]) setActiveThread({ type: "standalone", ...nextWorkspace.standaloneThreads[0] });
     }).catch((error) => setFatalError(String(error.message || error)));
+    api.models.list().then(({ models: nextModels }) => {
+      if (!cancelled) { setModels(nextModels); setModelsError(""); }
+    }).catch((error) => {
+      if (!cancelled) setModelsError(String(error.message || error));
+    }).finally(() => {
+      if (!cancelled) setModelsLoading(false);
+    });
     const off = api.terminal.onData((data) => setTerminalOutput((current) => `${current}${data}`));
     return () => { cancelled = true; off(); };
   }, []);
@@ -470,11 +537,28 @@ function App() {
 
   async function selectDiff(path, projectId = activeProject?.id) { if (!projectId) return; setSelectedFile(path); setDiff("加载中…"); try { setDiff(await api.git.diff({ projectId, path })); } catch (error) { setDiff(String(error.message || error)); } }
 
-  function selectProjectThread(project, thread) { setActiveThread({ type: "project", projectId: project.id, projectName: project.name, projectPath: project.path, ...thread }); setView("project"); closeTerminal(); setModelOpen(false); }
-  function selectStandalone(thread) { setActiveThread({ type: "standalone", ...thread }); setView("standalone"); closeTerminal(); setModelOpen(false); }
+  function selectProjectThread(project, thread) { setActiveThread({ type: "project", projectId: project.id, projectName: project.name, projectPath: project.path, ...thread }); setView("project"); closeTerminal(); setModelOpen(null); }
+  function selectStandalone(thread) { setActiveThread({ type: "standalone", ...thread }); setView("standalone"); closeTerminal(); setModelOpen(null); }
 
   async function newProjectThread(project) { try { const thread = await api.projects.addThread({ projectId: project.id, title: "未命名会话" }); await reloadWorkspace(); selectProjectThread(project, thread); } catch (error) { notify(String(error.message || error)); } }
   async function newStandalone() { try { const thread = await api.projects.addStandalone({ title: "未命名会话" }); await reloadWorkspace(); selectStandalone(thread); } catch (error) { notify(String(error.message || error)); } }
+
+  async function removeProject(project) {
+    if (!window.confirm(`从 Rux 中移除“${project.name}”？\n\n仅解除侧栏关联，不会删除磁盘中的项目文件。`)) return;
+    try {
+      const { workspace: nextWorkspace } = await api.projects.remove(project.id);
+      setWorkspace(nextWorkspace);
+      setExpandedProjects((current) => current.filter((id) => id !== project.id));
+      if (activeThread?.type === "project" && activeThread.projectId === project.id) {
+        await closeTerminal();
+        const nextProject = nextWorkspace.projects[0];
+        const nextThread = nextProject?.threads[0];
+        if (nextProject && nextThread) selectProjectThread(nextProject, nextThread);
+        else if (nextWorkspace.standaloneThreads[0]) selectStandalone(nextWorkspace.standaloneThreads[0]);
+      }
+      notify(`已移除 ${project.name}，本地文件未删除`);
+    } catch (error) { notify(String(error.message || error)); }
+  }
 
   async function completeProjectAction(action) {
     let project;
@@ -518,14 +602,32 @@ function App() {
   async function saveSettings(input) { const saved = await api.settings.save(input); setSettings(saved); return saved; }
   async function testSettings(input) { return await api.settings.test(input); }
 
+  async function selectModel(model) {
+    try {
+      const supported = model.supportedReasoningEfforts.map((effort) => effort.reasoningEffort);
+      const reasoning = supported.includes(settings.reasoning) ? settings.reasoning : model.defaultReasoningEffort;
+      await saveSettings({ model: model.model, reasoning });
+      setModelOpen(null);
+      notify(`已切换到 ${model.displayName}`);
+    } catch (error) { notify(String(error.message || error)); }
+  }
+
+  async function selectReasoning(reasoning) {
+    try {
+      await saveSettings({ reasoning });
+      setModelOpen(null);
+      notify(`思考程度已切换为${reasoningLabels[reasoning] || reasoning}`);
+    } catch (error) { notify(String(error.message || error)); }
+  }
+
   if (fatalError) return <div className="fatal-screen"><WarningCircle size={32} /><h1>Rux 无法启动</h1><p>{fatalError}</p></div>;
   if (!activeThread) return <div className="fatal-screen"><CircleNotch size={30} className="spin" /><p>正在加载工作区…</p></div>;
-  if (view === "settings") return <div className="app-frame"><SettingsScreen settings={settings} auth={auth} onBack={() => setView(isStandalone ? "standalone" : "project")} onSave={saveSettings} onTest={testSettings} onLogin={async () => { await api.auth.login(); setTimeout(async () => setAuth(await api.auth.status()), 1500); }} onLogout={async () => { await api.auth.logout(); setAuth(await api.auth.status()); return "已退出"; }} onNotify={notify} />{toast && <div className="toast"><CheckCircle size={18} />{toast}</div>}</div>;
+  if (view === "settings") return <div className="app-frame"><SettingsScreen settings={settings} auth={auth} models={models} onBack={() => setView(isStandalone ? "standalone" : "project")} onSave={saveSettings} onTest={testSettings} onLogin={async () => { await api.auth.login(); setTimeout(async () => setAuth(await api.auth.status()), 1500); }} onLogout={async () => { await api.auth.logout(); setAuth(await api.auth.status()); return "已退出"; }} onNotify={notify} />{toast && <div className="toast"><CheckCircle size={18} />{toast}</div>}</div>;
 
-  const composerProps = { settings, auth, modelOpen, onToggleModel: () => setModelOpen((open) => !open), onAssociateProject: () => { const project = workspace.projects[0]; const thread = project?.threads[0]; if (project && thread) selectProjectThread(project, thread); }, value: composerValue, onChange: setComposerValue, onSend: sendMessage, sending };
+  const composerProps = { settings, auth, models, modelsLoading, modelsError, modelOpen, onToggleModel: (menu) => setModelOpen((open) => open === menu ? null : menu), onSelectModel: selectModel, onSelectReasoning: selectReasoning, onAssociateProject: () => { const project = workspace.projects[0]; const thread = project?.threads[0]; if (project && thread) selectProjectThread(project, thread); }, value: composerValue, onChange: setComposerValue, onSend: sendMessage, sending };
   return (
     <div className="app-frame">
-      <Sidebar workspace={workspace} expandedProjects={expandedProjects} activeThread={activeThread} onToggleProject={(projectId) => setExpandedProjects((current) => current.includes(projectId) ? current.filter((id) => id !== projectId) : [...current, projectId])} onSelectProjectThread={selectProjectThread} onSelectStandalone={selectStandalone} onAddProject={() => setModalStep("choose")} onNewProjectThread={newProjectThread} onNewStandalone={newStandalone} onOpenSettings={() => setView("settings")} />
+      <Sidebar workspace={workspace} expandedProjects={expandedProjects} activeThread={activeThread} onToggleProject={(projectId) => setExpandedProjects((current) => current.includes(projectId) ? current.filter((id) => id !== projectId) : [...current, projectId])} onSelectProjectThread={selectProjectThread} onSelectStandalone={selectStandalone} onAddProject={() => setModalStep("choose")} onRemoveProject={removeProject} onNewProjectThread={newProjectThread} onNewStandalone={newStandalone} onOpenSettings={() => setView("settings")} />
       <main className="app-stage">
         <TopBar activeThread={activeThread} rightPanelOpen={rightPanelOpen} onToggleRightPanel={() => setRightPanelOpen((open) => !open)} onOpenSettings={() => setView("settings")} onOpenPath={() => activeProject && api.system.openPath(activeProject.id).catch((error) => notify(String(error.message || error)))} />
         <div className={`stage-body ${terminalOpen ? "terminal-is-open" : ""}`}><div className="work-pane"><div className="main-content">{view === "review" ? <ReviewScreen gitState={gitState} selectedFile={selectedFile} diff={diff} onSelectFile={selectDiff} onBack={() => setView("project")} onStageAll={() => stage(gitState.files.map((file) => file.path))} onStageFile={() => stage([selectedFile])} onDiscard={discardSelected} busy={busy} /> : <ConversationScreen standalone={isStandalone} activeThread={activeThread} messages={activeMessages} sending={sending} composerProps={composerProps} gitState={gitState} onReview={openReview} terminalOpen={terminalOpen} onToggleTerminal={toggleTerminal} />}</div>{showEnvironment && <EnvironmentPanel gitState={gitState} onReview={openReview} />}{showToolLauncher && <ToolLauncher />}{isStandalone && rightPanelOpen && <UtilityPanel />}</div>{terminalOpen && view === "project" && <TerminalPanel output={terminalOutput} command={terminalCommand} onCommandChange={setTerminalCommand} onRun={runTerminalCommand} onClose={closeTerminal} projectName={activeProject?.name || "终端"} />}</div>

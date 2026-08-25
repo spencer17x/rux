@@ -11,6 +11,9 @@ const api = {
     login: () => ipcRenderer.invoke("auth:login"),
     logout: () => ipcRenderer.invoke("auth:logout"),
   },
+  models: {
+    list: () => ipcRenderer.invoke("models:list"),
+  },
   projects: {
     list: () => ipcRenderer.invoke("projects:list"),
     defaultParent: () => ipcRenderer.invoke("projects:default-parent"),
@@ -18,6 +21,7 @@ const api = {
     import: (input: unknown) => ipcRenderer.invoke("projects:import", input),
     clone: (input: unknown) => ipcRenderer.invoke("projects:clone", input),
     create: (input: unknown) => ipcRenderer.invoke("projects:create", input),
+    remove: (projectId: string) => ipcRenderer.invoke("projects:remove", projectId),
     addThread: (input: unknown) => ipcRenderer.invoke("projects:add-thread", input),
     addStandalone: (input: unknown) => ipcRenderer.invoke("projects:add-standalone", input),
     updateThread: (input: unknown) => ipcRenderer.invoke("projects:update-thread", input),

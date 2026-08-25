@@ -11,7 +11,23 @@ import { access, mkdir, readFile, rename, stat, writeFile } from "node:fs/promis
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 
-type ReasoningEffort = "low" | "medium" | "high" | "xhigh";
+type ReasoningEffort = "none" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
+
+type CodexReasoningEffort = {
+  reasoningEffort: ReasoningEffort;
+  description: string;
+};
+
+type CodexModel = {
+  id: string;
+  model: string;
+  displayName: string;
+  description: string;
+  hidden: boolean;
+  isDefault: boolean;
+  defaultReasoningEffort: ReasoningEffort;
+  supportedReasoningEfforts: CodexReasoningEffort[];
+};
 
 type RuxSettings = {
   provider: "codex" | "custom";
@@ -111,7 +127,7 @@ async function saveSettings(input: Partial<RuxSettings> & { apiKey?: string }): 
     serviceName: String(input.serviceName ?? current.serviceName).slice(0, 80),
     baseUrl: String(input.baseUrl ?? current.baseUrl).trim(),
     model: String(input.model ?? current.model).trim().slice(0, 120),
-    reasoning: ["low", "medium", "high", "xhigh"].includes(String(input.reasoning))
+    reasoning: ["none", "low", "medium", "high", "xhigh", "max", "ultra"].includes(String(input.reasoning))
       ? (input.reasoning as ReasoningEffort)
       : current.reasoning,
     allowConversationOverride:
@@ -223,6 +239,66 @@ async function runProcess(
     });
     if (options.input) child.stdin.write(options.input);
     child.stdin.end();
+  });
+}
+
+async function loadCodexModels(): Promise<{ models: CodexModel[] }> {
+  return await new Promise((resolvePromise, reject) => {
+    const child = spawn(findExecutable("codex"), ["app-server", "--stdio"], {
+      env: { ...process.env, NO_COLOR: "1" },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let settled = false;
+
+    const finish = (error?: Error, models?: CodexModel[]) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      child.kill("SIGTERM");
+      if (error) reject(error);
+      else resolvePromise({ models: models ?? [] });
+    };
+
+    const send = (message: unknown) => child.stdin.write(`${JSON.stringify(message)}\n`);
+    const handleLine = (line: string) => {
+      if (!line.trim().startsWith("{")) return;
+      try {
+        const message = JSON.parse(line) as {
+          id?: number;
+          error?: { message?: string };
+          result?: { data?: CodexModel[] };
+        };
+        if (message.id === 1) {
+          send({ method: "initialized", params: {} });
+          send({ id: 2, method: "model/list", params: { includeHidden: false, limit: 100 } });
+        }
+        if (message.id === 2) {
+          if (message.error) finish(new Error(message.error.message || "无法读取 Codex 模型"));
+          else finish(undefined, (message.result?.data ?? []).filter((model) => !model.hidden));
+        }
+      } catch {
+        // Ignore diagnostics that are not JSON-RPC messages.
+      }
+    };
+
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      stdout += chunk;
+      const lines = stdout.split(/\r?\n/);
+      stdout = lines.pop() ?? "";
+      for (const line of lines) handleLine(line);
+    });
+    child.on("error", (error) => finish(error));
+    child.on("close", (code) => {
+      if (!settled) finish(new Error(`Codex 模型服务已退出（${code ?? 1}）`));
+    });
+    const timeout = setTimeout(() => finish(new Error("读取 Codex 模型超时")), 20_000);
+    send({
+      id: 1,
+      method: "initialize",
+      params: { clientInfo: { name: "rux", title: "Rux", version: app.getVersion() }, capabilities: {} },
+    });
   });
 }
 
@@ -405,6 +481,7 @@ export function registerBackend(getWindow: () => BrowserWindow | null): void {
     if (result.code !== 0) throw new Error(result.stderr.trim() || "退出登录失败");
     return { connected: false };
   });
+  ipcMain.handle("models:list", async () => await loadCodexModels());
 
   ipcMain.handle("projects:list", async () => await loadWorkspace());
   ipcMain.handle("projects:default-parent", async () => {
@@ -463,6 +540,14 @@ export function registerBackend(getWindow: () => BrowserWindow | null): void {
     workspace.projects.push(project);
     await saveWorkspace(workspace);
     return project;
+  });
+  ipcMain.handle("projects:remove", async (_event, projectId: string) => {
+    const workspace = await loadWorkspace();
+    const index = workspace.projects.findIndex((project) => project.id === projectId);
+    if (index < 0) throw new Error("项目不存在");
+    const [project] = workspace.projects.splice(index, 1);
+    await saveWorkspace(workspace);
+    return { project, workspace };
   });
   ipcMain.handle("projects:add-thread", async (_event, input: { projectId: string; title?: string }) => {
     const workspace = await loadWorkspace();

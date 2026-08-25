@@ -5,6 +5,18 @@ Target: `/Users/17a/projects/rux/release/mac-arm64/Rux.app`
 Build verification: `pnpm test` passed  
 Verdict: **PASS — all first-round P1 blockers are closed for the tested local macOS flow**
 
+## Post-round-2 corrective UAT — 2026-08-25
+
+Three interaction gaps reported after the original pass were fixed and re-tested against a newly packaged client:
+
+| Scenario | Result | Evidence |
+| --- | --- | --- |
+| Remove a project from the sidebar | PASS | Packaged client exposes an accessible remove action and a confirmation stating that only the Rux association is removed. A test project was removed from `workspace.json`; its directory remained on disk. |
+| Switch models using the same catalog as local Codex | PASS | The packaged client loaded `model/list` from the installed Codex App Server and exposed the returned models, descriptions, default marker, and current selection. Switching from GPT-5.6-Sol to GPT-5.6-Terra persisted to `settings.json`. |
+| Switch reasoning effort, including `xhigh` | PASS | The picker was populated from the selected model's `supportedReasoningEfforts`. The test changed `high` to `xhigh` and confirmed the persisted value and updated composer label. GPT-5.6-Terra also exposed its currently advertised `max` and `ultra` levels. |
+
+The corrective package is `/Users/17a/projects/rux/release/mac-arm64/Rux.app`. `pnpm test` and `pnpm package` both passed.
+
 ## Step results
 
 | Step | Scenario | Health | Evidence |
@@ -64,7 +76,7 @@ Verdict: **PASS — all first-round P1 blockers are closed for the tested local 
 
 ## Residual non-blocking findings
 
-- [P2] macOS package is unsigned and uses the default Electron icon; Gatekeeper/distribution signing was not available in this environment.
+- [P2] macOS package is unsigned; Gatekeeper/distribution signing was not available in this environment.
 - [P3] Untracked-file line counts display `+0 −0` even though file-level status and diff content are correct.
 - [P3] The app opens the first project after restart instead of restoring the last active project.
 - [Evidence gap] Custom OpenAI-compatible endpoint was implemented but not live-tested without a user-supplied API key.
