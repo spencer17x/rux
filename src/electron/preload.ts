@@ -43,6 +43,10 @@ const api = {
     stage: (input: unknown) => ipcRenderer.invoke("git:stage", input),
     discard: (input: unknown) => ipcRenderer.invoke("git:discard", input),
   },
+  files: {
+    list: (projectId: string) => ipcRenderer.invoke("files:list", projectId),
+    open: (input: unknown) => ipcRenderer.invoke("files:open", input),
+  },
   terminal: {
     start: (projectId: string) => ipcRenderer.invoke("terminal:start", projectId),
     write: (input: string) => ipcRenderer.invoke("terminal:write", input),

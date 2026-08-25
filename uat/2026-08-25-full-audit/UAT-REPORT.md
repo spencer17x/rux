@@ -130,3 +130,20 @@ The application now uses a 14px UI baseline, tighter sidebar and toolbar rows, s
 ![Compact UI](final-13-compact-ui.png)
 
 ![Appearance font-size setting](final-14-appearance-font-size.png)
+
+## Codex-style workspace panels regression
+
+The terminal-specific footer was removed. The top toolbar now has independent bottom-Dock and right-sidebar controls. Both surfaces share the same tool model: review, terminal, browser, files, and side chat.
+
+- Right and bottom panels toggle independently.
+- Review reads real Git status and opens the complete review screen.
+- Terminal runs in the project directory.
+- Browser reads the project origin and exposes a guarded open action.
+- Files recursively lists the registered project and opens files on double-click.
+- Side chat uses a separate real Codex thread; UAT returned `SIDE_CHAT_OK` without modifying files.
+
+![Dual panel shell](final-16-dual-panel-shell.png)
+
+![Bottom workspace Dock](final-17-bottom-workspace-dock.png)
+
+![Workspace side chat](final-18-workspace-side-chat.png)

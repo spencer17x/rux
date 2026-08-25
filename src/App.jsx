@@ -13,6 +13,7 @@ import {
   CheckCircle,
   CircleNotch,
   Code,
+  Columns,
   DotsThree,
   DownloadSimple,
   Eye,
@@ -34,6 +35,7 @@ import {
   Paperclip,
   Palette,
   Plus,
+  Rows,
   ShareNetwork,
   ShieldCheck,
   SidebarSimple,
@@ -70,6 +72,13 @@ const permissionOptions = [
   { value: "danger-full-access", shortLabel: "完全访问", title: "完全访问权限", description: "可不受限制地访问互联网和你电脑上的任何文件", Icon: WarningCircle },
 ];
 const sandboxLabels = Object.fromEntries(permissionOptions.map((option) => [option.value, option.shortLabel]));
+const workspaceTools = [
+  { id: "review", label: "审查", Icon: FileText, shortcut: "⌃⇧G", projectOnly: true },
+  { id: "terminal", label: "终端", Icon: TerminalWindow, shortcut: "⌃`", projectOnly: true },
+  { id: "browser", label: "浏览器", Icon: Globe, shortcut: "⌘T", projectOnly: true },
+  { id: "files", label: "文件", Icon: FolderOpen, shortcut: "⌘P", projectOnly: true },
+  { id: "chat", label: "侧边聊天", Icon: ChatCircle, shortcut: "⌥⌘S", projectOnly: false },
+];
 
 function loadMessages() {
   try {
@@ -104,6 +113,8 @@ function Sidebar({
   onSelectStandalone,
   onAddProject,
   onRemoveProject,
+  onOpenProjectPath,
+  onCopyProjectPath,
   onNewProjectThread,
   onNewStandalone,
   onOpenSettings,
@@ -112,6 +123,7 @@ function Sidebar({
   const [searchQuery, setSearchQuery] = useState("");
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [projectMenuId, setProjectMenuId] = useState(null);
   const query = searchQuery.trim().toLocaleLowerCase();
   const standaloneThreads = workspace.standaloneThreads.filter((thread) => !query || thread.title.toLocaleLowerCase().includes(query));
   const projects = workspace.projects.map((project) => ({ ...project, threads: project.threads.filter((thread) => !query || thread.title.toLocaleLowerCase().includes(query)) })).filter((project) => !query || project.name.toLocaleLowerCase().includes(query) || project.threads.length);
@@ -160,12 +172,13 @@ function Sidebar({
               return (
                 <div className="project-node" key={project.id}>
                   <div className="project-row-wrap">
-                    <button type="button" className="project-row" onClick={() => onToggleProject(project.id)}>
+                    <button type="button" className="project-row" onClick={() => { onToggleProject(project.id); setProjectMenuId(null); }} onDoubleClick={() => onOpenProjectPath(project)} onContextMenu={(event) => { event.preventDefault(); setProjectMenuId(project.id); }}>
                       {expanded ? <CaretDown size={14} /> : <CaretRight size={14} />}
                       <Folder size={18} /><span>{project.name}</span>
                     </button>
-                    <IconButton label={`移除项目 ${project.name}`} className="remove-project-button" onClick={() => onRemoveProject(project)}><Trash size={15} /></IconButton>
+                    <IconButton label={`项目操作 ${project.name}`} className="project-action-button" active={projectMenuId === project.id} onClick={(event) => { event.stopPropagation(); setProjectMenuId((current) => current === project.id ? null : project.id); }}><DotsThree size={17} /></IconButton>
                   </div>
+                  {projectMenuId === project.id && <div className="project-action-popover" role="menu"><div className="project-location"><FolderOpen size={16} /><span><strong>{project.name}</strong><small title={project.path}>{project.path}</small></span></div><button type="button" onClick={() => { setProjectMenuId(null); onOpenProjectPath(project); }}><FolderOpen size={16} />在 Finder 中打开</button><button type="button" onClick={() => { setProjectMenuId(null); onCopyProjectPath(project); }}><Paperclip size={16} />复制项目路径</button><button type="button" onClick={() => { setProjectMenuId(null); onNewProjectThread(project); }}><Plus size={16} />新建项目会话</button><button type="button" className="danger-text" onClick={() => { setProjectMenuId(null); onRemoveProject(project); }}><Trash size={16} />从 Rux 移除</button></div>}
                   {expanded && (
                     <div className="thread-children">
                       {project.threads.map((thread) => (
@@ -197,7 +210,7 @@ function Sidebar({
   );
 }
 
-function TopBar({ activeThread, rightPanelOpen, onToggleRightPanel, onOpenSettings, onOpenPath, onCopyPath, onShare, onRename, onRemoveThread }) {
+function TopBar({ activeThread, bottomPanelOpen, rightPanelOpen, onToggleBottomPanel, onToggleRightPanel, onOpenSettings, onOpenPath, onCopyPath, onShare, onRename, onRemoveThread }) {
   const isProject = activeThread?.type === "project";
   const [moreOpen, setMoreOpen] = useState(false);
   const [pathOpen, setPathOpen] = useState(false);
@@ -214,7 +227,8 @@ function TopBar({ activeThread, rightPanelOpen, onToggleRightPanel, onOpenSettin
       <div className="topbar-actions">
         <IconButton label="复制会话内容" onClick={onShare}><ShareNetwork size={18} /></IconButton>
         {isProject && <span className="toolbar-menu-wrap"><button type="button" className="toolbar-button" aria-expanded={pathOpen} onClick={() => { setPathOpen((open) => !open); setMoreOpen(false); }}>打开位置<CaretDown size={14} /></button>{pathOpen && <span className="toolbar-popover path-popover"><button type="button" onClick={() => { setPathOpen(false); onOpenPath(); }}>在 Finder 中打开</button><button type="button" onClick={() => { setPathOpen(false); onCopyPath(); }}>复制项目路径</button></span>}</span>}
-        <IconButton label="切换侧边面板" active={rightPanelOpen} onClick={onToggleRightPanel}><SidebarSimple size={19} /></IconButton>
+        <IconButton label="切换底部面板" active={bottomPanelOpen} onClick={onToggleBottomPanel}><Rows size={19} /></IconButton>
+        <IconButton label="切换右侧面板" active={rightPanelOpen} onClick={onToggleRightPanel}><Columns size={19} /></IconButton>
         <IconButton label="设置" onClick={onOpenSettings}><GearSix size={18} /></IconButton>
       </div>
     </header>
@@ -248,14 +262,10 @@ function UtilityPanel({ webSearch, onToggleWebSearch, onAddFiles }) {
   );
 }
 
-function ToolLauncher({ onReview, onOpenPath, onOpenRemote, onNewStandalone }) {
+function ToolLauncher({ activeTool, hasProject, onSelectTool }) {
   return (
     <aside className="tool-launcher" aria-label="工作区工具">
-      <button type="button" onClick={onReview}><FileText size={19} /><span>审查</span><kbd>⌃⇧G</kbd></button>
-      <button type="button" className="is-active"><TerminalWindow size={19} /><span>终端</span><kbd>⌃`</kbd></button>
-      <button type="button" onClick={onOpenRemote}><Globe size={19} /><span>浏览器</span><kbd>⌘T</kbd></button>
-      <button type="button" onClick={onOpenPath}><FolderOpen size={19} /><span>文件</span><kbd>⌘P</kbd></button>
-      <button type="button" onClick={onNewStandalone}><ChatCircle size={19} /><span>侧边聊天</span><kbd>⌥⌘S</kbd></button>
+      {workspaceTools.map(({ id, label, Icon, shortcut, projectOnly }) => <button type="button" key={id} className={activeTool === id ? "is-active" : ""} disabled={projectOnly && !hasProject} onClick={() => onSelectTool(id)}><Icon size={18} /><span>{label}</span><kbd>{shortcut}</kbd></button>)}
     </aside>
   );
 }
@@ -362,7 +372,7 @@ function Conversation({ messages, sending, emptyTitle }) {
   );
 }
 
-function ConversationScreen({ standalone, activeThread, messages, sending, composerProps, gitState, onReview, terminalOpen, onToggleTerminal }) {
+function ConversationScreen({ standalone, activeThread, messages, sending, composerProps, gitState, onReview }) {
   return (
     <div className={`conversation-screen ${standalone ? "standalone-screen" : ""}`}>
       <Conversation messages={messages} sending={sending} emptyTitle={standalone ? "开始独立会话" : `在 ${activeThread.projectName} 中开始任务`} />
@@ -370,19 +380,33 @@ function ConversationScreen({ standalone, activeThread, messages, sending, compo
         <div className="live-change-summary"><FileText size={18} /><strong>{gitState.files.length} 个真实文件变更</strong><button type="button" className="secondary-button" onClick={onReview}><Eye size={17} />审查变更</button></div>
       )}
       <Composer standalone={standalone} {...composerProps} />
-      {!standalone && <button type="button" className={`terminal-toggle ${terminalOpen ? "is-open" : ""}`} onClick={onToggleTerminal}><span><TerminalWindow size={18} />终端</span>{terminalOpen ? <CaretDown size={15} /> : <CaretRight size={15} />}</button>}
     </div>
   );
 }
 
-function TerminalPanel({ output, command, onCommandChange, onRun, onClose, projectName }) {
+function TerminalPanel({ output, command, onCommandChange, onRun, onClose, projectName, embedded = false }) {
   return (
     <section className="terminal-panel">
-      <div className="terminal-tabs"><div className="terminal-tab"><TerminalWindow size={17} /><span>{projectName}</span></div><IconButton label="关闭终端" className="terminal-close" onClick={onClose}><X size={18} /></IconButton></div>
+      {!embedded && <div className="terminal-tabs"><div className="terminal-tab"><TerminalWindow size={17} /><span>{projectName}</span></div><IconButton label="关闭终端" className="terminal-close" onClick={onClose}><X size={18} /></IconButton></div>}
       <pre className="terminal-body" aria-label="终端输出">{output || "终端已启动\n"}</pre>
       <form className="terminal-command" onSubmit={(event) => { event.preventDefault(); onRun(); }}>
         <span>$</span><input aria-label="终端命令" value={command} onChange={(event) => onCommandChange(event.target.value)} autoComplete="off" /><button type="submit" className="secondary-button">运行</button>
       </form>
+    </section>
+  );
+}
+
+function WorkspaceDock({ activeTool, hasProject, gitState, terminalProps, remoteUrl, projectFiles, sideMessages, sideValue, sideSending, onSelectTool, onClose, onOpenReview, onOpenRemote, onOpenFile, onSideValue, onSendSide }) {
+  return (
+    <section className="workspace-dock" aria-label="底部工作区面板">
+      <header className="workspace-dock-header"><div className="workspace-dock-tabs">{workspaceTools.map(({ id, label, Icon, projectOnly }) => <button type="button" key={id} className={activeTool === id ? "is-active" : ""} disabled={projectOnly && !hasProject} onClick={() => onSelectTool(id)}><Icon size={15} />{label}</button>)}</div><IconButton label="关闭底部面板" onClick={onClose}><X size={16} /></IconButton></header>
+      <div className="workspace-dock-content">
+        {activeTool === "review" && <div className="dock-review"><div><strong>{gitState.files.length} 个文件变更</strong><span>{gitState.branch || "—"}</span></div><div className="dock-file-chips">{gitState.files.slice(0, 8).map((file) => <span key={file.path}>{file.path}<small><b>+{file.plus}</b> <em>−{file.minus}</em></small></span>)}</div><button type="button" className="secondary-button" onClick={onOpenReview}><Eye size={15} />打开完整审查</button></div>}
+        {activeTool === "terminal" && <TerminalPanel {...terminalProps} />}
+        {activeTool === "browser" && <div className="dock-empty-tool"><Globe size={24} /><strong>{remoteUrl ? "项目远程仓库" : "未配置远程仓库"}</strong><span>{remoteUrl || "为当前项目添加 origin 后，可从这里打开。"}</span><button type="button" className="secondary-button" disabled={!remoteUrl} onClick={onOpenRemote}>在浏览器中打开</button></div>}
+        {activeTool === "files" && <div className="dock-files">{projectFiles.length ? projectFiles.map((path) => <button type="button" key={path} onDoubleClick={() => onOpenFile(path)}><File size={14} /><span>{path}</span><ArrowSquareOut size={13} /></button>) : <div className="dock-empty-tool"><FolderOpen size={24} /><strong>项目中没有可显示的文件</strong></div>}</div>}
+        {activeTool === "chat" && <div className="dock-side-chat"><div className="dock-chat-messages">{sideMessages.length ? sideMessages.map((message) => <p key={message.id} className={message.role === "user" ? "is-user" : "is-agent"}>{message.text}</p>) : <span>针对当前工作区快速提问，不影响主会话。</span>}</div><form onSubmit={(event) => { event.preventDefault(); onSendSide(); }}><input aria-label="侧边聊天消息" value={sideValue} onChange={(event) => onSideValue(event.target.value)} placeholder="向 Rux 提问" disabled={sideSending} /><button type="submit" aria-label="发送侧边聊天消息" disabled={sideSending || !sideValue.trim()}>{sideSending ? <CircleNotch size={15} className="spin" /> : <ArrowUp size={15} />}</button></form></div>}
+      </div>
     </section>
   );
 }
@@ -497,7 +521,9 @@ function App() {
   const [activeThread, setActiveThread] = useState(null);
   const [view, setView] = useState("project");
   const [modalStep, setModalStep] = useState(null);
+  const [bottomPanelOpen, setBottomPanelOpen] = useState(false);
   const [rightPanelOpen, setRightPanelOpen] = useState(true);
+  const [activeTool, setActiveTool] = useState("terminal");
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [terminalOutput, setTerminalOutput] = useState("");
   const [terminalCommand, setTerminalCommand] = useState("");
@@ -508,6 +534,12 @@ function App() {
   const [listening, setListening] = useState(false);
   const [branches, setBranches] = useState([]);
   const [branchOpen, setBranchOpen] = useState(false);
+  const [projectFiles, setProjectFiles] = useState([]);
+  const [remoteUrl, setRemoteUrl] = useState("");
+  const [sideMessages, setSideMessages] = useState([]);
+  const [sideValue, setSideValue] = useState("");
+  const [sideSending, setSideSending] = useState(false);
+  const [sideThreadId, setSideThreadId] = useState("");
   const [messages, setMessages] = useState(loadMessages);
   const [composerValue, setComposerValue] = useState("");
   const [sending, setSending] = useState(false);
@@ -521,8 +553,6 @@ function App() {
   const activeMessages = activeThread ? messages[activeThread.id] || [] : [];
   const isStandalone = activeThread?.type === "standalone";
   const activeProject = activeThread?.type === "project" ? workspace.projects.find((project) => project.id === activeThread.projectId) : null;
-  const showEnvironment = Boolean(activeProject && rightPanelOpen && !terminalOpen);
-  const showToolLauncher = Boolean(activeProject && rightPanelOpen && terminalOpen && view === "project");
 
   useEffect(() => { localStorage.setItem("rux.messages.v1", JSON.stringify(messages)); }, [messages]);
   useEffect(() => { document.documentElement.style.setProperty("--ui-font-size", `${settings.uiFontSize || 14}px`); }, [settings.uiFontSize]);
@@ -561,14 +591,17 @@ function App() {
     if (activeProject) {
       refreshGit(activeProject.id);
       api.git.branches(activeProject.id).then(setBranches).catch(() => setBranches([]));
-    } else { setGitState({ branch: "—", files: [] }); setBranches([]); }
+      api.files.list(activeProject.id).then(setProjectFiles).catch(() => setProjectFiles([]));
+      api.git.remote(activeProject.id).then(setRemoteUrl).catch(() => setRemoteUrl(""));
+    } else { setGitState({ branch: "—", files: [] }); setBranches([]); setProjectFiles([]); setRemoteUrl(""); }
+    setSideMessages([]); setSideThreadId(""); setSideValue("");
   }, [activeProject?.id]);
 
   useEffect(() => {
     const handleKeyDown = (event) => {
       if (event.metaKey && event.key === ",") { event.preventDefault(); setView("settings"); }
       if (event.metaKey && event.key.toLowerCase() === "n") { event.preventDefault(); newStandalone(); }
-      if (event.ctrlKey && event.key === "`") { event.preventDefault(); toggleTerminal(); }
+      if (event.ctrlKey && event.key === "`") { event.preventDefault(); selectWorkspaceTool("terminal"); }
       if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "g") { event.preventDefault(); openReview(); }
       if (event.key === "Escape") { setModelOpen(null); setSandboxOpen(false); setBranchOpen(false); }
     };
@@ -599,8 +632,8 @@ function App() {
 
   async function selectDiff(path, projectId = activeProject?.id) { if (!projectId) return; setSelectedFile(path); setDiff("加载中…"); try { setDiff(await api.git.diff({ projectId, path })); } catch (error) { setDiff(String(error.message || error)); } }
 
-  function selectProjectThread(project, thread) { setActiveThread({ type: "project", projectId: project.id, projectName: project.name, projectPath: project.path, ...thread }); setView("project"); closeTerminal(); setModelOpen(null); }
-  function selectStandalone(thread) { setActiveThread({ type: "standalone", ...thread }); setView("standalone"); closeTerminal(); setModelOpen(null); }
+  function selectProjectThread(project, thread) { setActiveThread({ type: "project", projectId: project.id, projectName: project.name, projectPath: project.path, ...thread }); setView("project"); setBottomPanelOpen(false); closeTerminal(); setModelOpen(null); }
+  function selectStandalone(thread) { setActiveThread({ type: "standalone", ...thread }); setView("standalone"); setBottomPanelOpen(false); closeTerminal(); setModelOpen(null); }
 
   async function newProjectThread(project) { try { const thread = await api.projects.addThread({ projectId: project.id, title: "未命名会话" }); await reloadWorkspace(); selectProjectThread(project, thread); } catch (error) { notify(String(error.message || error)); } }
   async function newStandalone() { try { const thread = await api.projects.addStandalone({ title: "未命名会话" }); await reloadWorkspace(); selectStandalone(thread); } catch (error) { notify(String(error.message || error)); } }
@@ -728,13 +761,40 @@ function App() {
     } finally { setSending(false); }
   }
 
-  async function toggleTerminal() {
-    if (!activeProject) return;
-    if (terminalOpen) await closeTerminal();
-    else { setTerminalOutput("正在启动终端…\n"); setTerminalOpen(true); try { await api.terminal.start(activeProject.id); } catch (error) { setTerminalOutput(`${error.message || error}\n`); } }
+  async function startTerminal() {
+    if (!activeProject || terminalOpen) return;
+    setTerminalOutput("正在启动终端…\n"); setTerminalOpen(true);
+    try { await api.terminal.start(activeProject.id); } catch (error) { setTerminalOutput(`${error.message || error}\n`); }
   }
   async function closeTerminal() { if (terminalOpen && api) await api.terminal.stop().catch(() => {}); setTerminalOpen(false); }
+  async function closeBottomPanel() { await closeTerminal(); setBottomPanelOpen(false); }
+  async function toggleBottomPanel() {
+    if (bottomPanelOpen) { await closeBottomPanel(); return; }
+    setBottomPanelOpen(true);
+    if (activeTool === "terminal") await startTerminal();
+  }
+  async function selectWorkspaceTool(tool) {
+    const definition = workspaceTools.find((item) => item.id === tool);
+    if (definition?.projectOnly && !activeProject) { notify("请先选择一个项目会话"); return; }
+    setActiveTool(tool); setBottomPanelOpen(true);
+    if (tool === "terminal") await startTerminal();
+    if (tool === "review" && activeProject) await refreshGit(activeProject.id);
+    if (tool === "files" && activeProject) api.files.list(activeProject.id).then(setProjectFiles).catch((error) => notify(String(error.message || error)));
+    if (tool === "browser" && activeProject) api.git.remote(activeProject.id).then(setRemoteUrl).catch(() => setRemoteUrl(""));
+  }
   async function runTerminalCommand() { const command = terminalCommand.trim(); if (!command) return; setTerminalOutput((current) => `${current}$ ${command}\n`); setTerminalCommand(""); try { await api.terminal.write(command); window.setTimeout(() => refreshGit(), 500); } catch (error) { setTerminalOutput((current) => `${current}${error.message || error}\n`); } }
+
+  async function sendSideChat() {
+    const prompt = sideValue.trim(); if (!prompt || sideSending) return;
+    const userMessage = { id: crypto.randomUUID(), role: "user", text: prompt };
+    setSideMessages((current) => [...current, userMessage]); setSideValue(""); setSideSending(true);
+    try {
+      const result = await api.agent.send({ projectId: activeProject?.id, prompt, model: settings.model, reasoning: settings.reasoning, sandboxMode: settings.sandboxMode, threadId: sideThreadId || undefined });
+      setSideMessages((current) => [...current, { id: crypto.randomUUID(), role: "assistant", text: result.text }]);
+      if (result.threadId) setSideThreadId(result.threadId);
+    } catch (error) { setSideMessages((current) => [...current, { id: crypto.randomUUID(), role: "assistant", text: String(error.message || error) }]); }
+    finally { setSideSending(false); }
+  }
 
   async function stage(paths) { if (!activeProject || !paths.length) return; setBusy(true); try { const status = await api.git.stage({ projectId: activeProject.id, paths }); setGitState(status); notify("已真实暂存所选文件"); if (!status.files.length) setView("project"); } catch (error) { notify(String(error.message || error)); } finally { setBusy(false); } }
   async function discardSelected() { if (!activeProject || !selectedFile || !window.confirm(`确认放弃 ${selectedFile} 的未暂存修改？此操作不可撤销。`)) return; setBusy(true); try { const status = await api.git.discard({ projectId: activeProject.id, path: selectedFile }); setGitState(status); notify("文件修改已恢复"); if (status.files.length) await selectDiff(status.files[0].path); else setView("project"); } catch (error) { notify(String(error.message || error)); } finally { setBusy(false); } }
@@ -779,10 +839,16 @@ function App() {
   const composerProps = { settings, auth, models, modelsLoading, modelsError, modelOpen, sandboxOpen, attachments, listening, onToggleModel: (menu) => { setModelOpen((open) => open === menu ? null : menu); setSandboxOpen(false); }, onSelectModel: selectModel, onSelectReasoning: selectReasoning, onToggleSandbox: () => { setSandboxOpen((open) => !open); setModelOpen(null); }, onSelectSandbox: selectSandbox, onPermissionInfo: () => notify("可在设置 > 权限中修改默认批准方式"), onAddFiles: addFiles, onRemoveAttachment: (path) => setAttachments((current) => current.filter((item) => item !== path)), onVoice: toggleVoice, onAssociateProject: () => { const project = workspace.projects[0]; const thread = project?.threads[0]; if (project && thread) selectProjectThread(project, thread); else if (project) newProjectThread(project); }, value: composerValue, onChange: setComposerValue, onSend: sendMessage, sending };
   return (
     <div className="app-frame">
-      <Sidebar workspace={workspace} auth={auth} expandedProjects={expandedProjects} activeThread={activeThread} onToggleProject={(projectId) => setExpandedProjects((current) => current.includes(projectId) ? current.filter((id) => id !== projectId) : [...current, projectId])} onSelectProjectThread={selectProjectThread} onSelectStandalone={selectStandalone} onAddProject={() => setModalStep("choose")} onRemoveProject={removeProject} onNewProjectThread={newProjectThread} onNewStandalone={newStandalone} onOpenSettings={() => setView("settings")} />
+      <Sidebar workspace={workspace} auth={auth} expandedProjects={expandedProjects} activeThread={activeThread} onToggleProject={(projectId) => setExpandedProjects((current) => current.includes(projectId) ? current.filter((id) => id !== projectId) : [...current, projectId])} onSelectProjectThread={selectProjectThread} onSelectStandalone={selectStandalone} onAddProject={() => setModalStep("choose")} onRemoveProject={removeProject} onOpenProjectPath={(project) => api.system.openPath(project.id).catch((error) => notify(String(error.message || error)))} onCopyProjectPath={(project) => api.system.copy(project.path).then(() => notify("项目路径已复制"))} onNewProjectThread={newProjectThread} onNewStandalone={newStandalone} onOpenSettings={() => setView("settings")} />
       <main className="app-stage">
-        <TopBar activeThread={activeThread} rightPanelOpen={rightPanelOpen} onToggleRightPanel={() => setRightPanelOpen((open) => !open)} onOpenSettings={() => setView("settings")} onOpenPath={() => activeProject && api.system.openPath(activeProject.id).catch((error) => notify(String(error.message || error)))} onCopyPath={() => activeProject && api.system.copy(activeProject.path).then(() => notify("项目路径已复制"))} onShare={copyConversation} onRename={renameActiveThread} onRemoveThread={removeActiveThread} />
-        <div className={`stage-body ${terminalOpen ? "terminal-is-open" : ""}`}><div className="work-pane"><div className="main-content">{view === "review" ? <ReviewScreen gitState={gitState} selectedFile={selectedFile} diff={diff} onSelectFile={selectDiff} onBack={() => setView("project")} onStageAll={() => stage(gitState.files.map((file) => file.path))} onStageFile={() => stage([selectedFile])} onDiscard={discardSelected} busy={busy} /> : <ConversationScreen standalone={isStandalone} activeThread={activeThread} messages={activeMessages} sending={sending} composerProps={composerProps} gitState={gitState} onReview={openReview} terminalOpen={terminalOpen} onToggleTerminal={toggleTerminal} />}</div>{showEnvironment && <EnvironmentPanel gitState={gitState} branches={branches} branchOpen={branchOpen} onToggleBranch={() => setBranchOpen((open) => !open)} onSwitchBranch={switchBranch} onRefresh={() => activeProject && refreshGit(activeProject.id)} onCommitPush={commitOrPush} onReview={openReview} />}{showToolLauncher && <ToolLauncher onReview={openReview} onOpenPath={() => activeProject && api.system.openPath(activeProject.id)} onOpenRemote={openRemote} onNewStandalone={newStandalone} />}{isStandalone && rightPanelOpen && <UtilityPanel webSearch={webSearch} onToggleWebSearch={() => { setWebSearch((enabled) => !enabled); notify(webSearch ? "已关闭网页搜索" : "已启用网页搜索"); }} onAddFiles={addFiles} />}</div>{terminalOpen && view === "project" && <TerminalPanel output={terminalOutput} command={terminalCommand} onCommandChange={setTerminalCommand} onRun={runTerminalCommand} onClose={closeTerminal} projectName={activeProject?.name || "终端"} />}</div>
+        <TopBar activeThread={activeThread} bottomPanelOpen={bottomPanelOpen} rightPanelOpen={rightPanelOpen} onToggleBottomPanel={toggleBottomPanel} onToggleRightPanel={() => setRightPanelOpen((open) => !open)} onOpenSettings={() => setView("settings")} onOpenPath={() => activeProject && api.system.openPath(activeProject.id).catch((error) => notify(String(error.message || error)))} onCopyPath={() => activeProject && api.system.copy(activeProject.path).then(() => notify("项目路径已复制"))} onShare={copyConversation} onRename={renameActiveThread} onRemoveThread={removeActiveThread} />
+        <div className={`stage-body ${bottomPanelOpen ? "bottom-panel-is-open" : ""}`}>
+          <div className="work-pane">
+            <div className="main-content">{view === "review" ? <ReviewScreen gitState={gitState} selectedFile={selectedFile} diff={diff} onSelectFile={selectDiff} onBack={() => setView("project")} onStageAll={() => stage(gitState.files.map((file) => file.path))} onStageFile={() => stage([selectedFile])} onDiscard={discardSelected} busy={busy} /> : <ConversationScreen standalone={isStandalone} activeThread={activeThread} messages={activeMessages} sending={sending} composerProps={composerProps} gitState={gitState} onReview={openReview} />}</div>
+            {rightPanelOpen && <ToolLauncher activeTool={bottomPanelOpen ? activeTool : ""} hasProject={Boolean(activeProject)} onSelectTool={selectWorkspaceTool} />}
+          </div>
+          {bottomPanelOpen && <WorkspaceDock activeTool={activeTool} hasProject={Boolean(activeProject)} gitState={gitState} terminalProps={{ output: terminalOutput, command: terminalCommand, onCommandChange: setTerminalCommand, onRun: runTerminalCommand, onClose: closeBottomPanel, projectName: activeProject?.name || "终端", embedded: true }} remoteUrl={remoteUrl} projectFiles={projectFiles} sideMessages={sideMessages} sideValue={sideValue} sideSending={sideSending} onSelectTool={selectWorkspaceTool} onClose={closeBottomPanel} onOpenReview={() => { setView("review"); setBottomPanelOpen(false); }} onOpenRemote={openRemote} onOpenFile={(path) => activeProject && api.files.open({ projectId: activeProject.id, path }).catch((error) => notify(String(error.message || error)))} onSideValue={setSideValue} onSendSide={sendSideChat} />}
+        </div>
       </main>
       {modalStep && <AddProjectModal step={modalStep} defaultParent={defaultParent} onClose={() => setModalStep(null)} onStep={setModalStep} onComplete={completeProjectAction} />}
       {toast && <div className="toast" role="status" aria-live="polite"><CheckCircle size={18} />{toast}</div>}

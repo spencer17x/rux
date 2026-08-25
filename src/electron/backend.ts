@@ -8,7 +8,7 @@ import {
   shell,
 } from "electron";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { access, mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, readdir, rename, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 
@@ -509,6 +509,24 @@ async function gitDiff(projectId: string, filePath: string): Promise<string> {
   return [staged, unstaged].filter(Boolean).join("\n");
 }
 
+async function listProjectFiles(projectId: string): Promise<string[]> {
+  const project = await resolveProject(projectId);
+  const ignored = new Set([".git", "node_modules", "release", "dist", "out", ".DS_Store"]);
+  const files: string[] = [];
+  async function visit(directory: string, prefix = ""): Promise<void> {
+    if (files.length >= 300) return;
+    const entries = await readdir(directory, { withFileTypes: true });
+    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+      if (ignored.has(entry.name) || files.length >= 300) continue;
+      const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) await visit(join(directory, entry.name), relative);
+      else if (entry.isFile()) files.push(relative);
+    }
+  }
+  await visit(project.path);
+  return files;
+}
+
 async function ensureProjectTemplate(path: string, template: string, name: string): Promise<void> {
   if (template === "react") {
     await mkdir(join(path, "src"), { recursive: true });
@@ -676,6 +694,15 @@ export function registerBackend(getWindow: () => BrowserWindow | null): void {
 
   ipcMain.handle("git:status", async (_event, projectId: string) => await gitStatus(projectId));
   ipcMain.handle("git:diff", async (_event, input: { projectId: string; path: string }) => await gitDiff(input.projectId, input.path));
+  ipcMain.handle("files:list", async (_event, projectId: string) => await listProjectFiles(projectId));
+  ipcMain.handle("files:open", async (_event, input: { projectId: string; path: string }) => {
+    const project = await resolveProject(input.projectId);
+    const absolute = resolve(project.path, String(input.path ?? ""));
+    if (!absolute.startsWith(`${project.path}/`)) throw new Error("文件路径越界");
+    const error = await shell.openPath(absolute);
+    if (error) throw new Error(error);
+    return { opened: true };
+  });
   ipcMain.handle("git:branches", async (_event, projectId: string) => {
     const project = await resolveProject(projectId);
     try {

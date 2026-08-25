@@ -90,3 +90,51 @@ The project-conversation comparison confirms the same dominant regions and hiera
 - [x] Browser-rendered screenshots and side-by-side visual comparisons are saved.
 
 final result: passed
+
+---
+
+# Workspace Panels Design QA — 2026-08-25
+
+## Comparison target
+
+- Source visual truth:
+  - `/var/folders/hl/d5hg44c53b958y88jbqlwdw00000gn/T/codex-clipboard-2332184e-9b4e-4a5d-9752-8b4993f37a67.png`
+  - `/var/folders/hl/d5hg44c53b958y88jbqlwdw00000gn/T/codex-clipboard-10c7c680-ccef-4b0f-ae11-8ae1422531b7.png`
+- Packaged implementation:
+  - `/Users/17a/projects/rux/uat/2026-08-25-full-audit/final-16-dual-panel-shell.png`
+  - `/Users/17a/projects/rux/uat/2026-08-25-full-audit/final-17-bottom-workspace-dock.png`
+  - `/Users/17a/projects/rux/uat/2026-08-25-full-audit/final-18-workspace-side-chat.png`
+- Combined comparison: `/Users/17a/projects/rux/uat/2026-08-25-full-audit/final-compare-dual-panel.png`
+- State: packaged macOS client, light theme, project conversation, right tools panel open; bottom Dock captured separately in terminal and side-chat states.
+
+## Normalization
+
+- Implementation viewport and capture: `1364 × 768` px at application scale 1.
+- Source: `2880 × 1622` px Retina capture, normalized to `1364 × 768` for full-view comparison.
+- Standard icons come from Phosphor; the target contains no non-standard raster assets requiring recreation.
+
+## Full-view and focused evidence
+
+- Full view confirms separate bottom-panel and right-panel buttons, persistent Codex-style right tool navigation, compact composer, and unchanged project/conversation hierarchy.
+- Focused bottom-Dock capture confirms the terminal is one selectable tool rather than a terminal-specific persistent footer.
+- Side-chat capture confirms the same tool model is shared by the right navigation and bottom tabs.
+
+## Comparison history
+
+- [P2] Right workspace panel was initially 225px and visually narrower than the supplied Codex reference.
+  - Fix: widened it to 286px while retaining an 800px maximum conversation width.
+- [P2] Embedded terminal initially repeated the Dock-level close action.
+  - Fix: terminal header is suppressed when embedded; the Dock owns the single close control.
+- [P2] Side-chat send button lacked an accessible name.
+  - Fix: added `aria-label="发送侧边聊天消息"`.
+
+## Final pass
+
+- Fonts/typography: passed; 14px compact UI baseline and system SF/PingFang stack match the Codex density.
+- Spacing/layout: passed; independent panel controls, right navigation proportions, Dock tabs, and content regions remain visible without overlap.
+- Colors/tokens: passed; neutral surfaces, selected fills, borders, and key hints match the reference language.
+- Image/icon fidelity: passed; source uses standard UI icons and the implementation uses one consistent outline icon family.
+- Copy/content: passed; the five required tools are present in both navigation surfaces with the requested Chinese labels.
+- Interactions: passed; right panel and bottom Dock toggle independently; review, terminal, browser, files, and side chat were exercised. Side chat returned `SIDE_CHAT_OK` through the real Codex runtime.
+
+final result: passed
