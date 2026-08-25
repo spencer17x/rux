@@ -1,5 +1,6 @@
 import { app, BrowserWindow } from "electron";
 import { join } from "node:path";
+import { registerBackend, stopBackendProcesses } from "./backend";
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -37,6 +38,7 @@ async function createWindow(): Promise<void> {
 }
 
 app.whenReady().then(async () => {
+  registerBackend(() => mainWindow);
   await createWindow();
 
   app.on("activate", () => {
@@ -45,5 +47,6 @@ app.whenReady().then(async () => {
 });
 
 app.on("window-all-closed", () => {
+  stopBackendProcesses();
   if (process.platform !== "darwin") app.quit();
 });

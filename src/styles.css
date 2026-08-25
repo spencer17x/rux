@@ -51,6 +51,13 @@ button:not(:disabled) {
   cursor: pointer;
 }
 
+button:disabled,
+input:disabled,
+textarea:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 button:focus:not(:focus-visible),
 input:focus:not(:focus-visible),
 textarea:focus:not(:focus-visible) {
@@ -426,6 +433,27 @@ textarea:focus-visible {
   padding: 0 2px 22px;
 }
 
+.conversation-empty {
+  display: grid;
+  flex: 1;
+  min-height: 0;
+  place-content: center;
+  justify-items: center;
+  color: var(--muted);
+  text-align: center;
+}
+
+.conversation-empty h2 {
+  margin: 14px 0 5px;
+  color: var(--text);
+  font-size: 20px;
+}
+
+.conversation-empty p {
+  margin: 0;
+  font-size: 13px;
+}
+
 .message {
   display: flex;
   align-items: flex-start;
@@ -451,6 +479,21 @@ textarea:focus-visible {
 
 .agent-copy > p:first-child {
   margin: 4px 0 20px;
+}
+
+.agent-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+}
+
+.spin {
+  animation: spin 900ms linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
 .progress-list {
@@ -544,6 +587,25 @@ textarea:focus-visible {
 
 .result-summary .secondary-button {
   margin-left: 27px;
+}
+
+.live-change-summary {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 9px;
+  min-height: 46px;
+  margin-bottom: 10px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #fafaf9;
+  font-size: 13px;
+}
+
+.live-change-summary .secondary-button {
+  min-height: 30px;
+  margin-left: auto;
 }
 
 .composer-wrap {
@@ -915,11 +977,15 @@ button.environment-row:hover {
 }
 
 .terminal-body {
+  height: 145px;
+  margin: 0;
+  overflow: auto;
   padding: 10px 22px;
   color: #323232;
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   font-size: 13px;
   line-height: 1.7;
+  white-space: pre-wrap;
 }
 
 .terminal-body p {
@@ -951,6 +1017,27 @@ button.environment-row:hover {
   height: 14px;
   border: 1px solid #777;
   vertical-align: -2px;
+}
+
+.terminal-command {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+  height: 52px;
+  padding: 7px 14px;
+  border-top: 1px solid var(--border);
+  font-family: "SFMono-Regular", Consolas, monospace;
+}
+
+.terminal-command input {
+  width: 100%;
+  height: 34px;
+  padding: 0 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  outline: none;
+  font-family: inherit;
 }
 
 .review-screen {
@@ -1074,6 +1161,37 @@ button.environment-row:hover {
 .diff-viewer {
   min-width: 0;
   overflow: auto;
+}
+
+.real-diff-wrap {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.real-diff {
+  height: calc(100% - 43px);
+  margin: 0;
+  overflow: auto;
+  padding: 14px 16px;
+  color: #2f2f2d;
+  background: #fbfbfa;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.65;
+  white-space: pre;
+}
+
+.review-empty {
+  display: grid;
+  flex: 1;
+  place-content: center;
+  justify-items: center;
+  color: var(--green);
+}
+
+.review-empty h2 {
+  color: var(--text);
+  font-size: 18px;
 }
 
 .diff-heading,
@@ -1410,6 +1528,15 @@ button.environment-row:hover {
   font-size: 12px;
 }
 
+.form-error {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 13px 0 0;
+  color: var(--red);
+  font-size: 12px;
+}
+
 .template-fieldset {
   margin: 0;
   padding: 0;
@@ -1696,6 +1823,25 @@ button.environment-row:hover {
   margin-left: auto;
 }
 
+.provider-choice {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.provider-choice button {
+  height: 38px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.provider-choice button.is-selected {
+  border-color: #bbbbB7;
+  background: var(--surface-selected);
+  font-weight: 600;
+}
+
 .select-control {
   justify-content: space-between;
   max-width: 420px;
@@ -1718,6 +1864,30 @@ button.environment-row:hover {
   margin: 10px 1px 0;
   color: var(--muted);
   font-size: 12px;
+}
+
+.error-text {
+  color: var(--red) !important;
+}
+
+.status-dot.offline {
+  background: var(--red);
+}
+
+.fatal-screen {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  place-content: center;
+  justify-items: center;
+  gap: 8px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.fatal-screen h1 {
+  margin: 6px 0;
+  color: var(--text);
 }
 
 .toast {
