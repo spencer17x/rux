@@ -6,13 +6,32 @@ const api = {
     save: (input: unknown) => ipcRenderer.invoke("settings:save", input),
     test: (input: unknown) => ipcRenderer.invoke("settings:test", input),
   },
+  providers: {
+    list: () => ipcRenderer.invoke("providers:list"),
+    save: (input: unknown) => ipcRenderer.invoke("providers:save", input),
+    remove: (id: string) => ipcRenderer.invoke("providers:remove", id),
+    setActive: (id: string) => ipcRenderer.invoke("providers:set-active", id),
+    test: (id: string) => ipcRenderer.invoke("providers:test", id),
+  },
   auth: {
     status: () => ipcRenderer.invoke("auth:status"),
     login: () => ipcRenderer.invoke("auth:login"),
     logout: () => ipcRenderer.invoke("auth:logout"),
   },
   models: {
-    list: () => ipcRenderer.invoke("models:list"),
+    list: (input?: unknown) => ipcRenderer.invoke("models:list", input),
+  },
+  agents: {
+    list: () => ipcRenderer.invoke("agents:list"),
+  },
+  runtimes: {
+    list: () => ipcRenderer.invoke("runtimes:list"),
+    ensure: (agentId: string) => ipcRenderer.invoke("runtimes:ensure", agentId),
+    onProgress: (listener: (progress: unknown) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, progress: unknown) => listener(progress);
+      ipcRenderer.on("runtime:progress", handler);
+      return () => ipcRenderer.removeListener("runtime:progress", handler);
+    },
   },
   projects: {
     list: () => ipcRenderer.invoke("projects:list"),
@@ -32,6 +51,14 @@ const api = {
   },
   agent: {
     send: (input: unknown) => ipcRenderer.invoke("agent:send", input),
+    start: (input: unknown) => ipcRenderer.invoke("agent:start", input),
+    interrupt: (input: unknown) => ipcRenderer.invoke("agent:interrupt", input),
+    respondToApproval: (input: unknown) => ipcRenderer.invoke("agent:approval", input),
+    onEvent: (listener: (event: unknown) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, event: unknown) => listener(event);
+      ipcRenderer.on("agent:event", handler);
+      return () => ipcRenderer.removeListener("agent:event", handler);
+    },
   },
   git: {
     status: (projectId: string) => ipcRenderer.invoke("git:status", projectId),

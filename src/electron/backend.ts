@@ -11,6 +11,11 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { access, mkdir, readFile, readdir, rename, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
+import { CodexAppServerClient } from "./agents/codex-app-server";
+import { ClaudeCodeClient } from "./agents/claude-code";
+import { ProviderProfileStore } from "./provider-profiles";
+import { PiRuntimeClient } from "./agents/pi-runtime";
+import { RuntimeManager, type RuntimeAgentId } from "./runtime-manager";
 
 type ReasoningEffort = "none" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
 type SandboxMode = "read-only" | "workspace-write" | "danger-full-access";
@@ -48,6 +53,9 @@ type ThreadRecord = {
   id: string;
   title: string;
   codexThreadId?: string;
+  agentId?: "codex" | "claude-code" | "pi";
+  nativeSessionId?: string;
+  agentMode?: string;
 };
 
 type ProjectRecord = {
@@ -71,6 +79,11 @@ type GitFile = {
 };
 
 const terminalProcesses = new Map<number, ChildProcessWithoutNullStreams>();
+let codexStreamClient: CodexAppServerClient | null = null;
+let claudeCodeClient: ClaudeCodeClient | null = null;
+let providerProfileStore: ProviderProfileStore | null = null;
+let piRuntimeClient: PiRuntimeClient | null = null;
+let runtimeManager: RuntimeManager | null = null;
 
 function userDataFile(name: string): string {
   return join(app.getPath("userData"), name);
@@ -218,9 +231,24 @@ async function resolveProject(pathOrId: string): Promise<ProjectRecord> {
 
 function findExecutable(name: "codex" | "git"): string {
   const candidates = name === "codex"
-    ? [process.env.CODEX_BIN, "/opt/homebrew/bin/codex", "/usr/local/bin/codex", "codex"]
+    ? [runtimeManager!.resolveInstalled("codex").command]
     : [process.env.GIT_BIN, "/usr/bin/git", "/opt/homebrew/bin/git", "git"];
   return candidates.find(Boolean) as string;
+}
+
+
+async function listAgents(): Promise<Array<Record<string, unknown>>> {
+  const statuses = Object.fromEntries((await runtimeManager!.list()).map((status) => [status.agentId, status]));
+  let claudeAuth: Record<string, unknown> = { connected: false };
+  if (statuses["claude-code"].installed) try {
+    const account = await claudeCodeClient?.accountInfo(process.cwd());
+    claudeAuth = { connected: Boolean(account), authMethod: account?.subscriptionType || account?.authMethod || "SDK", apiProvider: account?.apiProvider };
+  } catch { claudeAuth = { connected: false }; }
+  return [
+    { id: "codex", name: "Codex", ...statuses.codex, bundled: false, managed: true, integrated: true, modes: [{ id: "default", label: "默认" }, { id: "plan", label: "计划" }] },
+    { id: "claude-code", name: "Claude Code", ...statuses["claude-code"], bundled: false, managed: true, auth: claudeAuth, integrated: true, modes: [{ id: "default", label: "默认" }, { id: "plan", label: "计划" }, { id: "accept-edits", label: "接受编辑" }, { id: "dont-ask", label: "不询问" }, { id: "auto", label: "自动批准" }, { id: "bypass-permissions", label: "绕过权限" }] },
+    { id: "pi", name: "Pi", ...statuses.pi, bundled: false, managed: true, integrated: true, modes: [{ id: "coding", label: "Coding tools" }, { id: "read-only", label: "Read-only tools" }] },
+  ];
 }
 
 async function runProcess(
@@ -255,6 +283,7 @@ async function runProcess(
 }
 
 async function codexAppServerRequest<T>(method: string, params: unknown): Promise<T> {
+  await runtimeManager!.ensure("codex");
   return await new Promise((resolvePromise, reject) => {
     const child = spawn(findExecutable("codex"), ["app-server", "--stdio"], {
       env: { ...process.env, NO_COLOR: "1" },
@@ -542,11 +571,31 @@ async function ensureProjectTemplate(path: string, template: string, name: strin
 }
 
 export function registerBackend(getWindow: () => BrowserWindow | null): void {
+  runtimeManager = new RuntimeManager(join(app.getPath("userData"), "runtimes"), getWindow);
+  providerProfileStore = new ProviderProfileStore(userDataFile("provider-profiles.json"));
+  codexStreamClient = new CodexAppServerClient(
+    () => findExecutable("codex"),
+    (event) => getWindow()?.webContents.send("agent:event", event),
+  );
+  claudeCodeClient = new ClaudeCodeClient(
+    () => runtimeManager!.resolveInstalled("claude-code").command,
+    (event) => getWindow()?.webContents.send("agent:event", event),
+  );
+  piRuntimeClient = new PiRuntimeClient(
+    () => runtimeManager!.resolveInstalled("pi"),
+    (event) => getWindow()?.webContents.send("agent:event", event),
+  );
+  ipcMain.handle("runtimes:list", async () => ({ runtimes: await runtimeManager!.list() }));
+  ipcMain.handle("runtimes:ensure", async (_event, agentId: RuntimeAgentId) => {
+    await runtimeManager!.ensure(agentId);
+    return await runtimeManager!.status(agentId);
+  });
   ipcMain.handle("settings:get", async () => publicSettings(await loadSettings()));
   ipcMain.handle("settings:save", async (_event, input) => publicSettings(await saveSettings(input ?? {})));
   ipcMain.handle("settings:test", async (_event, input) => {
     const saved = await saveSettings(input ?? {});
     if (saved.provider === "codex") {
+      await runtimeManager!.ensure("codex");
       const result = await runProcess(findExecutable("codex"), ["login", "status"], { timeoutMs: 20_000 });
       if (result.code !== 0) throw new Error(result.stderr.trim() || "Codex 未登录");
       return { ok: true, message: result.stdout.trim() || result.stderr.trim() };
@@ -554,21 +603,74 @@ export function registerBackend(getWindow: () => BrowserWindow | null): void {
     await sendWithCustomProvider({ prompt: "Reply with OK", model: saved.model, reasoning: "low" });
     return { ok: true, message: "连接成功" };
   });
+  ipcMain.handle("providers:list", async () => await providerProfileStore!.list());
+  ipcMain.handle("providers:save", async (_event, input) => await providerProfileStore!.save(input || {}));
+  ipcMain.handle("providers:remove", async (_event, id: string) => await providerProfileStore!.remove(String(id)));
+  ipcMain.handle("providers:set-active", async (_event, id: string) => await providerProfileStore!.setActive(String(id)));
+  ipcMain.handle("providers:test", async (_event, id: string) => await providerProfileStore!.test(String(id)));
 
   ipcMain.handle("auth:status", async () => {
+    const runtime = await runtimeManager!.status("codex");
+    if (!runtime.installed) return { connected: false, runtimeRequired: true, account: null, message: "Codex 将在首次使用时自动下载" };
     return await loadCodexAccount();
   });
   ipcMain.handle("auth:login", async () => {
+    await runtimeManager!.ensure("codex");
     const child = spawn(findExecutable("codex"), ["login", "--device-auth"], { detached: true, stdio: "ignore" });
     child.unref();
     return { started: true };
   });
   ipcMain.handle("auth:logout", async () => {
+    await runtimeManager!.ensure("codex");
     const result = await runProcess(findExecutable("codex"), ["logout"], { timeoutMs: 20_000 });
     if (result.code !== 0) throw new Error(result.stderr.trim() || "退出登录失败");
     return { connected: false };
   });
-  ipcMain.handle("models:list", async () => await loadCodexModels());
+  ipcMain.handle("models:list", async (_event, input?: { agentId?: string; projectId?: string }) => {
+    if (input?.agentId === "claude-code") {
+      await runtimeManager!.ensure("claude-code");
+      const project = input.projectId ? await resolveProject(input.projectId) : null;
+      const cwd = project?.path ?? join(app.getPath("userData"), "standalone-workspace");
+      await mkdir(cwd, { recursive: true });
+      const models = await claudeCodeClient!.listModels(cwd);
+      return {
+        models: models.map((model, index) => ({
+          id: `claude:${model.value}`,
+          model: model.value,
+          displayName: model.displayName,
+          description: model.description,
+          hidden: false,
+          isDefault: index === 0 || model.value === "default",
+          defaultReasoningEffort: "high",
+          supportedReasoningEfforts: (model.supportedEffortLevels || ["low", "medium", "high"]).map((reasoningEffort) => ({ reasoningEffort, description: `${model.displayName} · ${reasoningEffort}` })),
+          resolvedModel: model.resolvedModel,
+        })),
+      };
+    }
+    if (input?.agentId === "pi") {
+      await runtimeManager!.ensure("pi");
+      const project = input.projectId ? await resolveProject(input.projectId) : null;
+      const cwd = project?.path ?? join(app.getPath("userData"), "standalone-workspace");
+      await mkdir(cwd, { recursive: true });
+      const runtime = await providerProfileStore!.materializePiRuntime(join(app.getPath("userData"), "agent-runtimes"));
+      if (!runtime) return { models: [] };
+      const models = await piRuntimeClient!.listModels(cwd, runtime);
+      return {
+        models: models.map((model, index) => ({
+          id: `pi:${model.provider}/${model.id}`,
+          model: `${model.provider}/${model.id}`,
+          displayName: model.name || model.id,
+          description: `${model.provider} · ${model.contextWindow || "—"} tokens`,
+          hidden: false,
+          isDefault: index === 0,
+          defaultReasoningEffort: model.reasoning ? "medium" : "none",
+          supportedReasoningEfforts: (model.reasoning ? ["off", "minimal", "low", "medium", "high", "xhigh", "max"] : ["off"]).map((reasoningEffort) => ({ reasoningEffort, description: `${model.name || model.id} · ${reasoningEffort}` })),
+        })),
+      };
+    }
+    return await loadCodexModels();
+  });
+  ipcMain.handle("agents:list", async () => ({ agents: await listAgents() }));
 
   ipcMain.handle("projects:list", async () => await loadWorkspace());
   ipcMain.handle("projects:default-parent", async () => {
@@ -652,23 +754,29 @@ export function registerBackend(getWindow: () => BrowserWindow | null): void {
     await saveWorkspace(workspace);
     return thread;
   });
-  ipcMain.handle("projects:update-thread", async (_event, input: { projectId: string; threadId: string; codexThreadId?: string; title?: string }) => {
+  ipcMain.handle("projects:update-thread", async (_event, input: { projectId: string; threadId: string; codexThreadId?: string; agentId?: ThreadRecord["agentId"]; nativeSessionId?: string; agentMode?: string; title?: string }) => {
     const workspace = await loadWorkspace();
     const project = workspace.projects.find((item) => item.id === input.projectId);
     const thread = project?.threads.find((item) => item.id === input.threadId);
     if (!thread) throw new Error("会话不存在");
     if (input.codexThreadId) thread.codexThreadId = input.codexThreadId;
+    if (input.agentId) thread.agentId = input.agentId;
+    if (input.nativeSessionId) thread.nativeSessionId = input.nativeSessionId;
+    if (input.agentMode) thread.agentMode = input.agentMode;
     if (input.title) thread.title = input.title.slice(0, 100);
     await saveWorkspace(workspace);
     return thread;
   });
-  ipcMain.handle("threads:update", async (_event, input: { type: "project" | "standalone"; projectId?: string; threadId: string; codexThreadId?: string; title?: string }) => {
+  ipcMain.handle("threads:update", async (_event, input: { type: "project" | "standalone"; projectId?: string; threadId: string; codexThreadId?: string; agentId?: ThreadRecord["agentId"]; nativeSessionId?: string; agentMode?: string; title?: string }) => {
     const workspace = await loadWorkspace();
     const thread = input.type === "project"
       ? workspace.projects.find((item) => item.id === input.projectId)?.threads.find((item) => item.id === input.threadId)
       : workspace.standaloneThreads.find((item) => item.id === input.threadId);
     if (!thread) throw new Error("会话不存在");
     if (input.codexThreadId) thread.codexThreadId = input.codexThreadId;
+    if (input.agentId) thread.agentId = input.agentId;
+    if (input.nativeSessionId) thread.nativeSessionId = input.nativeSessionId;
+    if (input.agentMode) thread.agentMode = input.agentMode;
     if (input.title) thread.title = input.title.slice(0, 100);
     await saveWorkspace(workspace);
     return thread;
@@ -690,6 +798,94 @@ export function registerBackend(getWindow: () => BrowserWindow | null): void {
     const settings = await loadSettings();
     if (settings.provider === "custom") return await sendWithCustomProvider(input);
     return await sendWithCodex(input);
+  });
+  ipcMain.handle("agent:start", async (_event, input: {
+    runId: string;
+    projectId?: string;
+    prompt: string;
+    model?: string;
+    reasoning?: ReasoningEffort;
+    sandboxMode?: SandboxMode;
+    images?: string[];
+    webSearch?: boolean;
+    threadId?: string;
+    mode?: string;
+    agentId?: "codex" | "claude-code" | "pi";
+    nativeSessionId?: string;
+  }) => {
+    const settings = await loadSettings();
+    if (settings.provider === "custom" && input.agentId !== "claude-code") {
+      const result = await sendWithCustomProvider(input);
+      queueMicrotask(() => {
+        const window = getWindow();
+        window?.webContents.send("agent:event", { runId: input.runId, type: "text-delta", itemId: `text-${input.runId}`, delta: result.text });
+        window?.webContents.send("agent:event", { runId: input.runId, type: "turn-completed", status: "completed" });
+      });
+      return { runId: input.runId, threadId: input.threadId || "" };
+    }
+    const project = input.projectId ? await resolveProject(input.projectId) : null;
+    const cwd = project?.path ?? join(app.getPath("userData"), "standalone-workspace");
+    await mkdir(cwd, { recursive: true });
+    if (input.agentId === "claude-code") {
+      await runtimeManager!.ensure("claude-code");
+      return claudeCodeClient!.startTurn({
+        runId: String(input.runId),
+        sessionId: input.nativeSessionId || input.threadId,
+        cwd,
+        prompt: String(input.prompt || "").trim(),
+        model: input.model,
+        reasoning: input.reasoning || settings.reasoning,
+        mode: input.mode,
+      });
+    }
+    if (input.agentId === "pi") {
+      await runtimeManager!.ensure("pi");
+      const runtime = await providerProfileStore!.materializePiRuntime(join(app.getPath("userData"), "agent-runtimes"));
+      if (!runtime) throw new Error("请先配置一个兼容 Pi 的 Provider");
+      return await piRuntimeClient!.startTurn({
+        runId: String(input.runId),
+        sessionFile: input.nativeSessionId || input.threadId,
+        cwd,
+        prompt: String(input.prompt || "").trim(),
+        model: input.model,
+        reasoning: input.reasoning || settings.reasoning,
+        mode: input.mode,
+        runtime,
+      });
+    }
+    await runtimeManager!.ensure("codex");
+    return await codexStreamClient!.startTurn({
+      runId: String(input.runId),
+      threadId: input.threadId,
+      cwd,
+      prompt: String(input.prompt || "").trim(),
+      model: input.model || settings.model,
+      reasoning: input.reasoning || settings.reasoning,
+      sandboxMode: input.sandboxMode || settings.sandboxMode,
+      images: input.images,
+      webSearch: input.webSearch,
+      mode: input.mode === "plan" ? "plan" : "default",
+    });
+  });
+  ipcMain.handle("agent:interrupt", async (_event, input: { agentId?: string; runId?: string; threadId: string; turnId: string }) => {
+    if (input.agentId === "claude-code") {
+      await claudeCodeClient!.interrupt(String(input.runId || input.turnId));
+      return { interrupted: true };
+    }
+    if (input.agentId === "pi") {
+      await piRuntimeClient!.interrupt(String(input.runId || input.turnId));
+      return { interrupted: true };
+    }
+    await codexStreamClient!.interrupt(String(input.threadId), String(input.turnId));
+    return { interrupted: true };
+  });
+  ipcMain.handle("agent:approval", async (_event, input: { approvalId: string; decision: "accept" | "acceptForSession" | "decline" }) => {
+    if (String(input.approvalId).startsWith("claude:")) {
+      claudeCodeClient!.respondToApproval(String(input.approvalId), input.decision);
+      return { responded: true };
+    }
+    codexStreamClient!.respondToApproval(String(input.approvalId), input.decision);
+    return { responded: true };
   });
 
   ipcMain.handle("git:status", async (_event, projectId: string) => await gitStatus(projectId));
@@ -810,7 +1006,7 @@ export function registerBackend(getWindow: () => BrowserWindow | null): void {
     return { opened: true };
   });
   ipcMain.handle("system:info", async () => {
-    const codex = await runProcess(findExecutable("codex"), ["--version"], { timeoutMs: 20_000 });
+    const codex = await runtimeManager!.status("codex");
     return {
       appVersion: app.getVersion(),
       electronVersion: process.versions.electron,
@@ -818,13 +1014,19 @@ export function registerBackend(getWindow: () => BrowserWindow | null): void {
       nodeVersion: process.versions.node,
       platform: process.platform,
       arch: process.arch,
-      codexVersion: (codex.stdout || codex.stderr).trim(),
-      codexPath: findExecutable("codex"),
+      codexVersion: codex.installed ? codex.version : `${codex.version}（未下载）`,
+      codexPath: codex.installed ? codex.path : "首次使用时自动下载",
     };
   });
 }
 
 export function stopBackendProcesses(): void {
+  codexStreamClient?.stop();
+  codexStreamClient = null;
+  claudeCodeClient?.stop();
+  claudeCodeClient = null;
+  piRuntimeClient?.stop();
+  piRuntimeClient = null;
   for (const child of terminalProcesses.values()) child.kill("SIGTERM");
   terminalProcesses.clear();
 }

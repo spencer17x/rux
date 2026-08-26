@@ -36,6 +36,7 @@ import {
   Palette,
   Plus,
   Rows,
+  Robot,
   ShareNetwork,
   ShieldCheck,
   SidebarSimple,
@@ -45,6 +46,7 @@ import {
   WarningCircle,
   X,
 } from "@phosphor-icons/react";
+import RuxAssistantThread from "./assistant/RuxAssistantThread";
 
 const api = window.rux;
 
@@ -52,6 +54,10 @@ const fallbackWorkspace = {
   projects: [],
   standaloneThreads: [],
 };
+
+const fallbackAgents = [
+  { id: "codex", name: "Codex", installed: false, managed: true, integrated: true, version: "0.149.1", modes: [{ id: "default", label: "默认" }, { id: "plan", label: "计划" }] },
+];
 
 const fallbackSettings = {
   provider: "codex",
@@ -86,6 +92,85 @@ function loadMessages() {
   } catch {
     return {};
   }
+}
+
+function loadAgentPreferences() {
+  const fallback = {
+    codex: { model: "", reasoning: "high" },
+    "claude-code": { model: "default", reasoning: "high" },
+    pi: { model: "", reasoning: "medium" },
+  };
+  try {
+    return { ...fallback, ...JSON.parse(localStorage.getItem("rux.agent-preferences.v1") || "{}") };
+  } catch {
+    return fallback;
+  }
+}
+
+function itemToMessagePart(item, startedAt = Date.now()) {
+  if (!item?.id) return null;
+  if (item.type === "agentMessage") return { type: "text", text: item.text || "", status: { type: "running" }, _itemId: item.id };
+  if (item.type === "plan") return { type: "reasoning", text: item.text || "", unstable_summary: "计划", status: { type: "running" }, _itemId: item.id };
+  if (item.type === "reasoning") return { type: "reasoning", text: [...(item.summary || []), ...(item.content || [])].join("\n"), status: { type: "running" }, _itemId: item.id };
+  const toolName = item.type;
+  if (["commandExecution", "fileChange", "mcpToolCall", "dynamicToolCall", "webSearch", "collabAgentToolCall", "subAgentActivity"].includes(toolName)) {
+    const args = item.type === "commandExecution"
+      ? { command: item.command, cwd: item.cwd }
+      : item.type === "fileChange"
+        ? { changes: item.changes }
+        : item.type === "mcpToolCall"
+          ? { server: item.server, tool: item.tool, ...(item.arguments || {}) }
+          : item.type === "webSearch"
+            ? { query: item.query || item.action?.query || "" }
+            : { ...item };
+    return { type: "tool-call", toolCallId: item.id, toolName, args, argsText: JSON.stringify(args), timing: { startedAt }, _itemId: item.id };
+  }
+  return null;
+}
+
+function completedItemResult(item) {
+  if (item.type === "commandExecution") return { output: item.aggregatedOutput || "", exitCode: item.exitCode, status: item.status };
+  if (item.type === "fileChange") return { summary: `${item.changes?.length || 0} 个文件变更`, changes: item.changes, status: item.status };
+  if (item.type === "mcpToolCall") return item.error ? { error: item.error } : item.result || { status: item.status };
+  if (item.type === "dynamicToolCall") return { output: (item.contentItems || []).map((part) => part.text || JSON.stringify(part)).join("\n"), contentItems: item.contentItems, success: item.success, status: item.status };
+  if (item.type === "webSearch") return { status: "completed", action: item.action };
+  if (item.type === "collabAgentToolCall" || item.type === "subAgentActivity") return { status: item.status || "completed", agentsStates: item.agentsStates };
+  return { status: item.status || "completed" };
+}
+
+function reduceStreamEvent(message, event) {
+  const parts = [...(message.parts || [])];
+  const findPart = () => parts.findIndex((part) => part._itemId === event.itemId || part.toolCallId === event.itemId);
+  const updatePart = (create, update) => {
+    let index = findPart();
+    if (index < 0 && create) { parts.push(create); index = parts.length - 1; }
+    if (index >= 0) parts[index] = update(parts[index]);
+  };
+  if (event.type === "item-started") {
+    const part = itemToMessagePart(event.item);
+    if (part && findPart() < 0) parts.push(part);
+  } else if (event.type === "text-delta") {
+    updatePart({ type: "text", text: "", status: { type: "running" }, _itemId: event.itemId }, (part) => ({ ...part, text: `${part.text || ""}${event.delta || ""}` }));
+  } else if (event.type === "reasoning-delta") {
+    updatePart({ type: "reasoning", text: "", status: { type: "running" }, _itemId: event.itemId }, (part) => ({ ...part, text: `${part.text || ""}${event.delta || ""}` }));
+  } else if (event.type === "tool-output-delta") {
+    updatePart(null, (part) => ({ ...part, result: { ...(part.result || {}), output: `${part.result?.output || ""}${event.delta || ""}` } }));
+  } else if (event.type === "item-completed" && event.item) {
+    const item = event.item;
+    updatePart(itemToMessagePart(item), (part) => {
+      if (item.type === "agentMessage") return { ...part, text: item.text || part.text, status: { type: "complete" } };
+      if (item.type === "reasoning" || item.type === "plan") return { ...part, text: item.text || [...(item.summary || []), ...(item.content || [])].join("\n") || part.text, status: { type: "complete" } };
+      return { ...part, result: completedItemResult(item), isError: ["failed", "declined"].includes(item.status), timing: { ...(part.timing || {}), completedAt: Date.now() } };
+    });
+  } else if (event.type === "approval-request" && event.approval) {
+    updatePart({ type: "tool-call", toolCallId: event.itemId, toolName: event.approval.method?.includes("fileChange") ? "fileChange" : "commandExecution", args: event.approval, argsText: JSON.stringify(event.approval), _itemId: event.itemId }, (part) => ({ ...part, approval: { id: event.approval.id, options: [{ id: "allow-once", kind: "allow-once", label: "允许一次" }, { id: "allow-session", kind: "allow-always", label: "本次会话允许" }, { id: "reject-once", kind: "reject-once", label: "拒绝" }] } }));
+  } else if (event.type === "turn-completed") {
+    return { ...message, parts: parts.map((part) => part.status?.type === "running" ? { ...part, status: { type: "complete" } } : part), status: event.status === "completed" ? "complete" : "error", error: event.error };
+  } else if (event.type === "error") {
+    parts.push({ type: "text", text: event.error || "Agent 执行失败", status: { type: "incomplete", reason: "error" }, _itemId: `error-${Date.now()}` });
+    return { ...message, parts, status: "error", error: event.error };
+  }
+  return { ...message, parts };
 }
 
 function IconButton({ label, children, active = false, onClick, className = "", disabled = false }) {
@@ -280,7 +365,7 @@ function modelDisplayName(settings, models) {
   return selectedCodexModel(settings, models)?.displayName || settings.model || "默认模型";
 }
 
-function ModelPopover({ mode, settings, auth, models, loading, error, onSelectModel, onSelectReasoning }) {
+function ModelPopover({ mode, settings, auth, models, loading, error, onSelectModel, onSelectReasoning, connectionLabel }) {
   const selectedModel = selectedCodexModel(settings, models);
   const efforts = selectedModel?.supportedReasoningEfforts
     || Object.keys(reasoningLabels).map((reasoningEffort) => ({ reasoningEffort, description: "" }));
@@ -307,7 +392,7 @@ function ModelPopover({ mode, settings, auth, models, loading, error, onSelectMo
           </button>
         );
       })}
-      <div className="popover-footer">{settings.provider === "codex" ? `${modelDisplayName(settings, models)} · GPT OAuth` : settings.serviceName}</div>
+      <div className="popover-footer">{connectionLabel || (settings.provider === "codex" ? `${modelDisplayName(settings, models)} · GPT OAuth` : settings.serviceName)}</div>
     </div>
   );
 }
@@ -372,14 +457,13 @@ function Conversation({ messages, sending, emptyTitle }) {
   );
 }
 
-function ConversationScreen({ standalone, activeThread, messages, sending, composerProps, gitState, onReview }) {
+function ConversationScreen({ standalone, activeThread, assistantProps, gitState, onReview }) {
   return (
     <div className={`conversation-screen ${standalone ? "standalone-screen" : ""}`}>
-      <Conversation messages={messages} sending={sending} emptyTitle={standalone ? "开始独立会话" : `在 ${activeThread.projectName} 中开始任务`} />
+      <RuxAssistantThread emptyTitle={standalone ? "开始独立会话" : `在 ${activeThread.projectName} 中开始任务`} {...assistantProps} />
       {!standalone && gitState.files.length > 0 && (
         <div className="live-change-summary"><FileText size={18} /><strong>{gitState.files.length} 个真实文件变更</strong><button type="button" className="secondary-button" onClick={onReview}><Eye size={17} />审查变更</button></div>
       )}
-      <Composer standalone={standalone} {...composerProps} />
     </div>
   );
 }
@@ -472,7 +556,58 @@ function ModalHeader({ title, subtitle, onBack, onClose }) {
   return <div className="modal-header"><div className="modal-title-row">{onBack && <IconButton label="返回" onClick={onBack}><ArrowLeft size={20} /></IconButton>}<h2>{title}</h2><IconButton label="关闭" className="modal-close" onClick={onClose}><X size={20} /></IconButton></div><p>{subtitle}</p></div>;
 }
 
-function SettingsScreen({ settings, auth, models, systemInfo, projectCount, activeProject, gitState, onBack, onSave, onTest, onLogin, onLogout, onNotify }) {
+function ProviderProfilesSettings({ store, onSave, onRemove, onSetActive, onTest, onNotify }) {
+  const empty = { id: "", name: "", protocol: "openai-responses", baseUrl: "", hasApiKey: false, headers: {}, compatibleAgents: ["rux-native"], models: [] };
+  const [selectedId, setSelectedId] = useState(store.activeProfileId || store.profiles[0]?.id || "");
+  const [draft, setDraft] = useState(empty);
+  const [apiKey, setApiKey] = useState("");
+  const [headersText, setHeadersText] = useState("");
+  const [modelsText, setModelsText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState("");
+  useEffect(() => {
+    const profile = store.profiles.find((item) => item.id === selectedId) || store.profiles.find((item) => item.id === store.activeProfileId);
+    if (!profile) { setDraft(empty); setHeadersText(""); setModelsText(""); return; }
+    setSelectedId(profile.id);
+    setDraft(profile);
+    setHeadersText(Object.entries(profile.headers || {}).map(([key, value]) => `${key}: ${value}`).join("\n"));
+    setModelsText((profile.models || []).map((model) => `${model.id} | ${model.name || model.id} | ${(model.reasoningLevels || []).join(",")}`).join("\n"));
+    setApiKey("");
+  }, [selectedId, store.activeProfileId, store.profiles]);
+  const update = (patch) => setDraft((current) => ({ ...current, ...patch }));
+  const execute = async (action) => { setBusy(true); setStatus(""); try { const message = await action(); if (message) setStatus(message); } catch (error) { setStatus(String(error.message || error)); } finally { setBusy(false); } };
+  const parseHeaders = () => Object.fromEntries(headersText.split(/\r?\n/).filter((line) => line.trim()).map((line) => { const index = line.indexOf(":"); if (index <= 0) throw new Error(`Header 格式错误：${line}`); return [line.slice(0, index).trim(), line.slice(index + 1).trim()]; }));
+  const parseModels = () => modelsText.split(/\r?\n/).filter((line) => line.trim()).map((line) => { const [id, name, levels = ""] = line.split("|").map((part) => part.trim()); return { id, name: name || id, reasoningLevels: levels.split(",").map((value) => value.trim()).filter(Boolean) }; });
+  return (
+    <div className="provider-settings-layout">
+      <aside className="provider-profile-list">
+        <button type="button" className="secondary-button provider-add" onClick={() => { setSelectedId(""); setDraft(empty); setHeadersText(""); setModelsText(""); setApiKey(""); }}>+ 新建 Provider</button>
+        {store.profiles.map((profile) => <button type="button" key={profile.id} className={draft.id === profile.id ? "is-selected" : ""} onClick={() => setSelectedId(profile.id)}><span><strong>{profile.name}</strong><small>{profile.protocol} · {profile.models.length} 个模型</small></span>{store.activeProfileId === profile.id && <em>当前</em>}</button>)}
+        {!store.profiles.length && <p>尚未配置 Provider</p>}
+      </aside>
+      <section className="provider-profile-editor">
+        <div className="settings-group form-settings">
+          <label className="settings-row"><span>名称</span><input value={draft.name} onChange={(event) => update({ name: event.target.value })} placeholder="例如 公司代理" /></label>
+          <label className="settings-row"><span>协议</span><select value={draft.protocol} onChange={(event) => update({ protocol: event.target.value })}><option value="openai-responses">OpenAI Responses</option><option value="openai-chat">OpenAI Chat Completions</option><option value="anthropic-messages">Anthropic Messages</option><option value="ollama">Ollama / OpenAI Compatible</option></select></label>
+          <label className="settings-row"><span>Base URL</span><input value={draft.baseUrl} onChange={(event) => update({ baseUrl: event.target.value })} placeholder="https://api.example.com/v1" /></label>
+          <label className="settings-row"><span>API key</span><span className="secret-input"><input type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={draft.hasApiKey ? "已安全保存；留空则不修改" : "输入 API key"} /><Eye size={17} /></span></label>
+          <label className="settings-row provider-multiline"><span>自定义 Headers<small>每行 Key: Value；认证请使用 API key</small></span><textarea value={headersText} onChange={(event) => setHeadersText(event.target.value)} placeholder="X-Organization: team-a" /></label>
+          <label className="settings-row provider-multiline"><span>模型<small>每行：ID | 显示名称 | reasoning levels</small></span><textarea value={modelsText} onChange={(event) => setModelsText(event.target.value)} placeholder={"gpt-5.6-terra | GPT-5.6 Terra | low,medium,high,xhigh\nqwen3-coder | Qwen Coder | low,medium,high"} /></label>
+          <div className="settings-row"><span>兼容运行时</span><div className="provider-agent-checks">{[["rux-native", "Rux Native"], ["pi", "Pi"]].map(([id, label]) => <label key={id}><input type="checkbox" checked={draft.compatibleAgents.includes(id)} onChange={(event) => update({ compatibleAgents: event.target.checked ? [...new Set([...draft.compatibleAgents, id])] : draft.compatibleAgents.filter((value) => value !== id) })} />{label}</label>)}</div></div>
+          <div className="settings-row settings-actions provider-actions">
+            {draft.id && <button type="button" className="danger-link" disabled={busy} onClick={() => { if (window.confirm(`删除 Provider“${draft.name}”？此操作只删除 Rux 中的配置。`)) execute(async () => { await onRemove(draft.id); setSelectedId(""); return "Provider 已删除"; }); }}>删除</button>}
+            {draft.id && <button type="button" className="secondary-button" disabled={busy} onClick={() => execute(async () => (await onTest(draft.id)).message)}>测试连接</button>}
+            {draft.id && store.activeProfileId !== draft.id && <button type="button" className="secondary-button" disabled={busy} onClick={() => execute(async () => { await onSetActive(draft.id); return "已设为当前 Provider"; })}>设为当前</button>}
+            <button type="button" className="primary-button" disabled={busy} onClick={() => execute(async () => { const saved = await onSave({ ...draft, apiKey, headers: parseHeaders(), models: parseModels() }); setSelectedId(saved.id); setApiKey(""); onNotify("Provider 配置已保存"); return "已安全保存"; })}>保存配置</button>
+          </div>
+        </div>
+        {status && <p className={/失败|错误/.test(status) ? "settings-status error-text" : "settings-status connected"}>{status}</p>}
+      </section>
+    </div>
+  );
+}
+
+function SettingsScreen({ settings, auth, models, agents, modelsByAgent, providerStore, onProviderSave, onProviderRemove, onProviderSetActive, onProviderTest, systemInfo, projectCount, activeProject, gitState, onBack, onSave, onTest, onLogin, onLogout, onNotify }) {
   const [draft, setDraft] = useState(settings);
   const [apiKey, setApiKey] = useState("");
   const [busy, setBusy] = useState(false);
@@ -484,7 +619,7 @@ function SettingsScreen({ settings, auth, models, systemInfo, projectCount, acti
   const draftModel = selectedCodexModel(draft, models);
   const availableEfforts = draft.provider === "codex" && draftModel ? draftModel.supportedReasoningEfforts.map((effort) => effort.reasoningEffort) : Object.keys(reasoningLabels).filter((effort) => effort !== "ultra");
   const sections = [
-    ["general", "常规", GearSix], ["appearance", "外观", Palette], ["permissions", "权限", LockKey], ["models", "模型与连接", SlidersHorizontal], ["shortcuts", "键盘快捷键", Keyboard], ["git", "Git", GitBranch], ["environment", "环境", Monitor],
+    ["general", "常规", GearSix], ["agents", "底座 Agent", Robot], ["providers", "Provider 配置", Globe], ["appearance", "外观", Palette], ["permissions", "权限", LockKey], ["models", "模型与连接", SlidersHorizontal], ["shortcuts", "键盘快捷键", Keyboard], ["git", "Git", GitBranch], ["environment", "环境", Monitor],
   ];
   const visibleSections = sections.filter(([, label]) => !query || label.toLocaleLowerCase().includes(query.toLocaleLowerCase()));
   const title = sections.find(([id]) => id === section)?.[1] || "设置";
@@ -495,6 +630,8 @@ function SettingsScreen({ settings, auth, models, systemInfo, projectCount, acti
       <aside className="settings-sidebar"><button type="button" className="settings-back" onClick={onBack}><ArrowLeft size={18} />返回 Rux</button><label className="settings-search"><MagnifyingGlass size={18} /><input aria-label="搜索设置" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索设置…" /></label><nav>{visibleSections.map(([id, label, Icon]) => <button type="button" key={id} className={section === id ? "is-active" : ""} onClick={() => setSection(id)}><Icon size={19} />{label}</button>)}</nav></aside>
       <main className="settings-content"><h1>{title}</h1>
         {section === "general" && <><section className="settings-section"><h2>账户</h2><div className="settings-group form-settings"><div className="settings-row"><span>登录账户</span><strong>{auth.account?.email || (auth.connected ? "Codex 已连接" : "未登录")}</strong></div><div className="settings-row"><span>套餐</span><strong>{auth.account?.planType || "—"}</strong></div></div></section><section className="settings-section"><h2>工作区</h2><div className="settings-group form-settings"><div className="settings-row"><span>已添加项目</span><strong>{projectCount}</strong></div><div className="settings-row"><span>当前项目</span><strong>{activeProject?.name || "无"}</strong></div></div></section></>}
+        {section === "agents" && <section className="settings-section"><h2>底座 Agent</h2><div className="agent-settings-list">{agents.map((agent) => <article className="agent-settings-card" key={agent.id}><span className="agent-settings-icon"><Robot size={20} /></span><span className="agent-settings-copy"><strong>{agent.name}</strong><small>{agent.managed ? `${agent.version} · ${agent.installed ? "已由 Rux 下载" : "首次使用时自动下载"}` : `${agent.version || "运行时"} · ${agent.path || ""}`}</small><em>{agent.id === "claude-code" ? (agent.auth?.connected ? `已登录 · ${agent.auth.authMethod || "Claude 账户"}` : "需要登录 Claude") : agent.id === "codex" ? (auth.connected ? "GPT OAuth 已连接" : "需要登录 Codex") : providerStore.profiles.some((profile) => profile.compatibleAgents.includes("pi")) ? "Provider 已配置" : "需要配置兼容 Pi 的 Provider"}</em></span><span className={`agent-settings-status ${agent.installed && agent.integrated ? "is-ready" : ""}`}>{agent.managed ? (agent.installed ? "已下载" : "未下载") : agent.integrated ? "可用" : "待接入"}</span><div className="agent-settings-modes">{agent.modes?.map((mode) => <span key={mode.id}>{mode.label}</span>)}</div><small className="agent-settings-models">{agent.id === "codex" ? `${models.length} 个可用模型` : modelsByAgent[agent.id]?.length ? `${modelsByAgent[agent.id].length} 个可用模型` : "选择该 Agent 后读取模型"}</small></article>)}</div></section>}
+        {section === "providers" && <section className="settings-section provider-settings-section"><h2>Provider 配置</h2><p className="settings-help">配置 Rux Native 或 Pi 可使用的真实模型服务。API key 只保存在系统安全存储中。</p><ProviderProfilesSettings store={providerStore} onSave={onProviderSave} onRemove={onProviderRemove} onSetActive={onProviderSetActive} onTest={onProviderTest} onNotify={onNotify} /></section>}
         {section === "appearance" && <section className="settings-section"><h2>外观</h2><div className="settings-group form-settings"><div className="settings-row"><span>界面主题</span><strong>跟随系统 · {window.matchMedia("(prefers-color-scheme: dark)").matches ? "深色" : "浅色"}</strong></div><div className="settings-row"><span>界面语言</span><strong>简体中文</strong></div><label className="settings-row"><span>UI 字号</span><span className="font-size-control"><input type="number" min="12" max="16" value={draft.uiFontSize || 14} onChange={(event) => { const uiFontSize = Number(event.target.value); update({ uiFontSize }); document.documentElement.style.setProperty("--ui-font-size", `${uiFontSize}px`); }} /><em>px</em></span></label><div className="settings-row settings-actions"><button type="button" className="primary-button" onClick={() => execute(() => saveDraft("外观设置已保存"))}>保存外观</button></div></div><p className="settings-help">默认使用与 Codex Desktop 一致的 14px UI 字号。</p></section>}
         {section === "permissions" && <section className="settings-section"><h2>默认权限</h2><div className="settings-group form-settings"><div className="settings-row"><span>Codex 沙盒</span><div className="reasoning-control">{Object.entries(sandboxLabels).map(([value, label]) => <button type="button" key={value} className={draft.sandboxMode === value ? "is-selected" : ""} onClick={() => update({ sandboxMode: value })}>{label}</button>)}</div></div><div className="settings-row settings-actions"><button type="button" className="primary-button" onClick={() => execute(() => saveDraft("默认权限已保存"))}>保存权限</button></div></div></section>}
         {section === "models" && draft.provider !== "custom" && <section className="settings-section"><h2>自定义服务</h2><div className="settings-group form-settings"><label className="settings-row"><span>服务名称</span><input value={draft.serviceName} onChange={(event) => update({ serviceName: event.target.value })} /></label><label className="settings-row"><span>Base URL</span><input value={draft.baseUrl} onChange={(event) => update({ baseUrl: event.target.value })} /></label><label className="settings-row"><span>API key</span><span className="secret-input"><input type="password" value={apiKey} placeholder={draft.hasApiKey ? "已安全保存" : "输入 API key"} onChange={(event) => setApiKey(event.target.value)} /><Eye size={18} /></span></label><div className="settings-row settings-actions"><button type="button" className="secondary-button" disabled={busy} onClick={() => execute(async () => (await onTest({ ...draft, provider: "custom", apiKey })).message)}>测试连接</button><button type="button" className="primary-button" disabled={busy} onClick={() => execute(async () => { await onSave({ ...draft, provider: "custom", apiKey }); setApiKey(""); onNotify("自定义服务已保存并启用"); return "已保存"; })}>保存服务</button></div></div></section>}
@@ -513,12 +650,20 @@ function App() {
   const [settings, setSettings] = useState(fallbackSettings);
   const [auth, setAuth] = useState({ connected: false, message: "", account: null });
   const [models, setModels] = useState([]);
+  const [modelsByAgent, setModelsByAgent] = useState({});
+  const [agents, setAgents] = useState(fallbackAgents);
+  const [selectedAgent, setSelectedAgent] = useState("codex");
+  const [agentMode, setAgentMode] = useState("default");
+  const [agentPreferences, setAgentPreferences] = useState(loadAgentPreferences);
+  const [providerStore, setProviderStore] = useState({ activeProfileId: "", profiles: [] });
+  const [runtimeProgress, setRuntimeProgress] = useState({});
   const [systemInfo, setSystemInfo] = useState({});
   const [modelsLoading, setModelsLoading] = useState(true);
   const [modelsError, setModelsError] = useState("");
   const [defaultParent, setDefaultParent] = useState("");
   const [expandedProjects, setExpandedProjects] = useState([]);
   const [activeThread, setActiveThread] = useState(null);
+  const [workspaceReady, setWorkspaceReady] = useState(false);
   const [view, setView] = useState("project");
   const [modalStep, setModalStep] = useState(null);
   const [bottomPanelOpen, setBottomPanelOpen] = useState(false);
@@ -549,42 +694,116 @@ function App() {
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState("");
   const [fatalError, setFatalError] = useState("");
+  const runContexts = useRef(new Map());
+  const activeThreadRef = useRef(null);
+  const activeProjectRef = useRef(null);
 
   const activeMessages = activeThread ? messages[activeThread.id] || [] : [];
   const isStandalone = activeThread?.type === "standalone";
   const activeProject = activeThread?.type === "project" ? workspace.projects.find((project) => project.id === activeThread.projectId) : null;
+  const activeModels = selectedAgent === "codex" ? models : modelsByAgent[selectedAgent] || [];
+  const activePreference = selectedAgent === "codex"
+    ? { model: settings.model, reasoning: settings.reasoning }
+    : agentPreferences[selectedAgent] || { model: "default", reasoning: "high" };
+  const activeComposerSettings = { ...settings, ...activePreference, provider: selectedAgent === "codex" ? settings.provider : "codex" };
+
+  useEffect(() => { activeThreadRef.current = activeThread; }, [activeThread]);
+  useEffect(() => { activeProjectRef.current = activeProject; }, [activeProject]);
 
   useEffect(() => { localStorage.setItem("rux.messages.v1", JSON.stringify(messages)); }, [messages]);
+  useEffect(() => { localStorage.setItem("rux.agent-preferences.v1", JSON.stringify(agentPreferences)); }, [agentPreferences]);
   useEffect(() => { document.documentElement.style.setProperty("--ui-font-size", `${settings.uiFontSize || 14}px`); }, [settings.uiFontSize]);
 
   useEffect(() => {
     if (!api) { setFatalError("当前页面未运行在 Electron 客户端中"); return undefined; }
     let cancelled = false;
+    const offRuntime = api.runtimes.onProgress((progress) => {
+      if (cancelled) return;
+      setRuntimeProgress((current) => ({ ...current, [progress.agentId]: progress }));
+      if (progress.state === "ready") api.agents.list().then(({ agents: nextAgents }) => { if (!cancelled) setAgents(nextAgents); }).catch(() => {});
+    });
     Promise.all([api.projects.list(), api.settings.get(), api.auth.status(), api.projects.defaultParent()]).then(async ([nextWorkspace, nextSettings, nextAuth, parent]) => {
       if (cancelled) return;
       setWorkspace(nextWorkspace); setSettings(nextSettings); setAuth(nextAuth); setDefaultParent(parent);
+      setAgentPreferences((current) => ({ ...current, codex: { model: nextSettings.model, reasoning: nextSettings.reasoning } }));
       const firstProject = nextWorkspace.projects[0];
       const firstThread = firstProject?.threads[0];
       if (firstProject && firstThread) {
         setExpandedProjects([firstProject.id]);
         setActiveThread({ type: "project", projectId: firstProject.id, projectName: firstProject.name, projectPath: firstProject.path, ...firstThread });
-      } else if (nextWorkspace.standaloneThreads[0]) setActiveThread({ type: "standalone", ...nextWorkspace.standaloneThreads[0] });
+        setSelectedAgent(firstThread.agentId || "codex");
+        setAgentMode(firstThread.agentMode || "default");
+      } else if (nextWorkspace.standaloneThreads[0]) { setActiveThread({ type: "standalone", ...nextWorkspace.standaloneThreads[0] }); setSelectedAgent(nextWorkspace.standaloneThreads[0].agentId || "codex"); setAgentMode(nextWorkspace.standaloneThreads[0].agentMode || "default"); }
       else {
         const thread = await api.projects.addStandalone({ title: "未命名会话" });
         const updatedWorkspace = await api.projects.list();
         if (!cancelled) { setWorkspace(updatedWorkspace); setActiveThread({ type: "standalone", ...thread }); setView("standalone"); }
       }
+      if (!cancelled) setWorkspaceReady(true);
     }).catch((error) => setFatalError(String(error.message || error)));
-    api.models.list().then(({ models: nextModels }) => {
-      if (!cancelled) { setModels(nextModels); setModelsError(""); }
-    }).catch((error) => {
-      if (!cancelled) setModelsError(String(error.message || error));
-    }).finally(() => {
-      if (!cancelled) setModelsLoading(false);
-    });
+    api.agents.list().then(({ agents: detectedAgents }) => {
+      if (!cancelled && detectedAgents?.length) setAgents(detectedAgents);
+    }).catch(() => {});
     api.system.info().then((info) => { if (!cancelled) setSystemInfo(info); }).catch(() => {});
+    api.providers.list().then((store) => { if (!cancelled) setProviderStore(store); }).catch(() => {});
     const off = api.terminal.onData((data) => setTerminalOutput((current) => `${current}${data}`));
-    return () => { cancelled = true; off(); };
+    return () => { cancelled = true; off(); offRuntime(); };
+  }, []);
+
+  useEffect(() => {
+    if (!api || !workspaceReady) return;
+    let cancelled = false;
+    setModelsLoading(true);
+    api.models.list({ agentId: selectedAgent, projectId: activeProject?.id }).then(({ models: nextModels }) => {
+      if (cancelled) return;
+      if (selectedAgent === "codex") setModels(nextModels);
+      else setModelsByAgent((current) => ({ ...current, [selectedAgent]: nextModels }));
+      setModelsError("");
+      if (selectedAgent === "codex") {
+        setAgentPreferences((current) => {
+          const existing = current.codex || {};
+          const selected = nextModels.find((model) => model.model === existing.model) || nextModels.find((model) => model.isDefault) || nextModels[0];
+          return selected ? { ...current, codex: { model: selected.model, reasoning: selected.supportedReasoningEfforts.some((effort) => effort.reasoningEffort === existing.reasoning) ? existing.reasoning : selected.defaultReasoningEffort } } : current;
+        });
+        api.auth.status().then((nextAuth) => { if (!cancelled) setAuth(nextAuth); }).catch(() => {});
+        return;
+      }
+      setAgentPreferences((current) => {
+        const existing = current[selectedAgent] || {};
+        const selected = nextModels.find((model) => model.model === existing.model) || nextModels.find((model) => model.isDefault) || nextModels[0];
+        return selected ? { ...current, [selectedAgent]: { model: selected.model, reasoning: selected.supportedReasoningEfforts.some((effort) => effort.reasoningEffort === existing.reasoning) ? existing.reasoning : selected.defaultReasoningEffort } } : current;
+      });
+    }).catch((error) => { if (!cancelled) setModelsError(String(error.message || error)); })
+      .finally(() => { if (!cancelled) setModelsLoading(false); });
+    return () => { cancelled = true; };
+  }, [workspaceReady, selectedAgent, activeProject?.id, providerStore.activeProfileId, providerStore.profiles]);
+
+  useEffect(() => {
+    if (!api?.agent?.onEvent) return undefined;
+    return api.agent.onEvent((event) => {
+      const context = runContexts.current.get(event.runId);
+      if (!context) return;
+      if (event.type === "thread-started" && event.threadId) {
+        context.threadId = event.threadId;
+        api.threads.update({ type: context.type, projectId: context.projectId, threadId: context.localThreadId, agentId: context.agentId, nativeSessionId: event.threadId, agentMode: context.agentMode, codexThreadId: context.agentId === "codex" ? event.threadId : undefined, title: context.shouldRename ? context.prompt.slice(0, 28) : undefined }).then((updated) => {
+          if (activeThreadRef.current?.id === context.localThreadId) setActiveThread((current) => ({ ...current, ...updated }));
+          reloadWorkspace().catch(() => {});
+        }).catch((error) => notify(String(error.message || error)));
+      }
+      if (event.turnId) context.turnId = event.turnId;
+      setMessages((current) => {
+        const threadMessages = current[context.localThreadId] || [];
+        return {
+          ...current,
+          [context.localThreadId]: threadMessages.map((message) => message.id === context.assistantMessageId ? reduceStreamEvent(message, event) : message),
+        };
+      });
+      if (event.type === "turn-completed" || event.type === "error") {
+        runContexts.current.delete(event.runId);
+        if (activeThreadRef.current?.id === context.localThreadId) setSending(false);
+        if (context.projectId) refreshGit(context.projectId).catch(() => {});
+      }
+    });
   }, []);
 
   useEffect(() => {
@@ -632,11 +851,11 @@ function App() {
 
   async function selectDiff(path, projectId = activeProject?.id) { if (!projectId) return; setSelectedFile(path); setDiff("加载中…"); try { setDiff(await api.git.diff({ projectId, path })); } catch (error) { setDiff(String(error.message || error)); } }
 
-  function selectProjectThread(project, thread) { setActiveThread({ type: "project", projectId: project.id, projectName: project.name, projectPath: project.path, ...thread }); setView("project"); setBottomPanelOpen(false); closeTerminal(); setModelOpen(null); }
-  function selectStandalone(thread) { setActiveThread({ type: "standalone", ...thread }); setView("standalone"); setBottomPanelOpen(false); closeTerminal(); setModelOpen(null); }
+  function selectProjectThread(project, thread) { setActiveThread({ type: "project", projectId: project.id, projectName: project.name, projectPath: project.path, ...thread }); setSelectedAgent(thread.agentId || "codex"); setAgentMode(thread.agentMode || "default"); setView("project"); setBottomPanelOpen(false); closeTerminal(); setModelOpen(null); }
+  function selectStandalone(thread) { setActiveThread({ type: "standalone", ...thread }); setSelectedAgent(thread.agentId || "codex"); setAgentMode(thread.agentMode || "default"); setView("standalone"); setBottomPanelOpen(false); closeTerminal(); setModelOpen(null); }
 
-  async function newProjectThread(project) { try { const thread = await api.projects.addThread({ projectId: project.id, title: "未命名会话" }); await reloadWorkspace(); selectProjectThread(project, thread); } catch (error) { notify(String(error.message || error)); } }
-  async function newStandalone() { try { const thread = await api.projects.addStandalone({ title: "未命名会话" }); await reloadWorkspace(); selectStandalone(thread); } catch (error) { notify(String(error.message || error)); } }
+  async function newProjectThread(project) { try { const thread = await api.projects.addThread({ projectId: project.id, title: "未命名会话" }); await reloadWorkspace(); selectProjectThread(project, thread); return thread; } catch (error) { notify(String(error.message || error)); return null; } }
+  async function newStandalone() { try { const thread = await api.projects.addStandalone({ title: "未命名会话" }); await reloadWorkspace(); selectStandalone(thread); return thread; } catch (error) { notify(String(error.message || error)); return null; } }
 
   async function renameActiveThread() {
     if (!activeThread) return;
@@ -741,24 +960,45 @@ function App() {
     await reloadWorkspace(project); setModalStep(null); notify(action.kind === "create" ? "项目已创建并加入侧栏" : "项目已导入并加入侧栏");
   }
 
-  async function sendMessage() {
-    const prompt = composerValue.trim(); if (!prompt || !activeThread || sending) return;
-    const userMessage = { id: crypto.randomUUID(), role: "user", text: prompt };
-    setMessages((current) => ({ ...current, [activeThread.id]: [...(current[activeThread.id] || []), userMessage] }));
+  async function sendMessage(nextPrompt = composerValue) {
+    const prompt = String(nextPrompt || "").trim(); if (!prompt || !activeThread || sending) return;
+    const agentDefinition = agents.find((agent) => agent.id === selectedAgent);
+    if (!agentDefinition?.integrated) { notify(`${agentDefinition?.name || selectedAgent} 适配器尚未启用`); return; }
+    const runId = crypto.randomUUID();
+    const userMessage = { id: crypto.randomUUID(), role: "user", text: prompt, parts: [{ type: "text", text: prompt }], createdAt: new Date().toISOString(), agentId: selectedAgent };
+    const assistantMessage = { id: crypto.randomUUID(), role: "assistant", text: "", parts: [], status: "running", createdAt: new Date().toISOString(), agentId: selectedAgent };
+    const nativeSessionId = activeThread.nativeSessionId || (selectedAgent === "codex" ? activeThread.codexThreadId : "") || "";
+    const context = { runId, localThreadId: activeThread.id, assistantMessageId: assistantMessage.id, type: activeThread.type, projectId: activeThread.projectId, prompt, shouldRename: activeThread.title.startsWith("未命名") || activeThread.title === "项目会话", agentId: selectedAgent, agentMode, threadId: nativeSessionId, turnId: "" };
+    runContexts.current.set(runId, context);
+    setMessages((current) => ({ ...current, [activeThread.id]: [...(current[activeThread.id] || []), userMessage, assistantMessage] }));
     setComposerValue(""); setSending(true);
     try {
-      const result = await api.agent.send({ projectId: activeProject?.id, prompt, model: settings.model, reasoning: settings.reasoning, sandboxMode: settings.sandboxMode, images: attachments, webSearch, threadId: activeThread.codexThreadId });
-      const assistantMessage = { id: crypto.randomUUID(), role: "assistant", text: result.text };
-      setMessages((current) => ({ ...current, [activeThread.id]: [...(current[activeThread.id] || []), assistantMessage] }));
-      if (result.threadId && result.threadId !== activeThread.codexThreadId) {
-        const updated = await api.threads.update({ type: activeThread.type, projectId: activeThread.projectId, threadId: activeThread.id, codexThreadId: result.threadId, title: activeThread.title.startsWith("未命名") || activeThread.title === "项目会话" ? prompt.slice(0, 28) : undefined });
-        setActiveThread((current) => ({ ...current, ...updated })); await reloadWorkspace();
-      }
-      if (activeProject) await refreshGit(activeProject.id);
+      const result = await api.agent.start({ runId, agentId: selectedAgent, projectId: activeProject?.id, prompt, model: activePreference.model, reasoning: activePreference.reasoning, sandboxMode: settings.sandboxMode, images: attachments, webSearch, threadId: nativeSessionId, nativeSessionId, mode: agentMode });
+      context.threadId = result.threadId || result.sessionId || context.threadId;
+      context.turnId = result.turnId || context.turnId;
       setAttachments([]);
     } catch (error) {
-      setMessages((current) => ({ ...current, [activeThread.id]: [...(current[activeThread.id] || []), { id: crypto.randomUUID(), role: "assistant", text: String(error.message || error), error: true }] }));
-    } finally { setSending(false); }
+      runContexts.current.delete(runId);
+      setMessages((current) => ({ ...current, [activeThread.id]: (current[activeThread.id] || []).map((message) => message.id === assistantMessage.id ? reduceStreamEvent(message, { type: "error", error: String(error.message || error) }) : message) }));
+      setSending(false);
+    }
+  }
+
+  async function cancelCurrentRun() {
+    const context = [...runContexts.current.values()].find((item) => item.localThreadId === activeThread?.id);
+    if (!context?.threadId || !context?.turnId) return;
+    try { await api.agent.interrupt({ agentId: context.agentId, runId: context.runId, threadId: context.threadId, turnId: context.turnId }); }
+    catch (error) { notify(String(error.message || error)); }
+  }
+
+  async function respondToApproval({ approvalId, approved, optionId }) {
+    const decision = approved ? (optionId === "allow-session" ? "acceptForSession" : "accept") : "decline";
+    await api.agent.respondToApproval({ approvalId, decision });
+    setMessages((current) => {
+      const next = { ...current };
+      for (const threadId of Object.keys(next)) next[threadId] = next[threadId].map((message) => ({ ...message, parts: message.parts?.map((part) => part.approval?.id === approvalId ? { ...part, approval: { ...part.approval, approved, optionId } } : part) }));
+      return next;
+    });
   }
 
   async function startTerminal() {
@@ -813,12 +1053,20 @@ function App() {
 
   async function saveSettings(input) { const saved = await api.settings.save(input); setSettings(saved); return saved; }
   async function testSettings(input) { return await api.settings.test(input); }
+  async function saveProvider(input) { const saved = await api.providers.save(input); setProviderStore(await api.providers.list()); return saved; }
+  async function removeProvider(id) { const store = await api.providers.remove(id); setProviderStore(store); return store; }
+  async function setActiveProvider(id) { await api.providers.setActive(id); const store = await api.providers.list(); setProviderStore(store); return store; }
 
   async function selectModel(model) {
     try {
       const supported = model.supportedReasoningEfforts.map((effort) => effort.reasoningEffort);
-      const reasoning = supported.includes(settings.reasoning) ? settings.reasoning : model.defaultReasoningEffort;
-      await saveSettings({ model: model.model, reasoning });
+      const reasoning = supported.includes(activePreference.reasoning) ? activePreference.reasoning : model.defaultReasoningEffort;
+      if (selectedAgent === "codex") {
+        await saveSettings({ model: model.model, reasoning });
+        setAgentPreferences((current) => ({ ...current, codex: { model: model.model, reasoning } }));
+      } else {
+        setAgentPreferences((current) => ({ ...current, [selectedAgent]: { model: model.model, reasoning } }));
+      }
       setModelOpen(null);
       notify(`已切换到 ${model.displayName}`);
     } catch (error) { notify(String(error.message || error)); }
@@ -826,7 +1074,12 @@ function App() {
 
   async function selectReasoning(reasoning) {
     try {
-      await saveSettings({ reasoning });
+      if (selectedAgent === "codex") {
+        await saveSettings({ reasoning });
+        setAgentPreferences((current) => ({ ...current, codex: { ...current.codex, reasoning } }));
+      } else {
+        setAgentPreferences((current) => ({ ...current, [selectedAgent]: { ...current[selectedAgent], reasoning } }));
+      }
       setModelOpen(null);
       notify(`思考程度已切换为${reasoningLabels[reasoning] || reasoning}`);
     } catch (error) { notify(String(error.message || error)); }
@@ -834,9 +1087,56 @@ function App() {
 
   if (fatalError) return <div className="fatal-screen"><WarningCircle size={32} /><h1>Rux 无法启动</h1><p>{fatalError}</p></div>;
   if (!activeThread) return <div className="fatal-screen"><CircleNotch size={30} className="spin" /><p>正在加载工作区…</p></div>;
-  if (view === "settings") return <div className="app-frame"><SettingsScreen settings={settings} auth={auth} models={models} systemInfo={systemInfo} projectCount={workspace.projects.length} activeProject={activeProject} gitState={gitState} onBack={() => setView(isStandalone ? "standalone" : "project")} onSave={saveSettings} onTest={testSettings} onLogin={async () => { await api.auth.login(); setTimeout(async () => setAuth(await api.auth.status()), 1500); }} onLogout={async () => { await api.auth.logout(); setAuth(await api.auth.status()); return "已退出"; }} onNotify={notify} />{toast && <div className="toast" role="status" aria-live="polite"><CheckCircle size={18} />{toast}</div>}</div>;
+  if (view === "settings") return <div className="app-frame"><SettingsScreen settings={settings} auth={auth} models={models} agents={agents} modelsByAgent={modelsByAgent} providerStore={providerStore} onProviderSave={saveProvider} onProviderRemove={removeProvider} onProviderSetActive={setActiveProvider} onProviderTest={(id) => api.providers.test(id)} systemInfo={systemInfo} projectCount={workspace.projects.length} activeProject={activeProject} gitState={gitState} onBack={() => setView(isStandalone ? "standalone" : "project")} onSave={saveSettings} onTest={testSettings} onLogin={async () => { await api.auth.login(); setTimeout(async () => setAuth(await api.auth.status()), 1500); }} onLogout={async () => { await api.auth.logout(); setAuth(await api.auth.status()); return "已退出"; }} onNotify={notify} />{toast && <div className="toast" role="status" aria-live="polite"><CheckCircle size={18} />{toast}</div>}</div>;
 
-  const composerProps = { settings, auth, models, modelsLoading, modelsError, modelOpen, sandboxOpen, attachments, listening, onToggleModel: (menu) => { setModelOpen((open) => open === menu ? null : menu); setSandboxOpen(false); }, onSelectModel: selectModel, onSelectReasoning: selectReasoning, onToggleSandbox: () => { setSandboxOpen((open) => !open); setModelOpen(null); }, onSelectSandbox: selectSandbox, onPermissionInfo: () => notify("可在设置 > 权限中修改默认批准方式"), onAddFiles: addFiles, onRemoveAttachment: (path) => setAttachments((current) => current.filter((item) => item !== path)), onVoice: toggleVoice, onAssociateProject: () => { const project = workspace.projects[0]; const thread = project?.threads[0]; if (project && thread) selectProjectThread(project, thread); else if (project) newProjectThread(project); }, value: composerValue, onChange: setComposerValue, onSend: sendMessage, sending };
+  const composerProps = { settings: activeComposerSettings, auth, models: activeModels, modelsLoading, modelsError, modelOpen, sandboxOpen, attachments, listening, onToggleModel: (menu) => { setModelOpen((open) => open === menu ? null : menu); setSandboxOpen(false); }, onSelectModel: selectModel, onSelectReasoning: selectReasoning, onToggleSandbox: () => { setSandboxOpen((open) => !open); setModelOpen(null); }, onSelectSandbox: selectSandbox, onPermissionInfo: () => notify("可在设置 > 权限中修改默认批准方式"), onAddFiles: addFiles, onRemoveAttachment: (path) => setAttachments((current) => current.filter((item) => item !== path)), onVoice: toggleVoice, onAssociateProject: () => { const project = workspace.projects[0]; const thread = project?.threads[0]; if (project && thread) selectProjectThread(project, thread); else if (project) newProjectThread(project); }, value: composerValue, onChange: setComposerValue, onSend: sendMessage, sending };
+  const assistantProps = {
+    messages: activeMessages,
+    running: sending,
+    onNewMessage: sendMessage,
+    onCancel: cancelCurrentRun,
+    onApproval: respondToApproval,
+    agents,
+    runtimeProgress,
+    selectedAgent,
+    onSelectAgent: async (agentId) => {
+      const agent = agents.find((item) => item.id === agentId);
+      if (!agent?.integrated) { notify(`${agent?.name || agentId} 适配器尚未启用`); return; }
+      if (agentId === selectedAgent) return;
+      const boundAgent = activeThread.agentId || (activeThread.codexThreadId ? "codex" : null);
+      if (activeMessages.length || (boundAgent && boundAgent !== agentId) || activeThread.nativeSessionId) {
+        if (!window.confirm(`当前会话已绑定 ${agents.find((item) => item.id === selectedAgent)?.name || selectedAgent}。\n\n切换到 ${agent.name} 将新建一个空白 Rux 会话，当前会话会保留。`)) return;
+        if (activeProject) {
+          const thread = await api.projects.addThread({ projectId: activeProject.id, title: `未命名 ${agent.name} 会话` });
+          await reloadWorkspace();
+          selectProjectThread(activeProject, { ...thread, agentId });
+        } else {
+          const thread = await api.projects.addStandalone({ title: `未命名 ${agent.name} 会话` });
+          await reloadWorkspace();
+          selectStandalone({ ...thread, agentId });
+        }
+      }
+      setSelectedAgent(agentId);
+      setAgentMode(agent.modes?.[0]?.id || "default");
+    },
+    agentMode,
+    onAgentMode: setAgentMode,
+    modelLabel: modelDisplayName(activeComposerSettings, activeModels),
+    reasoningLabel: reasoningLabels[activePreference.reasoning] || activePreference.reasoning,
+    permissionLabel: sandboxLabels[settings.sandboxMode] || "帮我批准",
+    showPermission: selectedAgent === "codex",
+    modelOpen,
+    sandboxOpen,
+    modelPopover: <ModelPopover mode={modelOpen} settings={activeComposerSettings} auth={auth} models={activeModels} loading={modelsLoading} error={modelsError} onSelectModel={selectModel} onSelectReasoning={selectReasoning} connectionLabel={selectedAgent === "claude-code" ? `${modelDisplayName(activeComposerSettings, activeModels)} · Claude Code` : undefined} />,
+    permissionPopover: <PermissionPopover selectedValue={settings.sandboxMode} onSelect={selectSandbox} onLearnMore={() => notify("可在设置 > 权限中修改默认批准方式")} />,
+    onToggleModel: composerProps.onToggleModel,
+    onToggleSandbox: composerProps.onToggleSandbox,
+    attachments,
+    onAddFiles: addFiles,
+    onRemoveAttachment: composerProps.onRemoveAttachment,
+    listening,
+    onVoice: toggleVoice,
+  };
   return (
     <div className="app-frame">
       <Sidebar workspace={workspace} auth={auth} expandedProjects={expandedProjects} activeThread={activeThread} onToggleProject={(projectId) => setExpandedProjects((current) => current.includes(projectId) ? current.filter((id) => id !== projectId) : [...current, projectId])} onSelectProjectThread={selectProjectThread} onSelectStandalone={selectStandalone} onAddProject={() => setModalStep("choose")} onRemoveProject={removeProject} onOpenProjectPath={(project) => api.system.openPath(project.id).catch((error) => notify(String(error.message || error)))} onCopyProjectPath={(project) => api.system.copy(project.path).then(() => notify("项目路径已复制"))} onNewProjectThread={newProjectThread} onNewStandalone={newStandalone} onOpenSettings={() => setView("settings")} />
@@ -844,7 +1144,7 @@ function App() {
         <TopBar activeThread={activeThread} bottomPanelOpen={bottomPanelOpen} rightPanelOpen={rightPanelOpen} onToggleBottomPanel={toggleBottomPanel} onToggleRightPanel={() => setRightPanelOpen((open) => !open)} onOpenSettings={() => setView("settings")} onOpenPath={() => activeProject && api.system.openPath(activeProject.id).catch((error) => notify(String(error.message || error)))} onCopyPath={() => activeProject && api.system.copy(activeProject.path).then(() => notify("项目路径已复制"))} onShare={copyConversation} onRename={renameActiveThread} onRemoveThread={removeActiveThread} />
         <div className={`stage-body ${bottomPanelOpen ? "bottom-panel-is-open" : ""}`}>
           <div className="work-pane">
-            <div className="main-content">{view === "review" ? <ReviewScreen gitState={gitState} selectedFile={selectedFile} diff={diff} onSelectFile={selectDiff} onBack={() => setView("project")} onStageAll={() => stage(gitState.files.map((file) => file.path))} onStageFile={() => stage([selectedFile])} onDiscard={discardSelected} busy={busy} /> : <ConversationScreen standalone={isStandalone} activeThread={activeThread} messages={activeMessages} sending={sending} composerProps={composerProps} gitState={gitState} onReview={openReview} />}</div>
+            <div className="main-content">{view === "review" ? <ReviewScreen gitState={gitState} selectedFile={selectedFile} diff={diff} onSelectFile={selectDiff} onBack={() => setView("project")} onStageAll={() => stage(gitState.files.map((file) => file.path))} onStageFile={() => stage([selectedFile])} onDiscard={discardSelected} busy={busy} /> : <ConversationScreen standalone={isStandalone} activeThread={activeThread} assistantProps={assistantProps} gitState={gitState} onReview={openReview} />}</div>
             {rightPanelOpen && <ToolLauncher activeTool={bottomPanelOpen ? activeTool : ""} hasProject={Boolean(activeProject)} onSelectTool={selectWorkspaceTool} />}
           </div>
           {bottomPanelOpen && <WorkspaceDock activeTool={activeTool} hasProject={Boolean(activeProject)} gitState={gitState} terminalProps={{ output: terminalOutput, command: terminalCommand, onCommandChange: setTerminalCommand, onRun: runTerminalCommand, onClose: closeBottomPanel, projectName: activeProject?.name || "终端", embedded: true }} remoteUrl={remoteUrl} projectFiles={projectFiles} sideMessages={sideMessages} sideValue={sideValue} sideSending={sideSending} onSelectTool={selectWorkspaceTool} onClose={closeBottomPanel} onOpenReview={() => { setView("review"); setBottomPanelOpen(false); }} onOpenRemote={openRemote} onOpenFile={(path) => activeProject && api.files.open({ projectId: activeProject.id, path }).catch((error) => notify(String(error.message || error)))} onSideValue={setSideValue} onSendSide={sendSideChat} />}
