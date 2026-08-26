@@ -249,7 +249,9 @@ Current machine state at design time:
 - Claude Code `2.1.206`: installed
 - Pi: not installed
 
-Rux does not silently install an agent or mutate its global credentials.
+Rux may install a pinned, integrity-verified managed runtime on first use while
+showing download and installation progress. It does not mutate an agent's global
+credentials or copy credentials into the Renderer.
 
 ## Migration order
 

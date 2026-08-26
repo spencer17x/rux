@@ -1354,6 +1354,16 @@ button.environment-row:hover {
   font-weight: 500;
 }
 
+.file-list small i {
+  padding: 2px 4px;
+  border-radius: 4px;
+  color: var(--muted);
+  background: var(--surface-muted);
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 500;
+}
+
 .change-count em,
 .file-list small em {
   color: var(--red);
@@ -1458,6 +1468,8 @@ button.environment-row:hover {
 .workspace-dock .terminal-tabs { flex: 0 0 37px; height: 37px; }
 .workspace-dock .terminal-body { height: auto; flex: 1; min-height: 0; }
 .workspace-dock .terminal-command { flex: 0 0 45px; height: 45px; }
+.xterm-container { width: 100%; height: 100%; min-height: 0; padding: 7px 9px; background: #1e1e1e; }
+.xterm-container .xterm { height: 100%; }
 
 .dock-review { display: grid; height: 100%; grid-template-columns: 190px minmax(0, 1fr) auto; align-items: center; gap: 16px; padding: 16px 18px; }
 .dock-review > div:first-child { display: flex; flex-direction: column; gap: 5px; }
@@ -1684,6 +1696,20 @@ button.environment-row:hover {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.review-branch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.review-branch select {
+  max-width: 220px;
+  border: 0;
+  color: var(--text);
+  background: transparent;
+  font: inherit;
 }
 
 .tests-passed {

@@ -39,6 +39,7 @@ type JsonRpcMessage = {
 type PendingRequest = {
   resolve: (value: any) => void;
   reject: (error: Error) => void;
+  timeout: ReturnType<typeof setTimeout>;
 };
 
 type ActiveRun = {
@@ -130,7 +131,7 @@ export class CodexAppServerClient {
     this.process = null;
     this.initialized = null;
     process?.kill("SIGTERM");
-    for (const request of this.requests.values()) request.reject(new Error("Codex App Server 已停止"));
+    for (const request of this.requests.values()) { clearTimeout(request.timeout); request.reject(new Error("Codex App Server 已停止")); }
     this.requests.clear();
     this.runsByThread.clear();
     this.runsByTurn.clear();
@@ -202,8 +203,18 @@ export class CodexAppServerClient {
   private request(method: string, params: unknown): Promise<any> {
     const id = this.nextRequestId++;
     return new Promise((resolve, reject) => {
-      this.requests.set(id, { resolve, reject });
-      this.write({ id, method, params });
+      const timeout = setTimeout(() => {
+        this.requests.delete(id);
+        reject(new Error(`Codex ${method} 请求超时`));
+      }, 120_000);
+      this.requests.set(id, { resolve, reject, timeout });
+      try {
+        this.write({ id, method, params });
+      } catch (error) {
+        clearTimeout(timeout);
+        this.requests.delete(id);
+        reject(error as Error);
+      }
     });
   }
 
@@ -224,6 +235,7 @@ export class CodexAppServerClient {
       const pending = this.requests.get(message.id);
       if (!pending) return;
       this.requests.delete(message.id);
+      clearTimeout(pending.timeout);
       if (message.error) pending.reject(new Error(message.error.message || "Codex 请求失败"));
       else pending.resolve(message.result);
       return;
@@ -314,7 +326,7 @@ export class CodexAppServerClient {
     if (!this.process) return;
     this.process = null;
     this.initialized = null;
-    for (const request of this.requests.values()) request.reject(error);
+    for (const request of this.requests.values()) { clearTimeout(request.timeout); request.reject(error); }
     this.requests.clear();
     for (const run of this.runsByThread.values()) this.emit({ runId: run.runId, type: "error", threadId: run.threadId, turnId: run.turnId, error: error.message });
     this.runsByThread.clear();

@@ -16,7 +16,7 @@ Use mature libraries for generic interaction infrastructure. Keep custom code on
 | Reasoning, tool calls, approvals | Not fully implemented | assistant-ui Reasoning/Tool UI/approval gate | Adopt |
 | Streaming event state | Buffered IPC response | AgentAdapter event stream + assistant-ui runtime | Replace |
 | App layout and split panes | Fixed flex dimensions | `react-resizable-panels` | Replace |
-| Terminal rendering | `<pre>` plus plain shell pipes | `@xterm/xterm`, `@xterm/addon-fit`, `node-pty` | Replace |
+| Terminal rendering | `@xterm/xterm`, `@xterm/addon-fit`, `node-pty` | Keep and extend with terminal lifecycle tests | Adopted |
 | Project/file tree | Flat recursive file list | `react-arborist` | Replace |
 | Source viewer and Git diff | Plain `<pre>` text | CodeMirror 6 and `@codemirror/merge` | Replace |
 | Async model/account/Git queries | Component-owned effects | `@tanstack/react-query` | Adopt |
@@ -78,7 +78,7 @@ Use Electron `WebContentsView`; do not use deprecated `BrowserView` or enable th
 
 - Agent-native session logs remain authoritative for transcript/tool history.
 - Rux persists the cross-agent index, project/thread metadata, layouts, provider profiles, and handoff relationships.
-- Move workspace metadata from ad-hoc JSON to SQLite with a typed schema when the AgentAdapter foundation lands.
+- Workspace, thread, and transcript state uses SQLite with a typed schema and one-time migration from legacy JSON/localStorage.
 - Keep secrets in `safeStorage`; the database stores only secret references.
 
 ## Dependency phases

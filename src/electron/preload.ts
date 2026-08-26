@@ -17,6 +17,11 @@ const api = {
     status: () => ipcRenderer.invoke("auth:status"),
     login: () => ipcRenderer.invoke("auth:login"),
     logout: () => ipcRenderer.invoke("auth:logout"),
+    onLoginEvent: (listener: (event: unknown) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, loginEvent: unknown) => listener(loginEvent);
+      ipcRenderer.on("auth:login-event", handler);
+      return () => ipcRenderer.removeListener("auth:login-event", handler);
+    },
   },
   models: {
     list: (input?: unknown) => ipcRenderer.invoke("models:list", input),
@@ -49,6 +54,10 @@ const api = {
     update: (input: unknown) => ipcRenderer.invoke("threads:update", input),
     remove: (input: unknown) => ipcRenderer.invoke("threads:remove", input),
   },
+  messages: {
+    list: () => ipcRenderer.invoke("messages:list"),
+    save: (input: unknown) => ipcRenderer.invoke("messages:save", input),
+  },
   agent: {
     send: (input: unknown) => ipcRenderer.invoke("agent:send", input),
     start: (input: unknown) => ipcRenderer.invoke("agent:start", input),
@@ -77,6 +86,7 @@ const api = {
   terminal: {
     start: (projectId: string) => ipcRenderer.invoke("terminal:start", projectId),
     write: (input: string) => ipcRenderer.invoke("terminal:write", input),
+    resize: (input: unknown) => ipcRenderer.invoke("terminal:resize", input),
     stop: () => ipcRenderer.invoke("terminal:stop"),
     onData: (listener: (data: string) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, data: string) => listener(data);

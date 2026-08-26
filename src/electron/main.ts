@@ -47,6 +47,7 @@ app.whenReady().then(async () => {
 });
 
 app.on("window-all-closed", () => {
-  stopBackendProcesses();
   if (process.platform !== "darwin") app.quit();
 });
+
+app.on("before-quit", () => stopBackendProcesses());

@@ -19,7 +19,7 @@ export type ProviderProfile = {
   encryptedApiKey: string;
   hasApiKey: boolean;
   headers: Record<string, string>;
-  compatibleAgents: Array<"pi" | "rux-native">;
+  compatibleAgents: Array<"pi">;
   models: ProviderModel[];
 };
 
@@ -48,7 +48,7 @@ export class ProviderProfileStore {
     const name = String(input.name || current?.name || "自定义 Provider").trim().slice(0, 80);
     if (!name) throw new Error("Provider 名称不能为空");
     const headers = this.headers(input.headers || current?.headers || {});
-    const compatibleAgents = (input.compatibleAgents || current?.compatibleAgents || ["rux-native"]).filter((value): value is "pi" | "rux-native" => value === "pi" || value === "rux-native");
+    const compatibleAgents = (input.compatibleAgents || current?.compatibleAgents || ["pi"]).filter((value): value is "pi" => value === "pi");
     const models = (input.models || current?.models || []).map((model) => ({
       id: String(model.id || "").trim().slice(0, 160),
       name: String(model.name || model.id || "").trim().slice(0, 160),
@@ -68,7 +68,7 @@ export class ProviderProfileStore {
       encryptedApiKey,
       hasApiKey: Boolean(encryptedApiKey),
       headers,
-      compatibleAgents: compatibleAgents.length ? compatibleAgents : ["rux-native"],
+      compatibleAgents,
       models,
     };
     const index = store.profiles.findIndex((item) => item.id === id);
@@ -188,7 +188,12 @@ export class ProviderProfileStore {
   private async read(): Promise<ProviderStore> {
     try {
       const value = JSON.parse(await readFile(this.filePath, "utf8")) as ProviderStore;
-      return { activeProfileId: String(value.activeProfileId || ""), profiles: Array.isArray(value.profiles) ? value.profiles : [] };
+      return {
+        activeProfileId: String(value.activeProfileId || ""),
+        profiles: Array.isArray(value.profiles)
+          ? value.profiles.map((profile) => ({ ...profile, compatibleAgents: (profile.compatibleAgents || []).filter((agent): agent is "pi" => agent === "pi") }))
+          : [],
+      };
     } catch {
       return { activeProfileId: "", profiles: [] };
     }

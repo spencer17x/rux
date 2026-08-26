@@ -6,9 +6,10 @@
   "packageManager": "pnpm@11.18.0",
   "type": "module",
   "main": "./out/main/main.js",
-  "description": "Blank Rux desktop client",
+  "description": "Local-first multi-agent desktop workbench for coding projects",
   "scripts": {
     "dev": "electron-vite dev",
+    "postinstall": "node scripts/fix-node-pty-permissions.mjs",
     "dev:web": "vite",
     "preview": "electron-vite preview",
     "preview:web": "vite preview",
@@ -18,26 +19,32 @@
     "package": "pnpm build:desktop && electron-builder --dir",
     "dist": "pnpm build:desktop && electron-builder",
     "typecheck": "tsc --noEmit",
-    "test": "pnpm typecheck && pnpm build"
+    "test:unit": "vitest run",
+    "test": "pnpm test:unit && pnpm typecheck && pnpm build"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.3.245",
-    "@anthropic-ai/sdk": "^0.120.0",
     "@assistant-ui/react": "0.15.16",
     "@assistant-ui/react-markdown": "0.14.12",
-    "@modelcontextprotocol/sdk": "^1.30.0",
     "@phosphor-icons/react": "^2.1.10",
+    "@xterm/addon-fit": "0.11.0",
+    "@xterm/xterm": "6.0.0",
+    "node-pty": "1.1.0",
     "react": "19.2.0",
     "react-dom": "19.2.0",
-    "tar": "^7.5.22"
+    "tar": "^7.5.22",
+    "zod": "4.4.3"
   },
   "devDependencies": {
     "@types/node": "^26.2.0",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "5.0.4",
     "electron": "43.3.0",
     "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",
     "typescript": "^7.0.2",
-    "vite": "6.4.2"
+    "vite": "6.4.2",
+    "vitest": "^4.1.11"
   }
 }

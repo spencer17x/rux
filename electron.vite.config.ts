@@ -26,6 +26,14 @@ export default defineConfig({
     build: {
       rollupOptions: {
         input: resolve(__dirname, "index.html"),
+        output: {
+          manualChunks(id) {
+            if (id.includes("@assistant-ui")) return "assistant-ui";
+            if (id.includes("@phosphor-icons")) return "icons";
+            if (id.includes("node_modules/react")) return "react";
+            return undefined;
+          },
+        },
       },
     },
     plugins: [react()],

@@ -8,7 +8,7 @@ type PiRun = {
   runId: string;
   process: ChildProcessWithoutNullStreams;
   sessionFile?: string;
-  pending: Map<string, { resolve: (value: any) => void; reject: (error: Error) => void }>;
+  pending: Map<string, { resolve: (value: any) => void; reject: (error: Error) => void; timeout: ReturnType<typeof setTimeout> }>;
   buffer: string;
   decoder: StringDecoder;
   textItems: Map<number, string>;
@@ -85,8 +85,18 @@ export class PiRuntimeClient {
   private request(run: PiRun, command: Record<string, unknown>): Promise<any> {
     const id = randomUUID();
     return new Promise((resolve, reject) => {
-      run.pending.set(id, { resolve, reject });
-      run.process.stdin.write(`${JSON.stringify({ id, ...command })}\n`);
+      const timeout = setTimeout(() => {
+        run.pending.delete(id);
+        reject(new Error(`Pi ${String(command.type || "RPC")} 请求超时`));
+      }, 120_000);
+      run.pending.set(id, { resolve, reject, timeout });
+      try {
+        run.process.stdin.write(`${JSON.stringify({ id, ...command })}\n`);
+      } catch (error) {
+        clearTimeout(timeout);
+        run.pending.delete(id);
+        reject(error as Error);
+      }
     });
   }
 
@@ -110,6 +120,7 @@ export class PiRuntimeClient {
       const pending = run.pending.get(message.id);
       if (!pending) return;
       run.pending.delete(message.id);
+      clearTimeout(pending.timeout);
       if (message.success === false) pending.reject(new Error(message.error || `Pi ${message.command || "RPC"} 失败`));
       else pending.resolve(message.data);
       return;
@@ -174,7 +185,8 @@ export class PiRuntimeClient {
   private resultText(result: any): string { return typeof result === "string" ? result : (result?.content || []).map((part: any) => part.text || JSON.stringify(part)).join("\n"); }
 
   private fail(run: PiRun, error: Error): void {
-    for (const pending of run.pending.values()) pending.reject(error);
+    for (const pending of run.pending.values()) { clearTimeout(pending.timeout); pending.reject(error); }
+    run.pending.clear();
     this.emit({ runId: run.runId, type: "error", threadId: run.sessionFile, turnId: run.runId, error: error.message });
     this.stopRun(run.runId);
   }
@@ -183,6 +195,8 @@ export class PiRuntimeClient {
     const run = this.runs.get(runId);
     if (!run) return;
     this.runs.delete(runId);
+    for (const pending of run.pending.values()) { clearTimeout(pending.timeout); pending.reject(new Error("Pi 运行已停止")); }
+    run.pending.clear();
     run.decoder.end();
     if (!run.process.killed) run.process.kill("SIGTERM");
   }

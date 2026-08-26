@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   AssistantRuntimeProvider,
   ComposerPrimitive,
@@ -16,6 +16,7 @@ import {
   CircleNotch,
   Code,
   FileText,
+  Globe,
   MagnifyingGlass,
   Microphone,
   Paperclip,
@@ -189,6 +190,11 @@ export default function RuxAssistantThread({
   onToggleModel,
   onToggleSandbox,
   attachments,
+  showAttachments = true,
+  webSearch = false,
+  showWebSearch = false,
+  onToggleWebSearch,
+  voiceTranscript,
   onAddFiles,
   onRemoveAttachment,
   listening,
@@ -206,6 +212,9 @@ export default function RuxAssistantThread({
     onRespondToToolApproval: async ({ approvalId, approved, optionId }) => onApproval({ approvalId, approved, optionId }),
   });
   const selectedDefinition = useMemo(() => agents.find((agent) => agent.id === selectedAgent), [agents, selectedAgent]);
+  useEffect(() => {
+    if (voiceTranscript) runtime.thread.composer.setText(voiceTranscript);
+  }, [runtime, voiceTranscript]);
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
@@ -222,11 +231,12 @@ export default function RuxAssistantThread({
           <div className="composer">
             {runtimeProgress?.[selectedAgent] && !["ready", "error"].includes(runtimeProgress[selectedAgent].state) && <div className="runtime-inline-progress"><CircleNotch size={13} className="spin" /><span>{runtimeProgress[selectedAgent].state === "downloading" ? `正在下载 ${agents.find((agent) => agent.id === selectedAgent)?.name || selectedAgent} 运行时` : "正在验证并安装运行时"}</span><em>{runtimeProgress[selectedAgent].percent || 0}%</em><i><i style={{ width: `${runtimeProgress[selectedAgent].percent || 4}%` }} /></i></div>}
             {runtimeProgress?.[selectedAgent]?.state === "error" && <div className="runtime-inline-progress is-error"><WarningCircle size={13} /><span>{runtimeProgress[selectedAgent].message || "运行时下载失败"}</span></div>}
-            {attachments.length > 0 && <div className="attachment-list">{attachments.map((path) => <span key={path}><Paperclip size={13} />{path.split("/").pop()}<button type="button" onClick={() => onRemoveAttachment(path)}><X size={12} /></button></span>)}</div>}
+            {showAttachments && attachments.length > 0 && <div className="attachment-list">{attachments.map((path) => <span key={path}><Paperclip size={13} />{path.split(/[\\/]/).pop()}<button type="button" onClick={() => onRemoveAttachment(path)}><X size={12} /></button></span>)}</div>}
             <ComposerPrimitive.Input className="aui-composer-input" placeholder="向 Rux 发送消息" rows={2} />
             <div className="composer-controls">
               <div className="composer-left">
-                <button type="button" className="icon-button" aria-label="添加文件" onClick={onAddFiles}><Plus size={19} /></button>
+                {showAttachments && <button type="button" className="icon-button" aria-label="添加文件" onClick={onAddFiles}><Plus size={19} /></button>}
+                {showWebSearch && <button type="button" className={`icon-button ${webSearch ? "is-active" : ""}`} aria-label={webSearch ? "关闭网页搜索" : "启用网页搜索"} title={webSearch ? "网页搜索已启用" : "启用网页搜索"} onClick={onToggleWebSearch}><Globe size={18} /></button>}
                 {showPermission && <span className="scope-menu-wrap"><button type="button" className="scope-button" onClick={onToggleSandbox}><ShieldCheck size={16} />{permissionLabel}<CaretDown size={12} /></button>{sandboxOpen && permissionPopover}</span>}
               </div>
               <div className="composer-right">

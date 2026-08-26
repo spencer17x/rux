@@ -29,7 +29,6 @@ import {
   Keyboard,
   LockKey,
   MagnifyingGlass,
-  Microphone,
   Monitor,
   OpenAiLogo,
   Paperclip,
@@ -39,7 +38,6 @@ import {
   Robot,
   ShareNetwork,
   ShieldCheck,
-  SidebarSimple,
   SlidersHorizontal,
   TerminalWindow,
   Trash,
@@ -47,6 +45,8 @@ import {
   X,
 } from "@phosphor-icons/react";
 import RuxAssistantThread from "./assistant/RuxAssistantThread";
+import RuxTerminal from "./terminal/RuxTerminal";
+import { loadLegacyMessages, messageExportText, persistentMessages, reduceStreamEvent } from "./renderer/messages";
 
 const api = window.rux;
 
@@ -86,14 +86,6 @@ const workspaceTools = [
   { id: "chat", label: "侧边聊天", Icon: ChatCircle, shortcut: "⌥⌘S", projectOnly: false },
 ];
 
-function loadMessages() {
-  try {
-    return JSON.parse(localStorage.getItem("rux.messages.v1") || "{}");
-  } catch {
-    return {};
-  }
-}
-
 function loadAgentPreferences() {
   const fallback = {
     codex: { model: "", reasoning: "high" },
@@ -105,72 +97,6 @@ function loadAgentPreferences() {
   } catch {
     return fallback;
   }
-}
-
-function itemToMessagePart(item, startedAt = Date.now()) {
-  if (!item?.id) return null;
-  if (item.type === "agentMessage") return { type: "text", text: item.text || "", status: { type: "running" }, _itemId: item.id };
-  if (item.type === "plan") return { type: "reasoning", text: item.text || "", unstable_summary: "计划", status: { type: "running" }, _itemId: item.id };
-  if (item.type === "reasoning") return { type: "reasoning", text: [...(item.summary || []), ...(item.content || [])].join("\n"), status: { type: "running" }, _itemId: item.id };
-  const toolName = item.type;
-  if (["commandExecution", "fileChange", "mcpToolCall", "dynamicToolCall", "webSearch", "collabAgentToolCall", "subAgentActivity"].includes(toolName)) {
-    const args = item.type === "commandExecution"
-      ? { command: item.command, cwd: item.cwd }
-      : item.type === "fileChange"
-        ? { changes: item.changes }
-        : item.type === "mcpToolCall"
-          ? { server: item.server, tool: item.tool, ...(item.arguments || {}) }
-          : item.type === "webSearch"
-            ? { query: item.query || item.action?.query || "" }
-            : { ...item };
-    return { type: "tool-call", toolCallId: item.id, toolName, args, argsText: JSON.stringify(args), timing: { startedAt }, _itemId: item.id };
-  }
-  return null;
-}
-
-function completedItemResult(item) {
-  if (item.type === "commandExecution") return { output: item.aggregatedOutput || "", exitCode: item.exitCode, status: item.status };
-  if (item.type === "fileChange") return { summary: `${item.changes?.length || 0} 个文件变更`, changes: item.changes, status: item.status };
-  if (item.type === "mcpToolCall") return item.error ? { error: item.error } : item.result || { status: item.status };
-  if (item.type === "dynamicToolCall") return { output: (item.contentItems || []).map((part) => part.text || JSON.stringify(part)).join("\n"), contentItems: item.contentItems, success: item.success, status: item.status };
-  if (item.type === "webSearch") return { status: "completed", action: item.action };
-  if (item.type === "collabAgentToolCall" || item.type === "subAgentActivity") return { status: item.status || "completed", agentsStates: item.agentsStates };
-  return { status: item.status || "completed" };
-}
-
-function reduceStreamEvent(message, event) {
-  const parts = [...(message.parts || [])];
-  const findPart = () => parts.findIndex((part) => part._itemId === event.itemId || part.toolCallId === event.itemId);
-  const updatePart = (create, update) => {
-    let index = findPart();
-    if (index < 0 && create) { parts.push(create); index = parts.length - 1; }
-    if (index >= 0) parts[index] = update(parts[index]);
-  };
-  if (event.type === "item-started") {
-    const part = itemToMessagePart(event.item);
-    if (part && findPart() < 0) parts.push(part);
-  } else if (event.type === "text-delta") {
-    updatePart({ type: "text", text: "", status: { type: "running" }, _itemId: event.itemId }, (part) => ({ ...part, text: `${part.text || ""}${event.delta || ""}` }));
-  } else if (event.type === "reasoning-delta") {
-    updatePart({ type: "reasoning", text: "", status: { type: "running" }, _itemId: event.itemId }, (part) => ({ ...part, text: `${part.text || ""}${event.delta || ""}` }));
-  } else if (event.type === "tool-output-delta") {
-    updatePart(null, (part) => ({ ...part, result: { ...(part.result || {}), output: `${part.result?.output || ""}${event.delta || ""}` } }));
-  } else if (event.type === "item-completed" && event.item) {
-    const item = event.item;
-    updatePart(itemToMessagePart(item), (part) => {
-      if (item.type === "agentMessage") return { ...part, text: item.text || part.text, status: { type: "complete" } };
-      if (item.type === "reasoning" || item.type === "plan") return { ...part, text: item.text || [...(item.summary || []), ...(item.content || [])].join("\n") || part.text, status: { type: "complete" } };
-      return { ...part, result: completedItemResult(item), isError: ["failed", "declined"].includes(item.status), timing: { ...(part.timing || {}), completedAt: Date.now() } };
-    });
-  } else if (event.type === "approval-request" && event.approval) {
-    updatePart({ type: "tool-call", toolCallId: event.itemId, toolName: event.approval.method?.includes("fileChange") ? "fileChange" : "commandExecution", args: event.approval, argsText: JSON.stringify(event.approval), _itemId: event.itemId }, (part) => ({ ...part, approval: { id: event.approval.id, options: [{ id: "allow-once", kind: "allow-once", label: "允许一次" }, { id: "allow-session", kind: "allow-always", label: "本次会话允许" }, { id: "reject-once", kind: "reject-once", label: "拒绝" }] } }));
-  } else if (event.type === "turn-completed") {
-    return { ...message, parts: parts.map((part) => part.status?.type === "running" ? { ...part, status: { type: "complete" } } : part), status: event.status === "completed" ? "complete" : "error", error: event.error };
-  } else if (event.type === "error") {
-    parts.push({ type: "text", text: event.error || "Agent 执行失败", status: { type: "incomplete", reason: "error" }, _itemId: `error-${Date.now()}` });
-    return { ...message, parts, status: "error", error: event.error };
-  }
-  return { ...message, parts };
 }
 
 function IconButton({ label, children, active = false, onClick, className = "", disabled = false }) {
@@ -263,7 +189,7 @@ function Sidebar({
                     </button>
                     <IconButton label={`项目操作 ${project.name}`} className="project-action-button" active={projectMenuId === project.id} onClick={(event) => { event.stopPropagation(); setProjectMenuId((current) => current === project.id ? null : project.id); }}><DotsThree size={17} /></IconButton>
                   </div>
-                  {projectMenuId === project.id && <div className="project-action-popover" role="menu"><div className="project-location"><FolderOpen size={16} /><span><strong>{project.name}</strong><small title={project.path}>{project.path}</small></span></div><button type="button" onClick={() => { setProjectMenuId(null); onOpenProjectPath(project); }}><FolderOpen size={16} />在 Finder 中打开</button><button type="button" onClick={() => { setProjectMenuId(null); onCopyProjectPath(project); }}><Paperclip size={16} />复制项目路径</button><button type="button" onClick={() => { setProjectMenuId(null); onNewProjectThread(project); }}><Plus size={16} />新建项目会话</button><button type="button" className="danger-text" onClick={() => { setProjectMenuId(null); onRemoveProject(project); }}><Trash size={16} />从 Rux 移除</button></div>}
+                  {projectMenuId === project.id && <div className="project-action-popover" role="menu"><div className="project-location"><FolderOpen size={16} /><span><strong>{project.name}</strong><small title={project.path}>{project.path}</small></span></div><button type="button" onClick={() => { setProjectMenuId(null); onOpenProjectPath(project); }}><FolderOpen size={16} />在文件管理器中打开</button><button type="button" onClick={() => { setProjectMenuId(null); onCopyProjectPath(project); }}><Paperclip size={16} />复制项目路径</button><button type="button" onClick={() => { setProjectMenuId(null); onNewProjectThread(project); }}><Plus size={16} />新建项目会话</button><button type="button" className="danger-text" onClick={() => { setProjectMenuId(null); onRemoveProject(project); }}><Trash size={16} />从 Rux 移除</button></div>}
                   {expanded && (
                     <div className="thread-children">
                       {project.threads.map((thread) => (
@@ -311,39 +237,12 @@ function TopBar({ activeThread, bottomPanelOpen, rightPanelOpen, onToggleBottomP
       </div>
       <div className="topbar-actions">
         <IconButton label="复制会话内容" onClick={onShare}><ShareNetwork size={18} /></IconButton>
-        {isProject && <span className="toolbar-menu-wrap"><button type="button" className="toolbar-button" aria-expanded={pathOpen} onClick={() => { setPathOpen((open) => !open); setMoreOpen(false); }}>打开位置<CaretDown size={14} /></button>{pathOpen && <span className="toolbar-popover path-popover"><button type="button" onClick={() => { setPathOpen(false); onOpenPath(); }}>在 Finder 中打开</button><button type="button" onClick={() => { setPathOpen(false); onCopyPath(); }}>复制项目路径</button></span>}</span>}
+        {isProject && <span className="toolbar-menu-wrap"><button type="button" className="toolbar-button" aria-expanded={pathOpen} onClick={() => { setPathOpen((open) => !open); setMoreOpen(false); }}>打开位置<CaretDown size={14} /></button>{pathOpen && <span className="toolbar-popover path-popover"><button type="button" onClick={() => { setPathOpen(false); onOpenPath(); }}>在文件管理器中打开</button><button type="button" onClick={() => { setPathOpen(false); onCopyPath(); }}>复制项目路径</button></span>}</span>}
         <IconButton label="切换底部面板" active={bottomPanelOpen} onClick={onToggleBottomPanel}><Rows size={19} /></IconButton>
         <IconButton label="切换右侧面板" active={rightPanelOpen} onClick={onToggleRightPanel}><Columns size={19} /></IconButton>
         <IconButton label="设置" onClick={onOpenSettings}><GearSix size={18} /></IconButton>
       </div>
     </header>
-  );
-}
-
-function EnvironmentPanel({ gitState, branches, branchOpen, onToggleBranch, onSwitchBranch, onRefresh, onCommitPush, onReview }) {
-  const plus = gitState.files.reduce((total, file) => total + file.plus, 0);
-  const minus = gitState.files.reduce((total, file) => total + file.minus, 0);
-  return (
-    <aside className="environment-panel">
-      <div className="panel-heading"><span>环境信息</span><IconButton label="刷新环境信息" onClick={onRefresh}><ArrowsClockwise size={16} /></IconButton></div>
-      <button type="button" className="environment-row" onClick={onReview}>
-        <FileText size={18} /><strong>变更</strong>
-        <span className="change-count"><b>+{plus}</b> <em>−{minus}</em></span>
-      </button>
-      <div className="environment-row"><Monitor size={18} /><strong>本地</strong></div>
-      <div className="environment-menu-wrap"><button type="button" className="environment-row" aria-expanded={branchOpen} onClick={onToggleBranch}><GitBranch size={18} /><span>{gitState.branch || "—"}</span><CaretDown size={15} className="row-end" /></button>{branchOpen && <div className="branch-popover">{branches.length ? branches.map((branch) => <button type="button" key={branch} className={branch === gitState.branch ? "is-selected" : ""} onClick={() => onSwitchBranch(branch)}>{branch}{branch === gitState.branch && <Check size={14} />}</button>) : <span>没有其他本地分支</span>}</div>}</div>
-      <button type="button" className="environment-row" onClick={onCommitPush}><ArrowUp size={18} /><span>提交或推送</span></button>
-      <button type="button" className="environment-row" onClick={onReview}><GitBranch size={18} /><strong>比较分支</strong><ArrowSquareOut size={15} className="row-end" /></button>
-    </aside>
-  );
-}
-
-function UtilityPanel({ webSearch, onToggleWebSearch, onAddFiles }) {
-  return (
-    <aside className="utility-panel">
-      <button type="button" className={webSearch ? "is-active" : ""} onClick={onToggleWebSearch}><Globe size={19} /><span>{webSearch ? "已启用网页搜索" : "搜索网页"}</span>{webSearch && <Check size={15} />}</button>
-      <button type="button" onClick={onAddFiles}><Paperclip size={19} /><span>添加文件</span></button>
-    </aside>
   );
 }
 
@@ -406,57 +305,6 @@ function PermissionPopover({ selectedValue, onSelect, onLearnMore }) {
   );
 }
 
-function Composer({ standalone, settings, auth, models, modelsLoading, modelsError, modelOpen, sandboxOpen, attachments, listening, onToggleModel, onSelectModel, onSelectReasoning, onToggleSandbox, onSelectSandbox, onPermissionInfo, onAddFiles, onRemoveAttachment, onVoice, onAssociateProject, value, onChange, onSend, sending }) {
-  return (
-    <form className="composer-wrap" onSubmit={(event) => { event.preventDefault(); onSend(); }}>
-      {modelOpen && <ModelPopover mode={modelOpen} settings={settings} auth={auth} models={models} loading={modelsLoading} error={modelsError} onSelectModel={onSelectModel} onSelectReasoning={onSelectReasoning} />}
-      <div className="composer">
-        {attachments.length > 0 && <div className="attachment-list">{attachments.map((path) => <span key={path}><Paperclip size={13} />{path.split("/").pop()}<button type="button" aria-label={`移除附件 ${path.split("/").pop()}`} onClick={() => onRemoveAttachment(path)}><X size={12} /></button></span>)}</div>}
-        <textarea aria-label="消息" placeholder="向 Rux 发送消息" rows={2} value={value} onChange={(event) => onChange(event.target.value)} disabled={sending} />
-        <div className="composer-controls">
-          <div className="composer-left">
-            <IconButton label="添加文件" onClick={onAddFiles}><Plus size={20} /></IconButton>
-            {standalone ? (
-              <><span className="scope-menu-wrap"><button type="button" className="scope-button neutral" aria-expanded={sandboxOpen} onClick={onToggleSandbox}><FolderOpen size={17} />{sandboxLabels[settings.sandboxMode] || "帮我批准"}<CaretDown size={13} /></button>{sandboxOpen && <PermissionPopover selectedValue={settings.sandboxMode} onSelect={onSelectSandbox} onLearnMore={onPermissionInfo} />}</span><button type="button" className="text-action" onClick={onAssociateProject}>关联到项目</button></>
-            ) : (
-              <span className="scope-menu-wrap"><button type="button" className="scope-button" aria-expanded={sandboxOpen} onClick={onToggleSandbox}><ShieldCheck size={17} />{sandboxLabels[settings.sandboxMode] || "帮我批准"}<CaretDown size={13} /></button>{sandboxOpen && <PermissionPopover selectedValue={settings.sandboxMode} onSelect={onSelectSandbox} onLearnMore={onPermissionInfo} />}</span>
-            )}
-          </div>
-          <div className="composer-right">
-            <button type="button" className={`composer-menu ${modelOpen === "models" ? "is-active" : ""}`} aria-expanded={modelOpen === "models"} onClick={() => onToggleModel("models")}>{modelDisplayName(settings, models)}<CaretDown size={13} /></button>
-            <button type="button" className={`composer-menu ${modelOpen === "reasoning" ? "is-active" : ""}`} aria-expanded={modelOpen === "reasoning"} onClick={() => onToggleModel("reasoning")}>{reasoningLabels[settings.reasoning] || settings.reasoning}<CaretDown size={13} /></button>
-            <IconButton label={listening ? "停止语音输入" : "语音输入"} active={listening} className={listening ? "voice-listening" : ""} onClick={onVoice}><Microphone size={19} /></IconButton>
-            <button type="submit" className="send-button" aria-label="发送" disabled={sending || !value.trim()}>{sending ? <CircleNotch size={20} className="spin" /> : <ArrowUp size={20} weight="bold" />}</button>
-          </div>
-        </div>
-      </div>
-    </form>
-  );
-}
-
-function Conversation({ messages, sending, emptyTitle }) {
-  const endRef = useRef(null);
-  const hasMounted = useRef(false);
-  useEffect(() => {
-    endRef.current?.scrollIntoView({ block: "end", behavior: hasMounted.current ? "smooth" : "auto" });
-    hasMounted.current = true;
-  }, [messages.length, sending]);
-  if (!messages.length && !sending) {
-    return <div className="conversation-empty"><ChatCircle size={32} /><h2>{emptyTitle}</h2><p>输入任务后，Rux 将调用真实的本机 Codex 会话。</p></div>;
-  }
-  return (
-    <div className="conversation-scroll">
-      {messages.map((message) => (
-        <div className={`message ${message.role === "user" ? "user-message" : "agent-message"}`} key={message.id}>
-          {message.role === "user" ? <><div className="message-bubble">{message.text}</div><span className="avatar">S</span></> : <><span className="avatar avatar-dark">R</span><div className="agent-copy"><p className={message.error ? "error-text" : ""}>{message.text}</p></div></>}
-        </div>
-      ))}
-      {sending && <div className="message agent-message"><span className="avatar avatar-dark">R</span><div className="agent-copy agent-loading"><CircleNotch size={18} className="spin" />Codex 正在处理任务…</div></div>}
-      <div ref={endRef} aria-hidden="true" />
-    </div>
-  );
-}
-
 function ConversationScreen({ standalone, activeThread, assistantProps, gitState, onReview }) {
   return (
     <div className={`conversation-screen ${standalone ? "standalone-screen" : ""}`}>
@@ -468,25 +316,13 @@ function ConversationScreen({ standalone, activeThread, assistantProps, gitState
   );
 }
 
-function TerminalPanel({ output, command, onCommandChange, onRun, onClose, projectName, embedded = false }) {
-  return (
-    <section className="terminal-panel">
-      {!embedded && <div className="terminal-tabs"><div className="terminal-tab"><TerminalWindow size={17} /><span>{projectName}</span></div><IconButton label="关闭终端" className="terminal-close" onClick={onClose}><X size={18} /></IconButton></div>}
-      <pre className="terminal-body" aria-label="终端输出">{output || "终端已启动\n"}</pre>
-      <form className="terminal-command" onSubmit={(event) => { event.preventDefault(); onRun(); }}>
-        <span>$</span><input aria-label="终端命令" value={command} onChange={(event) => onCommandChange(event.target.value)} autoComplete="off" /><button type="submit" className="secondary-button">运行</button>
-      </form>
-    </section>
-  );
-}
-
 function WorkspaceDock({ activeTool, hasProject, gitState, terminalProps, remoteUrl, projectFiles, sideMessages, sideValue, sideSending, onSelectTool, onClose, onOpenReview, onOpenRemote, onOpenFile, onSideValue, onSendSide }) {
   return (
     <section className="workspace-dock" aria-label="底部工作区面板">
       <header className="workspace-dock-header"><div className="workspace-dock-tabs">{workspaceTools.map(({ id, label, Icon, projectOnly }) => <button type="button" key={id} className={activeTool === id ? "is-active" : ""} disabled={projectOnly && !hasProject} onClick={() => onSelectTool(id)}><Icon size={15} />{label}</button>)}</div><IconButton label="关闭底部面板" onClick={onClose}><X size={16} /></IconButton></header>
       <div className="workspace-dock-content">
         {activeTool === "review" && <div className="dock-review"><div><strong>{gitState.files.length} 个文件变更</strong><span>{gitState.branch || "—"}</span></div><div className="dock-file-chips">{gitState.files.slice(0, 8).map((file) => <span key={file.path}>{file.path}<small><b>+{file.plus}</b> <em>−{file.minus}</em></small></span>)}</div><button type="button" className="secondary-button" onClick={onOpenReview}><Eye size={15} />打开完整审查</button></div>}
-        {activeTool === "terminal" && <TerminalPanel {...terminalProps} />}
+        {activeTool === "terminal" && <RuxTerminal {...terminalProps} />}
         {activeTool === "browser" && <div className="dock-empty-tool"><Globe size={24} /><strong>{remoteUrl ? "项目远程仓库" : "未配置远程仓库"}</strong><span>{remoteUrl || "为当前项目添加 origin 后，可从这里打开。"}</span><button type="button" className="secondary-button" disabled={!remoteUrl} onClick={onOpenRemote}>在浏览器中打开</button></div>}
         {activeTool === "files" && <div className="dock-files">{projectFiles.length ? projectFiles.map((path) => <button type="button" key={path} onDoubleClick={() => onOpenFile(path)}><File size={14} /><span>{path}</span><ArrowSquareOut size={13} /></button>) : <div className="dock-empty-tool"><FolderOpen size={24} /><strong>项目中没有可显示的文件</strong></div>}</div>}
         {activeTool === "chat" && <div className="dock-side-chat"><div className="dock-chat-messages">{sideMessages.length ? sideMessages.map((message) => <p key={message.id} className={message.role === "user" ? "is-user" : "is-agent"}>{message.text}</p>) : <span>针对当前工作区快速提问，不影响主会话。</span>}</div><form onSubmit={(event) => { event.preventDefault(); onSendSide(); }}><input aria-label="侧边聊天消息" value={sideValue} onChange={(event) => onSideValue(event.target.value)} placeholder="向 Rux 提问" disabled={sideSending} /><button type="submit" aria-label="发送侧边聊天消息" disabled={sideSending || !sideValue.trim()}>{sideSending ? <CircleNotch size={15} className="spin" /> : <ArrowUp size={15} />}</button></form></div>}
@@ -495,21 +331,22 @@ function WorkspaceDock({ activeTool, hasProject, gitState, terminalProps, remote
   );
 }
 
-function ReviewScreen({ gitState, selectedFile, diff, onSelectFile, onBack, onStageAll, onStageFile, onDiscard, busy }) {
+function ReviewScreen({ gitState, branches, selectedFile, diff, onSelectFile, onBack, onSwitchBranch, onCommitPush, onStageAll, onStageFile, onDiscard, busy }) {
+  const selected = gitState.files.find((file) => file.path === selectedFile);
   return (
     <div className="review-screen">
       <div className="review-tabs"><button type="button" onClick={onBack}>对话</button><button type="button" className="is-active">变更 <span>{gitState.files.length}</span></button></div>
-      <div className="review-summary"><span><FileText size={18} />{gitState.files.length} 个真实文件变更</span><span className="tests-passed"><GitBranch size={18} />{gitState.branch || "—"}</span></div>
+      <div className="review-summary"><span><FileText size={18} />{gitState.files.length} 个真实文件变更</span><label className="review-branch"><GitBranch size={18} /><select aria-label="切换 Git 分支" value={gitState.branch || ""} onChange={(event) => onSwitchBranch(event.target.value)}>{branches.length ? branches.map((branch) => <option value={branch} key={branch}>{branch}</option>) : <option value={gitState.branch || ""}>{gitState.branch || "—"}</option>}</select></label><button type="button" className="secondary-button" disabled={busy} onClick={onCommitPush}>提交或推送</button></div>
       {gitState.files.length ? (
         <div className="review-workspace">
-          <div className="file-list">{gitState.files.map((file) => <button type="button" key={file.path} className={selectedFile === file.path ? "is-selected" : ""} onClick={() => onSelectFile(file.path)}><File size={17} /><span>{file.path}</span><small><b>+{file.plus}</b> <em>−{file.minus}</em></small></button>)}</div>
+          <div className="file-list">{gitState.files.map((file) => <button type="button" key={file.path} className={selectedFile === file.path ? "is-selected" : ""} onClick={() => onSelectFile(file.path)}><File size={17} /><span>{file.path}</span><small>{file.staged && <i>已暂存</i>}{file.unstaged && !file.untracked && <i>未暂存</i>}<b>+{file.plus}</b> <em>−{file.minus}</em></small></button>)}</div>
           <div className="real-diff-wrap"><div className="diff-heading">{selectedFile}</div><pre className="real-diff">{diff || "选择文件以查看真实 Git diff"}</pre></div>
         </div>
       ) : <div className="review-empty"><CheckCircle size={30} /><h2>工作区没有变更</h2></div>}
       <div className="review-actions">
         <button type="button" className="primary-button" disabled={busy || !gitState.files.length} onClick={onStageAll}>全部暂存</button>
         <button type="button" className="secondary-button" disabled={busy || !selectedFile} onClick={onStageFile}>暂存此文件</button>
-        <button type="button" className="danger-link" disabled={busy || !selectedFile} onClick={onDiscard}>放弃此文件</button>
+        <button type="button" className="danger-link" disabled={busy || !selected?.unstaged || selected?.untracked} onClick={onDiscard}>放弃未暂存修改</button>
         <button type="button" className="back-to-chat" onClick={onBack}><ArrowLeft size={16} />返回对话</button>
       </div>
     </div>
@@ -557,7 +394,7 @@ function ModalHeader({ title, subtitle, onBack, onClose }) {
 }
 
 function ProviderProfilesSettings({ store, onSave, onRemove, onSetActive, onTest, onNotify }) {
-  const empty = { id: "", name: "", protocol: "openai-responses", baseUrl: "", hasApiKey: false, headers: {}, compatibleAgents: ["rux-native"], models: [] };
+  const empty = { id: "", name: "", protocol: "openai-responses", baseUrl: "", hasApiKey: false, headers: {}, compatibleAgents: ["pi"], models: [] };
   const [selectedId, setSelectedId] = useState(store.activeProfileId || store.profiles[0]?.id || "");
   const [draft, setDraft] = useState(empty);
   const [apiKey, setApiKey] = useState("");
@@ -593,7 +430,7 @@ function ProviderProfilesSettings({ store, onSave, onRemove, onSetActive, onTest
           <label className="settings-row"><span>API key</span><span className="secret-input"><input type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={draft.hasApiKey ? "已安全保存；留空则不修改" : "输入 API key"} /><Eye size={17} /></span></label>
           <label className="settings-row provider-multiline"><span>自定义 Headers<small>每行 Key: Value；认证请使用 API key</small></span><textarea value={headersText} onChange={(event) => setHeadersText(event.target.value)} placeholder="X-Organization: team-a" /></label>
           <label className="settings-row provider-multiline"><span>模型<small>每行：ID | 显示名称 | reasoning levels</small></span><textarea value={modelsText} onChange={(event) => setModelsText(event.target.value)} placeholder={"gpt-5.6-terra | GPT-5.6 Terra | low,medium,high,xhigh\nqwen3-coder | Qwen Coder | low,medium,high"} /></label>
-          <div className="settings-row"><span>兼容运行时</span><div className="provider-agent-checks">{[["rux-native", "Rux Native"], ["pi", "Pi"]].map(([id, label]) => <label key={id}><input type="checkbox" checked={draft.compatibleAgents.includes(id)} onChange={(event) => update({ compatibleAgents: event.target.checked ? [...new Set([...draft.compatibleAgents, id])] : draft.compatibleAgents.filter((value) => value !== id) })} />{label}</label>)}</div></div>
+          <div className="settings-row"><span>兼容运行时</span><div className="provider-agent-checks"><label><input type="checkbox" checked={draft.compatibleAgents.includes("pi")} onChange={(event) => update({ compatibleAgents: event.target.checked ? ["pi"] : [] })} />Pi</label></div></div>
           <div className="settings-row settings-actions provider-actions">
             {draft.id && <button type="button" className="danger-link" disabled={busy} onClick={() => { if (window.confirm(`删除 Provider“${draft.name}”？此操作只删除 Rux 中的配置。`)) execute(async () => { await onRemove(draft.id); setSelectedId(""); return "Provider 已删除"; }); }}>删除</button>}
             {draft.id && <button type="button" className="secondary-button" disabled={busy} onClick={() => execute(async () => (await onTest(draft.id)).message)}>测试连接</button>}
@@ -631,11 +468,10 @@ function SettingsScreen({ settings, auth, models, agents, modelsByAgent, provide
       <main className="settings-content"><h1>{title}</h1>
         {section === "general" && <><section className="settings-section"><h2>账户</h2><div className="settings-group form-settings"><div className="settings-row"><span>登录账户</span><strong>{auth.account?.email || (auth.connected ? "Codex 已连接" : "未登录")}</strong></div><div className="settings-row"><span>套餐</span><strong>{auth.account?.planType || "—"}</strong></div></div></section><section className="settings-section"><h2>工作区</h2><div className="settings-group form-settings"><div className="settings-row"><span>已添加项目</span><strong>{projectCount}</strong></div><div className="settings-row"><span>当前项目</span><strong>{activeProject?.name || "无"}</strong></div></div></section></>}
         {section === "agents" && <section className="settings-section"><h2>底座 Agent</h2><div className="agent-settings-list">{agents.map((agent) => <article className="agent-settings-card" key={agent.id}><span className="agent-settings-icon"><Robot size={20} /></span><span className="agent-settings-copy"><strong>{agent.name}</strong><small>{agent.managed ? `${agent.version} · ${agent.installed ? "已由 Rux 下载" : "首次使用时自动下载"}` : `${agent.version || "运行时"} · ${agent.path || ""}`}</small><em>{agent.id === "claude-code" ? (agent.auth?.connected ? `已登录 · ${agent.auth.authMethod || "Claude 账户"}` : "需要登录 Claude") : agent.id === "codex" ? (auth.connected ? "GPT OAuth 已连接" : "需要登录 Codex") : providerStore.profiles.some((profile) => profile.compatibleAgents.includes("pi")) ? "Provider 已配置" : "需要配置兼容 Pi 的 Provider"}</em></span><span className={`agent-settings-status ${agent.installed && agent.integrated ? "is-ready" : ""}`}>{agent.managed ? (agent.installed ? "已下载" : "未下载") : agent.integrated ? "可用" : "待接入"}</span><div className="agent-settings-modes">{agent.modes?.map((mode) => <span key={mode.id}>{mode.label}</span>)}</div><small className="agent-settings-models">{agent.id === "codex" ? `${models.length} 个可用模型` : modelsByAgent[agent.id]?.length ? `${modelsByAgent[agent.id].length} 个可用模型` : "选择该 Agent 后读取模型"}</small></article>)}</div></section>}
-        {section === "providers" && <section className="settings-section provider-settings-section"><h2>Provider 配置</h2><p className="settings-help">配置 Rux Native 或 Pi 可使用的真实模型服务。API key 只保存在系统安全存储中。</p><ProviderProfilesSettings store={providerStore} onSave={onProviderSave} onRemove={onProviderRemove} onSetActive={onProviderSetActive} onTest={onProviderTest} onNotify={onNotify} /></section>}
-        {section === "appearance" && <section className="settings-section"><h2>外观</h2><div className="settings-group form-settings"><div className="settings-row"><span>界面主题</span><strong>跟随系统 · {window.matchMedia("(prefers-color-scheme: dark)").matches ? "深色" : "浅色"}</strong></div><div className="settings-row"><span>界面语言</span><strong>简体中文</strong></div><label className="settings-row"><span>UI 字号</span><span className="font-size-control"><input type="number" min="12" max="16" value={draft.uiFontSize || 14} onChange={(event) => { const uiFontSize = Number(event.target.value); update({ uiFontSize }); document.documentElement.style.setProperty("--ui-font-size", `${uiFontSize}px`); }} /><em>px</em></span></label><div className="settings-row settings-actions"><button type="button" className="primary-button" onClick={() => execute(() => saveDraft("外观设置已保存"))}>保存外观</button></div></div><p className="settings-help">默认使用与 Codex Desktop 一致的 14px UI 字号。</p></section>}
+        {section === "providers" && <section className="settings-section provider-settings-section"><h2>Provider 配置</h2><p className="settings-help">配置 Pi 可使用的真实模型服务。API key 只保存在系统安全存储中。</p><ProviderProfilesSettings store={providerStore} onSave={onProviderSave} onRemove={onProviderRemove} onSetActive={onProviderSetActive} onTest={onProviderTest} onNotify={onNotify} /></section>}
+        {section === "appearance" && <section className="settings-section"><h2>外观</h2><div className="settings-group form-settings"><div className="settings-row"><span>界面主题</span><strong>浅色</strong></div><div className="settings-row"><span>界面语言</span><strong>简体中文</strong></div><label className="settings-row"><span>UI 字号</span><span className="font-size-control"><input type="number" min="12" max="16" value={draft.uiFontSize || 14} onChange={(event) => { const uiFontSize = Number(event.target.value); update({ uiFontSize }); document.documentElement.style.setProperty("--ui-font-size", `${uiFontSize}px`); }} /><em>px</em></span></label><div className="settings-row settings-actions"><button type="button" className="primary-button" onClick={() => execute(() => saveDraft("外观设置已保存"))}>保存外观</button></div></div><p className="settings-help">当前版本仅提供浅色主题，UI 字号可配置为 12–16px。</p></section>}
         {section === "permissions" && <section className="settings-section"><h2>默认权限</h2><div className="settings-group form-settings"><div className="settings-row"><span>Codex 沙盒</span><div className="reasoning-control">{Object.entries(sandboxLabels).map(([value, label]) => <button type="button" key={value} className={draft.sandboxMode === value ? "is-selected" : ""} onClick={() => update({ sandboxMode: value })}>{label}</button>)}</div></div><div className="settings-row settings-actions"><button type="button" className="primary-button" onClick={() => execute(() => saveDraft("默认权限已保存"))}>保存权限</button></div></div></section>}
-        {section === "models" && draft.provider !== "custom" && <section className="settings-section"><h2>自定义服务</h2><div className="settings-group form-settings"><label className="settings-row"><span>服务名称</span><input value={draft.serviceName} onChange={(event) => update({ serviceName: event.target.value })} /></label><label className="settings-row"><span>Base URL</span><input value={draft.baseUrl} onChange={(event) => update({ baseUrl: event.target.value })} /></label><label className="settings-row"><span>API key</span><span className="secret-input"><input type="password" value={apiKey} placeholder={draft.hasApiKey ? "已安全保存" : "输入 API key"} onChange={(event) => setApiKey(event.target.value)} /><Eye size={18} /></span></label><div className="settings-row settings-actions"><button type="button" className="secondary-button" disabled={busy} onClick={() => execute(async () => (await onTest({ ...draft, provider: "custom", apiKey })).message)}>测试连接</button><button type="button" className="primary-button" disabled={busy} onClick={() => execute(async () => { await onSave({ ...draft, provider: "custom", apiKey }); setApiKey(""); onNotify("自定义服务已保存并启用"); return "已保存"; })}>保存服务</button></div></div></section>}
-        {section === "models" && <><section className="settings-section"><h2>GPT OAuth</h2><div className="settings-group oauth-group"><div className="settings-row provider-row"><div className="provider-mark"><OpenAiLogo size={27} /></div><strong>Codex CLI</strong><span className={auth.connected ? "connected-badge" : "disconnected-badge"}>{auth.connected ? "已连接" : "未登录"}</span><span className="provider-email">{auth.account?.email || (auth.connected ? "使用 ChatGPT 账户登录" : auth.message || "未检测到本机 ChatGPT 登录")}</span><button type="button" className="secondary-button" onClick={() => execute(async () => { await onLogin(); return "已启动设备登录"; })}>{auth.connected ? "重新登录" : "登录"}</button></div>{auth.connected && <button type="button" className="danger-link disconnect-link" onClick={() => { if (window.confirm("确认退出本机 Codex 登录？")) execute(onLogout); }}>断开连接</button>}</div></section><section className="settings-section"><h2>连接方式</h2><div className="settings-group"><div className="settings-row provider-choice"><button type="button" className={draft.provider === "codex" ? "is-selected" : ""} onClick={() => update({ provider: "codex" })}>GPT OAuth</button><button type="button" className={draft.provider === "custom" ? "is-selected" : ""} onClick={() => update({ provider: "custom" })}>自定义服务</button></div></div></section>{draft.provider === "custom" && <section className="settings-section"><h2>自定义服务</h2><div className="settings-group form-settings"><label className="settings-row"><span>服务名称</span><input value={draft.serviceName} onChange={(event) => update({ serviceName: event.target.value })} /></label><label className="settings-row"><span>Base URL</span><input value={draft.baseUrl} onChange={(event) => update({ baseUrl: event.target.value })} /></label><label className="settings-row"><span>API key</span><span className="secret-input"><input type="password" value={apiKey} placeholder={draft.hasApiKey ? "已安全保存" : "输入 API key"} onChange={(event) => setApiKey(event.target.value)} /><Eye size={18} /></span></label><div className="settings-row settings-actions"><button type="button" className="secondary-button" disabled={busy} onClick={() => execute(async () => (await onTest({ ...draft, apiKey })).message)}>测试连接</button><button type="button" className="primary-button" disabled={busy} onClick={() => execute(async () => { await onSave({ ...draft, apiKey }); setApiKey(""); onNotify("服务设置已保存"); return "已保存"; })}>保存服务</button></div></div></section>}<section className="settings-section"><h2>默认模型</h2><div className="settings-group form-settings"><label className="settings-row"><span>模型</span>{draft.provider === "codex" ? <select value={draftModel?.model || ""} onChange={(event) => { const model = models.find((item) => item.model === event.target.value); if (model) update({ model: model.model, reasoning: model.supportedReasoningEfforts.some((effort) => effort.reasoningEffort === draft.reasoning) ? draft.reasoning : model.defaultReasoningEffort }); }}>{models.map((model) => <option key={model.id} value={model.model}>{model.displayName}{model.isDefault ? "（Codex 默认）" : ""}</option>)}</select> : <input value={draft.model} onChange={(event) => update({ model: event.target.value })} placeholder="输入模型 ID" />}<button type="button" className="secondary-button" onClick={() => { const model = models.find((item) => item.isDefault); update({ model: "", reasoning: model?.defaultReasoningEffort || "medium" }); }}><ArrowsClockwise size={16} />使用默认</button></label><div className="settings-row"><span>思考程度</span><div className="reasoning-control">{availableEfforts.map((value) => <button type="button" key={value} className={draft.reasoning === value ? "is-selected" : ""} onClick={() => update({ reasoning: value })}>{reasoningLabels[value] || value}</button>)}</div></div><label className="settings-row toggle-setting"><span>允许会话覆盖默认设置</span><input type="checkbox" checked={draft.allowConversationOverride} onChange={(event) => update({ allowConversationOverride: event.target.checked })} /><span className="toggle-control" /></label><div className="settings-row settings-actions"><button type="button" className="primary-button" disabled={busy} onClick={() => execute(() => saveDraft("默认模型设置已保存"))}>保存默认设置</button></div></div><p className="settings-help">模型与推理级别来自本机 Codex App Server。</p></section></>}
+        {section === "models" && <><section className="settings-section"><h2>GPT OAuth</h2><div className="settings-group oauth-group"><div className="settings-row provider-row"><div className="provider-mark"><OpenAiLogo size={27} /></div><strong>Codex CLI</strong><span className={auth.connected ? "connected-badge" : "disconnected-badge"}>{auth.connected ? "已连接" : "未登录"}</span><span className="provider-email">{auth.account?.email || (auth.connected ? "使用 ChatGPT 账户登录" : auth.message || "未检测到本机 ChatGPT 登录")}</span><button type="button" className="secondary-button" onClick={() => execute(async () => { await onLogin(); return "已启动设备登录"; })}>{auth.connected ? "重新登录" : "登录"}</button></div>{auth.connected && <button type="button" className="danger-link disconnect-link" onClick={() => { if (window.confirm("确认退出本机 Codex 登录？")) execute(onLogout); }}>断开连接</button>}</div></section><section className="settings-section"><h2>连接方式</h2><div className="settings-group"><div className="settings-row provider-choice"><button type="button" className={draft.provider === "codex" ? "is-selected" : ""} onClick={() => update({ provider: "codex" })}>GPT OAuth</button><button type="button" className={draft.provider === "custom" ? "is-selected" : ""} onClick={() => update({ provider: "custom" })}>自定义服务</button></div></div></section>{draft.provider === "custom" && <section className="settings-section"><h2>自定义服务</h2><div className="settings-group form-settings"><label className="settings-row"><span>服务名称</span><input value={draft.serviceName} onChange={(event) => update({ serviceName: event.target.value })} /></label><label className="settings-row"><span>Base URL</span><input value={draft.baseUrl} onChange={(event) => update({ baseUrl: event.target.value })} /></label><label className="settings-row"><span>API key</span><span className="secret-input"><input type="password" value={apiKey} placeholder={draft.hasApiKey ? "已安全保存" : "输入 API key"} onChange={(event) => setApiKey(event.target.value)} /><Eye size={18} /></span></label><div className="settings-row settings-actions"><button type="button" className="secondary-button" disabled={busy} onClick={() => execute(async () => (await onTest({ ...draft, apiKey })).message)}>测试连接</button><button type="button" className="primary-button" disabled={busy} onClick={() => execute(async () => { await onSave({ ...draft, apiKey }); setApiKey(""); onNotify("服务设置已保存"); return "已保存"; })}>保存服务</button></div></div></section>}<section className="settings-section"><h2>默认模型</h2><div className="settings-group form-settings"><label className="settings-row"><span>模型</span>{draft.provider === "codex" ? <select value={draftModel?.model || ""} onChange={(event) => { const model = models.find((item) => item.model === event.target.value); if (model) update({ model: model.model, reasoning: model.supportedReasoningEfforts.some((effort) => effort.reasoningEffort === draft.reasoning) ? draft.reasoning : model.defaultReasoningEffort }); }}>{models.map((model) => <option key={model.id} value={model.model}>{model.displayName}{model.isDefault ? "（Codex 默认）" : ""}</option>)}</select> : <input value={draft.model} onChange={(event) => update({ model: event.target.value })} placeholder="输入模型 ID" />}<button type="button" className="secondary-button" onClick={() => { const model = models.find((item) => item.isDefault); update({ model: "", reasoning: model?.defaultReasoningEffort || "medium" }); }}><ArrowsClockwise size={16} />使用默认</button></label><div className="settings-row"><span>思考程度</span><div className="reasoning-control">{availableEfforts.map((value) => <button type="button" key={value} className={draft.reasoning === value ? "is-selected" : ""} onClick={() => update({ reasoning: value })}>{reasoningLabels[value] || value}</button>)}</div></div><div className="settings-row settings-actions"><button type="button" className="primary-button" disabled={busy} onClick={() => execute(() => saveDraft("默认模型设置已保存"))}>保存默认设置</button></div></div><p className="settings-help">模型与推理级别来自本机 Codex App Server；当前选择作为全局默认值。</p></section></>}
         {section === "shortcuts" && <section className="settings-section"><h2>键盘快捷键</h2><div className="settings-group shortcut-list">{[["打开设置", "⌘,"], ["新建独立会话", "⌘N"], ["打开终端", "⌃`"], ["审查变更", "⌃⇧G"]].map(([label, key]) => <div className="settings-row" key={label}><span>{label}</span><kbd>{key}</kbd></div>)}</div></section>}
         {section === "git" && <section className="settings-section"><h2>当前仓库</h2><div className="settings-group form-settings"><div className="settings-row"><span>项目</span><strong>{activeProject?.name || "未选择项目"}</strong></div><div className="settings-row"><span>路径</span><strong>{activeProject?.path || "—"}</strong></div><div className="settings-row"><span>分支</span><strong>{gitState.branch}</strong></div><div className="settings-row"><span>变更文件</span><strong>{gitState.files.length}</strong></div></div></section>}
         {section === "environment" && <section className="settings-section"><h2>运行环境</h2><div className="settings-group form-settings">{[["Rux", systemInfo.appVersion], ["Codex", systemInfo.codexVersion], ["Electron", systemInfo.electronVersion], ["Chromium", systemInfo.chromeVersion], ["平台", `${systemInfo.platform || "—"} ${systemInfo.arch || ""}`]].map(([label, value]) => <div className="settings-row" key={label}><span>{label}</span><strong>{value || "—"}</strong></div>)}</div></section>}
@@ -670,24 +506,24 @@ function App() {
   const [rightPanelOpen, setRightPanelOpen] = useState(true);
   const [activeTool, setActiveTool] = useState("terminal");
   const [terminalOpen, setTerminalOpen] = useState(false);
-  const [terminalOutput, setTerminalOutput] = useState("");
-  const [terminalCommand, setTerminalCommand] = useState("");
+  const [terminalOutput, setTerminalOutput] = useState([]);
+  const terminalSequence = useRef(0);
+  const terminalSize = useRef({ cols: 120, rows: 30 });
   const [modelOpen, setModelOpen] = useState(null);
   const [sandboxOpen, setSandboxOpen] = useState(false);
   const [attachments, setAttachments] = useState([]);
   const [webSearch, setWebSearch] = useState(false);
   const [listening, setListening] = useState(false);
   const [branches, setBranches] = useState([]);
-  const [branchOpen, setBranchOpen] = useState(false);
   const [projectFiles, setProjectFiles] = useState([]);
   const [remoteUrl, setRemoteUrl] = useState("");
   const [sideMessages, setSideMessages] = useState([]);
   const [sideValue, setSideValue] = useState("");
   const [sideSending, setSideSending] = useState(false);
   const [sideThreadId, setSideThreadId] = useState("");
-  const [messages, setMessages] = useState(loadMessages);
+  const [messages, setMessages] = useState(loadLegacyMessages);
   const [composerValue, setComposerValue] = useState("");
-  const [sending, setSending] = useState(false);
+  const [runningThreadIds, setRunningThreadIds] = useState(() => new Set());
   const [gitState, setGitState] = useState({ branch: "—", files: [] });
   const [selectedFile, setSelectedFile] = useState("");
   const [diff, setDiff] = useState("");
@@ -699,6 +535,7 @@ function App() {
   const activeProjectRef = useRef(null);
 
   const activeMessages = activeThread ? messages[activeThread.id] || [] : [];
+  const sending = activeThread ? runningThreadIds.has(activeThread.id) : false;
   const isStandalone = activeThread?.type === "standalone";
   const activeProject = activeThread?.type === "project" ? workspace.projects.find((project) => project.id === activeThread.projectId) : null;
   const activeModels = selectedAgent === "codex" ? models : modelsByAgent[selectedAgent] || [];
@@ -710,7 +547,14 @@ function App() {
   useEffect(() => { activeThreadRef.current = activeThread; }, [activeThread]);
   useEffect(() => { activeProjectRef.current = activeProject; }, [activeProject]);
 
-  useEffect(() => { localStorage.setItem("rux.messages.v1", JSON.stringify(messages)); }, [messages]);
+  useEffect(() => {
+    if (!api || !workspaceReady) return undefined;
+    const snapshot = persistentMessages(messages);
+    const timer = window.setTimeout(() => {
+      api.messages.save(snapshot).then(() => localStorage.removeItem("rux.messages.v1")).catch((error) => notify(String(error.message || error)));
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [messages, workspaceReady]);
   useEffect(() => { localStorage.setItem("rux.agent-preferences.v1", JSON.stringify(agentPreferences)); }, [agentPreferences]);
   useEffect(() => { document.documentElement.style.setProperty("--ui-font-size", `${settings.uiFontSize || 14}px`); }, [settings.uiFontSize]);
 
@@ -722,9 +566,16 @@ function App() {
       setRuntimeProgress((current) => ({ ...current, [progress.agentId]: progress }));
       if (progress.state === "ready") api.agents.list().then(({ agents: nextAgents }) => { if (!cancelled) setAgents(nextAgents); }).catch(() => {});
     });
-    Promise.all([api.projects.list(), api.settings.get(), api.auth.status(), api.projects.defaultParent()]).then(async ([nextWorkspace, nextSettings, nextAuth, parent]) => {
+    const offAuthLogin = api.auth.onLoginEvent((event) => {
+      if (cancelled) return;
+      if (event.type === "output") setAuth((current) => ({ ...current, message: event.text }));
+      if (event.type === "error") setAuth((current) => ({ ...current, message: event.message }));
+      if (event.type === "complete") api.auth.status().then((nextAuth) => { if (!cancelled) setAuth(nextAuth); }).catch(() => {});
+    });
+    Promise.all([api.projects.list(), api.settings.get(), api.auth.status(), api.projects.defaultParent(), api.messages.list()]).then(async ([nextWorkspace, nextSettings, nextAuth, parent, storedMessages]) => {
       if (cancelled) return;
       setWorkspace(nextWorkspace); setSettings(nextSettings); setAuth(nextAuth); setDefaultParent(parent);
+      if (storedMessages && Object.keys(storedMessages).length) setMessages(storedMessages);
       setAgentPreferences((current) => ({ ...current, codex: { model: nextSettings.model, reasoning: nextSettings.reasoning } }));
       const firstProject = nextWorkspace.projects[0];
       const firstThread = firstProject?.threads[0];
@@ -746,8 +597,8 @@ function App() {
     }).catch(() => {});
     api.system.info().then((info) => { if (!cancelled) setSystemInfo(info); }).catch(() => {});
     api.providers.list().then((store) => { if (!cancelled) setProviderStore(store); }).catch(() => {});
-    const off = api.terminal.onData((data) => setTerminalOutput((current) => `${current}${data}`));
-    return () => { cancelled = true; off(); offRuntime(); };
+    const off = api.terminal.onData(appendTerminalOutput);
+    return () => { cancelled = true; off(); offRuntime(); offAuthLogin(); };
   }, []);
 
   useEffect(() => {
@@ -800,7 +651,11 @@ function App() {
       });
       if (event.type === "turn-completed" || event.type === "error") {
         runContexts.current.delete(event.runId);
-        if (activeThreadRef.current?.id === context.localThreadId) setSending(false);
+        setRunningThreadIds((current) => {
+          const next = new Set(current);
+          next.delete(context.localThreadId);
+          return next;
+        });
         if (context.projectId) refreshGit(context.projectId).catch(() => {});
       }
     });
@@ -822,7 +677,7 @@ function App() {
       if (event.metaKey && event.key.toLowerCase() === "n") { event.preventDefault(); newStandalone(); }
       if (event.ctrlKey && event.key === "`") { event.preventDefault(); selectWorkspaceTool("terminal"); }
       if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "g") { event.preventDefault(); openReview(); }
-      if (event.key === "Escape") { setModelOpen(null); setSandboxOpen(false); setBranchOpen(false); }
+      if (event.key === "Escape") { setModelOpen(null); setSandboxOpen(false); }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
@@ -870,10 +725,12 @@ function App() {
   }
 
   async function removeActiveThread() {
+    if (sending) { notify("请先停止当前会话，再移除它"); return; }
     if (!activeThread || !window.confirm(`从 Rux 中移除会话“${activeThread.title}”？`)) return;
     try {
       const { workspace: nextWorkspace } = await api.threads.remove({ type: activeThread.type, projectId: activeThread.projectId, threadId: activeThread.id });
       setWorkspace(nextWorkspace);
+      setMessages((current) => { const next = { ...current }; delete next[activeThread.id]; return next; });
       const project = nextWorkspace.projects.find((item) => item.threads.length);
       if (project) selectProjectThread(project, project.threads[0]);
       else if (nextWorkspace.standaloneThreads[0]) selectStandalone(nextWorkspace.standaloneThreads[0]);
@@ -884,7 +741,7 @@ function App() {
 
   async function copyConversation() {
     const title = activeThread?.title || "Rux 会话";
-    const body = activeMessages.map((message) => `## ${message.role === "user" ? "用户" : "Rux"}\n\n${message.text}`).join("\n\n");
+    const body = activeMessages.map((message) => `## ${message.role === "user" ? "用户" : "Rux"}\n\n${messageExportText(message)}`).join("\n\n");
     await api.system.copy(`# ${title}\n\n${body || "暂无消息"}`);
     notify("会话内容已复制");
   }
@@ -919,9 +776,9 @@ function App() {
   }
 
   async function switchBranch(branch) {
-    if (!activeProject || branch === gitState.branch) { setBranchOpen(false); return; }
+    if (!activeProject || branch === gitState.branch) return;
     if (gitState.files.length && !window.confirm(`当前有 ${gitState.files.length} 个变更，仍要切换到 ${branch}？`)) return;
-    try { const status = await api.git.switchBranch({ projectId: activeProject.id, branch }); setGitState(status); setBranchOpen(false); notify(`已切换到 ${branch}`); }
+    try { const status = await api.git.switchBranch({ projectId: activeProject.id, branch }); setGitState(status); notify(`已切换到 ${branch}`); }
     catch (error) { notify(String(error.message || error)); }
   }
 
@@ -936,10 +793,13 @@ function App() {
   }
 
   async function removeProject(project) {
+    if ([...runContexts.current.values()].some((context) => context.projectId === project.id)) { notify("该项目仍有 Agent 正在运行，请先停止任务"); return; }
     if (!window.confirm(`从 Rux 中移除“${project.name}”？\n\n仅解除侧栏关联，不会删除磁盘中的项目文件。`)) return;
     try {
       const { workspace: nextWorkspace } = await api.projects.remove(project.id);
       setWorkspace(nextWorkspace);
+      const removedThreadIds = new Set(project.threads.map((thread) => thread.id));
+      setMessages((current) => Object.fromEntries(Object.entries(current).filter(([threadId]) => !removedThreadIds.has(threadId))));
       setExpandedProjects((current) => current.filter((id) => id !== project.id));
       if (activeThread?.type === "project" && activeThread.projectId === project.id) {
         await closeTerminal();
@@ -971,7 +831,8 @@ function App() {
     const context = { runId, localThreadId: activeThread.id, assistantMessageId: assistantMessage.id, type: activeThread.type, projectId: activeThread.projectId, prompt, shouldRename: activeThread.title.startsWith("未命名") || activeThread.title === "项目会话", agentId: selectedAgent, agentMode, threadId: nativeSessionId, turnId: "" };
     runContexts.current.set(runId, context);
     setMessages((current) => ({ ...current, [activeThread.id]: [...(current[activeThread.id] || []), userMessage, assistantMessage] }));
-    setComposerValue(""); setSending(true);
+    setComposerValue("");
+    setRunningThreadIds((current) => new Set(current).add(activeThread.id));
     try {
       const result = await api.agent.start({ runId, agentId: selectedAgent, projectId: activeProject?.id, prompt, model: activePreference.model, reasoning: activePreference.reasoning, sandboxMode: settings.sandboxMode, images: attachments, webSearch, threadId: nativeSessionId, nativeSessionId, mode: agentMode });
       context.threadId = result.threadId || result.sessionId || context.threadId;
@@ -980,13 +841,18 @@ function App() {
     } catch (error) {
       runContexts.current.delete(runId);
       setMessages((current) => ({ ...current, [activeThread.id]: (current[activeThread.id] || []).map((message) => message.id === assistantMessage.id ? reduceStreamEvent(message, { type: "error", error: String(error.message || error) }) : message) }));
-      setSending(false);
+      setRunningThreadIds((current) => {
+        const next = new Set(current);
+        next.delete(activeThread.id);
+        return next;
+      });
     }
   }
 
   async function cancelCurrentRun() {
     const context = [...runContexts.current.values()].find((item) => item.localThreadId === activeThread?.id);
-    if (!context?.threadId || !context?.turnId) return;
+    if (!context) return;
+    if (!context.threadId || !context.turnId) { notify("Agent 正在初始化，请稍后再停止"); return; }
     try { await api.agent.interrupt({ agentId: context.agentId, runId: context.runId, threadId: context.threadId, turnId: context.turnId }); }
     catch (error) { notify(String(error.message || error)); }
   }
@@ -1003,8 +869,9 @@ function App() {
 
   async function startTerminal() {
     if (!activeProject || terminalOpen) return;
-    setTerminalOutput("正在启动终端…\n"); setTerminalOpen(true);
-    try { await api.terminal.start(activeProject.id); } catch (error) { setTerminalOutput(`${error.message || error}\n`); }
+    terminalSequence.current += 1;
+    setTerminalOutput([{ sequence: terminalSequence.current, data: "正在启动终端…\r\n" }]); setTerminalOpen(true);
+    try { await api.terminal.start(activeProject.id); await api.terminal.resize(terminalSize.current); } catch (error) { appendTerminalOutput(`${error.message || error}\r\n`); }
   }
   async function closeTerminal() { if (terminalOpen && api) await api.terminal.stop().catch(() => {}); setTerminalOpen(false); }
   async function closeBottomPanel() { await closeTerminal(); setBottomPanelOpen(false); }
@@ -1022,7 +889,21 @@ function App() {
     if (tool === "files" && activeProject) api.files.list(activeProject.id).then(setProjectFiles).catch((error) => notify(String(error.message || error)));
     if (tool === "browser" && activeProject) api.git.remote(activeProject.id).then(setRemoteUrl).catch(() => setRemoteUrl(""));
   }
-  async function runTerminalCommand() { const command = terminalCommand.trim(); if (!command) return; setTerminalOutput((current) => `${current}$ ${command}\n`); setTerminalCommand(""); try { await api.terminal.write(command); window.setTimeout(() => refreshGit(), 500); } catch (error) { setTerminalOutput((current) => `${current}${error.message || error}\n`); } }
+  function writeTerminalInput(data) {
+    api.terminal.write(data).catch((error) => appendTerminalOutput(`${error.message || error}\r\n`));
+    if (data.includes("\r")) window.setTimeout(() => refreshGit(), 500);
+  }
+
+  function appendTerminalOutput(data) {
+    terminalSequence.current += 1;
+    const chunk = { sequence: terminalSequence.current, data };
+    setTerminalOutput((current) => [...current, chunk].slice(-2000));
+  }
+
+  function resizeTerminal(size) {
+    terminalSize.current = size;
+    api.terminal.resize(size).catch(() => {});
+  }
 
   async function sendSideChat() {
     const prompt = sideValue.trim(); if (!prompt || sideSending) return;
@@ -1037,7 +918,7 @@ function App() {
   }
 
   async function stage(paths) { if (!activeProject || !paths.length) return; setBusy(true); try { const status = await api.git.stage({ projectId: activeProject.id, paths }); setGitState(status); notify("已真实暂存所选文件"); if (!status.files.length) setView("project"); } catch (error) { notify(String(error.message || error)); } finally { setBusy(false); } }
-  async function discardSelected() { if (!activeProject || !selectedFile || !window.confirm(`确认放弃 ${selectedFile} 的未暂存修改？此操作不可撤销。`)) return; setBusy(true); try { const status = await api.git.discard({ projectId: activeProject.id, path: selectedFile }); setGitState(status); notify("文件修改已恢复"); if (status.files.length) await selectDiff(status.files[0].path); else setView("project"); } catch (error) { notify(String(error.message || error)); } finally { setBusy(false); } }
+  async function discardSelected() { if (!activeProject || !selectedFile || !window.confirm(`确认放弃 ${selectedFile} 的未暂存修改？已暂存内容会保留，此操作不可撤销。`)) return; setBusy(true); try { const status = await api.git.discard({ projectId: activeProject.id, path: selectedFile }); setGitState(status); notify("未暂存修改已恢复，暂存内容已保留"); if (status.files.length) await selectDiff(status.files[0].path); else setView("project"); } catch (error) { notify(String(error.message || error)); } finally { setBusy(false); } }
   async function commitOrPush() {
     if (!activeProject) return;
     const message = window.prompt("输入提交信息；留空则仅推送当前分支", "");
@@ -1087,9 +968,11 @@ function App() {
 
   if (fatalError) return <div className="fatal-screen"><WarningCircle size={32} /><h1>Rux 无法启动</h1><p>{fatalError}</p></div>;
   if (!activeThread) return <div className="fatal-screen"><CircleNotch size={30} className="spin" /><p>正在加载工作区…</p></div>;
-  if (view === "settings") return <div className="app-frame"><SettingsScreen settings={settings} auth={auth} models={models} agents={agents} modelsByAgent={modelsByAgent} providerStore={providerStore} onProviderSave={saveProvider} onProviderRemove={removeProvider} onProviderSetActive={setActiveProvider} onProviderTest={(id) => api.providers.test(id)} systemInfo={systemInfo} projectCount={workspace.projects.length} activeProject={activeProject} gitState={gitState} onBack={() => setView(isStandalone ? "standalone" : "project")} onSave={saveSettings} onTest={testSettings} onLogin={async () => { await api.auth.login(); setTimeout(async () => setAuth(await api.auth.status()), 1500); }} onLogout={async () => { await api.auth.logout(); setAuth(await api.auth.status()); return "已退出"; }} onNotify={notify} />{toast && <div className="toast" role="status" aria-live="polite"><CheckCircle size={18} />{toast}</div>}</div>;
+  if (view === "settings") return <div className="app-frame"><SettingsScreen settings={settings} auth={auth} models={models} agents={agents} modelsByAgent={modelsByAgent} providerStore={providerStore} onProviderSave={saveProvider} onProviderRemove={removeProvider} onProviderSetActive={setActiveProvider} onProviderTest={(id) => api.providers.test(id)} systemInfo={systemInfo} projectCount={workspace.projects.length} activeProject={activeProject} gitState={gitState} onBack={() => setView(isStandalone ? "standalone" : "project")} onSave={saveSettings} onTest={testSettings} onLogin={async () => { await api.auth.login(); return "设备登录已启动，请按账户区域中的提示完成验证"; }} onLogout={async () => { await api.auth.logout(); setAuth(await api.auth.status()); return "已退出"; }} onNotify={notify} />{toast && <div className="toast" role="status" aria-live="polite"><CheckCircle size={18} />{toast}</div>}</div>;
 
-  const composerProps = { settings: activeComposerSettings, auth, models: activeModels, modelsLoading, modelsError, modelOpen, sandboxOpen, attachments, listening, onToggleModel: (menu) => { setModelOpen((open) => open === menu ? null : menu); setSandboxOpen(false); }, onSelectModel: selectModel, onSelectReasoning: selectReasoning, onToggleSandbox: () => { setSandboxOpen((open) => !open); setModelOpen(null); }, onSelectSandbox: selectSandbox, onPermissionInfo: () => notify("可在设置 > 权限中修改默认批准方式"), onAddFiles: addFiles, onRemoveAttachment: (path) => setAttachments((current) => current.filter((item) => item !== path)), onVoice: toggleVoice, onAssociateProject: () => { const project = workspace.projects[0]; const thread = project?.threads[0]; if (project && thread) selectProjectThread(project, thread); else if (project) newProjectThread(project); }, value: composerValue, onChange: setComposerValue, onSend: sendMessage, sending };
+  const toggleModelMenu = (menu) => { setModelOpen((open) => open === menu ? null : menu); setSandboxOpen(false); };
+  const toggleSandboxMenu = () => { setSandboxOpen((open) => !open); setModelOpen(null); };
+  const removeAttachment = (path) => setAttachments((current) => current.filter((item) => item !== path));
   const assistantProps = {
     messages: activeMessages,
     running: sending,
@@ -1100,6 +983,7 @@ function App() {
     runtimeProgress,
     selectedAgent,
     onSelectAgent: async (agentId) => {
+      if (sending) { notify("请先停止当前任务，再切换 Agent"); return; }
       const agent = agents.find((item) => item.id === agentId);
       if (!agent?.integrated) { notify(`${agent?.name || agentId} 适配器尚未启用`); return; }
       if (agentId === selectedAgent) return;
@@ -1118,9 +1002,13 @@ function App() {
       }
       setSelectedAgent(agentId);
       setAgentMode(agent.modes?.[0]?.id || "default");
+      setAttachments([]);
     },
     agentMode,
-    onAgentMode: setAgentMode,
+    onAgentMode: (mode) => {
+      if (mode === "bypass-permissions" && !window.confirm("绕过权限会允许 Claude Code 在不询问的情况下执行命令和修改文件。确认启用？")) return;
+      setAgentMode(mode);
+    },
     modelLabel: modelDisplayName(activeComposerSettings, activeModels),
     reasoningLabel: reasoningLabels[activePreference.reasoning] || activePreference.reasoning,
     permissionLabel: sandboxLabels[settings.sandboxMode] || "帮我批准",
@@ -1129,11 +1017,16 @@ function App() {
     sandboxOpen,
     modelPopover: <ModelPopover mode={modelOpen} settings={activeComposerSettings} auth={auth} models={activeModels} loading={modelsLoading} error={modelsError} onSelectModel={selectModel} onSelectReasoning={selectReasoning} connectionLabel={selectedAgent === "claude-code" ? `${modelDisplayName(activeComposerSettings, activeModels)} · Claude Code` : undefined} />,
     permissionPopover: <PermissionPopover selectedValue={settings.sandboxMode} onSelect={selectSandbox} onLearnMore={() => notify("可在设置 > 权限中修改默认批准方式")} />,
-    onToggleModel: composerProps.onToggleModel,
-    onToggleSandbox: composerProps.onToggleSandbox,
+    onToggleModel: toggleModelMenu,
+    onToggleSandbox: toggleSandboxMenu,
     attachments,
+    showAttachments: selectedAgent === "codex",
+    webSearch,
+    showWebSearch: selectedAgent === "codex",
+    onToggleWebSearch: () => setWebSearch((enabled) => !enabled),
+    voiceTranscript: composerValue,
     onAddFiles: addFiles,
-    onRemoveAttachment: composerProps.onRemoveAttachment,
+    onRemoveAttachment: removeAttachment,
     listening,
     onVoice: toggleVoice,
   };
@@ -1144,10 +1037,10 @@ function App() {
         <TopBar activeThread={activeThread} bottomPanelOpen={bottomPanelOpen} rightPanelOpen={rightPanelOpen} onToggleBottomPanel={toggleBottomPanel} onToggleRightPanel={() => setRightPanelOpen((open) => !open)} onOpenSettings={() => setView("settings")} onOpenPath={() => activeProject && api.system.openPath(activeProject.id).catch((error) => notify(String(error.message || error)))} onCopyPath={() => activeProject && api.system.copy(activeProject.path).then(() => notify("项目路径已复制"))} onShare={copyConversation} onRename={renameActiveThread} onRemoveThread={removeActiveThread} />
         <div className={`stage-body ${bottomPanelOpen ? "bottom-panel-is-open" : ""}`}>
           <div className="work-pane">
-            <div className="main-content">{view === "review" ? <ReviewScreen gitState={gitState} selectedFile={selectedFile} diff={diff} onSelectFile={selectDiff} onBack={() => setView("project")} onStageAll={() => stage(gitState.files.map((file) => file.path))} onStageFile={() => stage([selectedFile])} onDiscard={discardSelected} busy={busy} /> : <ConversationScreen standalone={isStandalone} activeThread={activeThread} assistantProps={assistantProps} gitState={gitState} onReview={openReview} />}</div>
+            <div className="main-content">{view === "review" ? <ReviewScreen gitState={gitState} branches={branches} selectedFile={selectedFile} diff={diff} onSelectFile={selectDiff} onBack={() => setView("project")} onSwitchBranch={switchBranch} onCommitPush={commitOrPush} onStageAll={() => stage(gitState.files.map((file) => file.path))} onStageFile={() => stage([selectedFile])} onDiscard={discardSelected} busy={busy} /> : <ConversationScreen standalone={isStandalone} activeThread={activeThread} assistantProps={assistantProps} gitState={gitState} onReview={openReview} />}</div>
             {rightPanelOpen && <ToolLauncher activeTool={bottomPanelOpen ? activeTool : ""} hasProject={Boolean(activeProject)} onSelectTool={selectWorkspaceTool} />}
           </div>
-          {bottomPanelOpen && <WorkspaceDock activeTool={activeTool} hasProject={Boolean(activeProject)} gitState={gitState} terminalProps={{ output: terminalOutput, command: terminalCommand, onCommandChange: setTerminalCommand, onRun: runTerminalCommand, onClose: closeBottomPanel, projectName: activeProject?.name || "终端", embedded: true }} remoteUrl={remoteUrl} projectFiles={projectFiles} sideMessages={sideMessages} sideValue={sideValue} sideSending={sideSending} onSelectTool={selectWorkspaceTool} onClose={closeBottomPanel} onOpenReview={() => { setView("review"); setBottomPanelOpen(false); }} onOpenRemote={openRemote} onOpenFile={(path) => activeProject && api.files.open({ projectId: activeProject.id, path }).catch((error) => notify(String(error.message || error)))} onSideValue={setSideValue} onSendSide={sendSideChat} />}
+          {bottomPanelOpen && <WorkspaceDock activeTool={activeTool} hasProject={Boolean(activeProject)} gitState={gitState} terminalProps={{ output: terminalOutput, onInput: writeTerminalInput, onResize: resizeTerminal }} remoteUrl={remoteUrl} projectFiles={projectFiles} sideMessages={sideMessages} sideValue={sideValue} sideSending={sideSending} onSelectTool={selectWorkspaceTool} onClose={closeBottomPanel} onOpenReview={() => { setView("review"); setBottomPanelOpen(false); }} onOpenRemote={openRemote} onOpenFile={(path) => activeProject && api.files.open({ projectId: activeProject.id, path }).catch((error) => notify(String(error.message || error)))} onSideValue={setSideValue} onSendSide={sendSideChat} />}
         </div>
       </main>
       {modalStep && <AddProjectModal step={modalStep} defaultParent={defaultParent} onClose={() => setModalStep(null)} onStep={setModalStep} onComplete={completeProjectAction} />}

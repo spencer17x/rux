@@ -3,21 +3,54 @@ import {
   BrowserWindow,
   clipboard,
   dialog,
-  ipcMain,
+  ipcMain as electronIpcMain,
   safeStorage,
   shell,
 } from "electron";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { access, mkdir, readFile, readdir, rename, stat, writeFile } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { spawn as spawnPty, type IPty } from "node-pty";
+import { access, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { CodexAppServerClient } from "./agents/codex-app-server";
 import { ClaudeCodeClient } from "./agents/claude-code";
 import { ProviderProfileStore } from "./provider-profiles";
 import { PiRuntimeClient } from "./agents/pi-runtime";
 import { RuntimeManager, type RuntimeAgentId } from "./runtime-manager";
+import { parseNumstatZ, parsePorcelainV1Z } from "./git-status";
+import { StateDatabase } from "./state-database";
+import {
+  agentIdSchema,
+  agentInterruptSchema,
+  agentSendSchema,
+  agentStartSchema,
+  addProjectThreadSchema,
+  addStandaloneThreadSchema,
+  approvalSchema,
+  clipboardTextSchema,
+  externalUrlSchema,
+  gitCommitSchema,
+  gitStageSchema,
+  gitSwitchSchema,
+  modelListSchema,
+  messagesStoreSchema,
+  parseInput,
+  projectCloneSchema,
+  projectCreateSchema,
+  projectFileSchema,
+  projectIdSchema,
+  projectImportSchema,
+  projectThreadUpdateSchema,
+  providerSaveSchema,
+  relativeProjectPathSchema,
+  terminalWriteSchema,
+  terminalResizeSchema,
+  threadIdSchema,
+  threadUpdateSchema,
+  settingsInputSchema,
+} from "../shared/ipc";
 
-type ReasoningEffort = "none" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
+type ReasoningEffort = "none" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
 type SandboxMode = "read-only" | "workspace-write" | "danger-full-access";
 
 type CodexReasoningEffort = {
@@ -76,14 +109,18 @@ type GitFile = {
   plus: number;
   minus: number;
   untracked: boolean;
+  staged: boolean;
+  unstaged: boolean;
 };
 
-const terminalProcesses = new Map<number, ChildProcessWithoutNullStreams>();
+const terminalProcesses = new Map<number, IPty>();
+let authLoginProcess: ChildProcessWithoutNullStreams | null = null;
 let codexStreamClient: CodexAppServerClient | null = null;
 let claudeCodeClient: ClaudeCodeClient | null = null;
 let providerProfileStore: ProviderProfileStore | null = null;
 let piRuntimeClient: PiRuntimeClient | null = null;
 let runtimeManager: RuntimeManager | null = null;
+let stateDatabase: StateDatabase | null = null;
 
 function userDataFile(name: string): string {
   return join(app.getPath("userData"), name);
@@ -138,8 +175,7 @@ async function loadSettings(): Promise<RuxSettings> {
   return { ...defaultSettings(), ...settings, hasApiKey: Boolean(settings.encryptedApiKey) };
 }
 
-async function saveSettings(input: Partial<RuxSettings> & { apiKey?: string }): Promise<RuxSettings> {
-  const current = await loadSettings();
+function mergeSettings(current: RuxSettings, input: Partial<RuxSettings> & { apiKey?: string }): RuxSettings {
   const next: RuxSettings = {
     ...current,
     provider: input.provider === "custom" ? "custom" : input.provider === "codex" ? "codex" : current.provider,
@@ -167,6 +203,11 @@ async function saveSettings(input: Partial<RuxSettings> & { apiKey?: string }): 
     next.hasApiKey = true;
   }
 
+  return next;
+}
+
+async function saveSettings(input: Partial<RuxSettings> & { apiKey?: string }): Promise<RuxSettings> {
+  const next = mergeSettings(await loadSettings(), input);
   await writeJson(userDataFile("settings.json"), next);
   return next;
 }
@@ -177,37 +218,52 @@ function decryptApiKey(settings: RuxSettings): string {
 }
 
 async function loadWorkspace(): Promise<WorkspaceState> {
+  if (stateDatabase?.hasMetadata("workspace-migrated")) return stateDatabase.loadWorkspace();
   const fallback: WorkspaceState = {
     projects: [],
     standaloneThreads: [],
   };
-  const workspace = await readJson(userDataFile("workspace.json"), fallback);
+  const stored = await readJson<Partial<WorkspaceState>>(userDataFile("workspace.json"), fallback);
+  const normalizeThread = (value: unknown): ThreadRecord | null => {
+    if (!value || typeof value !== "object") return null;
+    const thread = value as Partial<ThreadRecord>;
+    if (!thread.id || !thread.title) return null;
+    return {
+      id: String(thread.id).slice(0, 500),
+      title: String(thread.title).slice(0, 100),
+      ...(thread.codexThreadId ? { codexThreadId: String(thread.codexThreadId).slice(0, 500) } : {}),
+      ...(["codex", "claude-code", "pi"].includes(String(thread.agentId)) ? { agentId: thread.agentId } : {}),
+      ...(thread.nativeSessionId ? { nativeSessionId: String(thread.nativeSessionId).slice(0, 500) } : {}),
+      ...(thread.agentMode ? { agentMode: String(thread.agentMode).slice(0, 80) } : {}),
+    };
+  };
+  const workspace: WorkspaceState = {
+    projects: (Array.isArray(stored.projects) ? stored.projects : []).flatMap((project) => {
+      if (!project || typeof project !== "object" || !project.id || !project.name || !project.path) return [];
+      return [{ id: String(project.id).slice(0, 200), name: String(project.name).slice(0, 100), path: String(project.path), threads: (Array.isArray(project.threads) ? project.threads : []).map(normalizeThread).filter((thread): thread is ThreadRecord => Boolean(thread)) }];
+    }),
+    standaloneThreads: (Array.isArray(stored.standaloneThreads) ? stored.standaloneThreads : []).map(normalizeThread).filter((thread): thread is ThreadRecord => Boolean(thread)),
+  };
   const filteredThreads = workspace.standaloneThreads.filter((thread) => !["compare", "logs"].includes(thread.id));
-  if (filteredThreads.length !== workspace.standaloneThreads.length) {
+  const needsCleanup = filteredThreads.length !== workspace.standaloneThreads.length;
+  if (needsCleanup) {
     workspace.standaloneThreads = filteredThreads;
-    await saveWorkspace(workspace);
   }
 
-  if (workspace.projects.length === 0 && process.env.ELECTRON_RENDERER_URL) {
-    const cwd = process.cwd();
-    if (await pathExists(join(cwd, "package.json"))) {
-      workspace.projects.push({
-        id: randomUUID(),
-        name: basename(cwd),
-        path: cwd,
-        threads: [
-          { id: randomUUID(), title: "实现模型连接设置" },
-          { id: randomUUID(), title: "设计 Rux Agent 桌面端 UI" },
-        ],
-      });
-      await saveWorkspace(workspace);
-    }
-  }
+  if (stateDatabase) {
+    stateDatabase.saveWorkspace(workspace);
+    stateDatabase.setMetadata("workspace-migrated", new Date().toISOString());
+  } else if (needsCleanup) await writeJson(userDataFile("workspace.json"), workspace);
 
   return workspace;
 }
 
 async function saveWorkspace(workspace: WorkspaceState): Promise<void> {
+  if (stateDatabase) {
+    stateDatabase.saveWorkspace(workspace);
+    stateDatabase.setMetadata("workspace-migrated", new Date().toISOString());
+    return;
+  }
   await writeJson(userDataFile("workspace.json"), workspace);
 }
 
@@ -223,10 +279,20 @@ async function resolveProject(pathOrId: string): Promise<ProjectRecord> {
   const workspace = await loadWorkspace();
   const project = workspace.projects.find((item) => item.id === pathOrId || item.path === pathOrId);
   if (!project) throw new Error("项目不存在或未授权");
-  const projectPath = resolve(project.path);
+  const projectPath = await realpath(resolve(project.path));
   const info = await stat(projectPath);
   if (!info.isDirectory()) throw new Error("项目目录不可用");
   return { ...project, path: projectPath };
+}
+
+function resolveProjectFile(projectPath: string, filePath: string): string {
+  const cleanPath = parseInput(relativeProjectPathSchema, filePath);
+  const absolute = resolve(projectPath, cleanPath);
+  const childPath = relative(projectPath, absolute);
+  if (!childPath || childPath === ".." || childPath.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) || isAbsolute(childPath)) {
+    throw new Error("文件路径越界");
+  }
+  return absolute;
 }
 
 function findExecutable(name: "codex" | "git"): string {
@@ -247,7 +313,7 @@ async function listAgents(): Promise<Array<Record<string, unknown>>> {
   return [
     { id: "codex", name: "Codex", ...statuses.codex, bundled: false, managed: true, integrated: true, modes: [{ id: "default", label: "默认" }, { id: "plan", label: "计划" }] },
     { id: "claude-code", name: "Claude Code", ...statuses["claude-code"], bundled: false, managed: true, auth: claudeAuth, integrated: true, modes: [{ id: "default", label: "默认" }, { id: "plan", label: "计划" }, { id: "accept-edits", label: "接受编辑" }, { id: "dont-ask", label: "不询问" }, { id: "auto", label: "自动批准" }, { id: "bypass-permissions", label: "绕过权限" }] },
-    { id: "pi", name: "Pi", ...statuses.pi, bundled: false, managed: true, integrated: true, modes: [{ id: "coding", label: "Coding tools" }, { id: "read-only", label: "Read-only tools" }] },
+    { id: "pi", name: "Pi", ...statuses.pi, bundled: false, managed: true, integrated: true, modes: [{ id: "coding", label: "Coding tools" }] },
   ];
 }
 
@@ -452,8 +518,8 @@ async function sendWithCustomProvider(input: {
   prompt: string;
   model?: string;
   reasoning?: ReasoningEffort;
-}): Promise<{ text: string }> {
-  const settings = await loadSettings();
+}, settingsOverride?: RuxSettings): Promise<{ text: string }> {
+  const settings = settingsOverride ?? await loadSettings();
   const apiKey = decryptApiKey(settings);
   if (!apiKey) throw new Error("请先保存 API key");
   const model = (input.model || settings.model).trim();
@@ -471,6 +537,7 @@ async function sendWithCustomProvider(input: {
       reasoning: { effort: input.reasoning ?? settings.reasoning },
       store: false,
     }),
+    signal: AbortSignal.timeout(120_000),
   });
   const body = await response.json() as { output_text?: string; error?: { message?: string } };
   if (!response.ok) throw new Error(body.error?.message || `服务返回 ${response.status}`);
@@ -482,23 +549,17 @@ async function gitStatus(projectId: string): Promise<{ branch: string; files: Gi
   const project = await resolveProject(projectId);
   try {
     const branch = (await runGit(project.path, ["branch", "--show-current"])).trim() || "HEAD";
-    const porcelain = await runGit(project.path, ["status", "--porcelain=v1", "-uall"]);
+    const porcelain = await runGit(project.path, ["status", "--porcelain=v1", "-z", "-uall"]);
     let numstat = "";
     try {
       await runGit(project.path, ["rev-parse", "--verify", "HEAD"]);
-      numstat = await runGit(project.path, ["diff", "--numstat", "HEAD"]);
+      numstat = await runGit(project.path, ["diff", "--numstat", "-z", "HEAD"]);
     } catch {
       // A newly initialized repository has no HEAD yet; porcelain still reports real files.
     }
-    const counts = new Map<string, { plus: number; minus: number }>();
-    for (const line of numstat.split(/\r?\n/)) {
-      const match = line.match(/^(\d+|-)\s+(\d+|-)\s+(.+)$/);
-      if (match) counts.set(match[3], { plus: Number(match[1]) || 0, minus: Number(match[2]) || 0 });
-    }
-    const files = await Promise.all(porcelain.split(/\r?\n/).filter(Boolean).map(async (line) => {
-      const statusCode = line.slice(0, 2);
-      const rawPath = line.slice(3).trim();
-      const filePath = rawPath.includes(" -> ") ? rawPath.split(" -> ").pop()! : rawPath;
+    const counts = parseNumstatZ(numstat);
+    const parsedStatus = parsePorcelainV1Z(porcelain);
+    const files = await Promise.all(parsedStatus.map(async ({ statusCode, filePath }) => {
       let count = counts.get(filePath) ?? { plus: 0, minus: 0 };
       if (statusCode === "??") {
         try {
@@ -510,7 +571,14 @@ async function gitStatus(projectId: string): Promise<{ branch: string; files: Gi
           // Keep zero counts for directories and unreadable files.
         }
       }
-      return { path: filePath, status: statusCode, untracked: statusCode === "??", ...count };
+      return {
+        path: filePath,
+        status: statusCode,
+        untracked: statusCode === "??",
+        staged: statusCode !== "??" && statusCode[0] !== " ",
+        unstaged: statusCode === "??" || statusCode[1] !== " ",
+        ...count,
+      };
     }));
     return { branch, files };
   } catch (error) {
@@ -521,8 +589,7 @@ async function gitStatus(projectId: string): Promise<{ branch: string; files: Gi
 
 async function gitDiff(projectId: string, filePath: string): Promise<string> {
   const project = await resolveProject(projectId);
-  const absolute = resolve(project.path, filePath);
-  if (!absolute.startsWith(`${project.path}/`)) throw new Error("文件路径越界");
+  const absolute = resolveProjectFile(project.path, filePath);
   const status = await gitStatus(projectId);
   const file = status.files.find((item) => item.path === filePath);
   if (!file) return "";
@@ -535,7 +602,10 @@ async function gitDiff(projectId: string, filePath: string): Promise<string> {
   }
   const staged = await runGit(project.path, ["diff", "--cached", "--", filePath]);
   const unstaged = await runGit(project.path, ["diff", "--", filePath]);
-  return [staged, unstaged].filter(Boolean).join("\n");
+  return [
+    staged ? `## 已暂存\n${staged}` : "",
+    unstaged ? `## 未暂存\n${unstaged}` : "",
+  ].filter(Boolean).join("\n");
 }
 
 async function listProjectFiles(projectId: string): Promise<string[]> {
@@ -571,6 +641,16 @@ async function ensureProjectTemplate(path: string, template: string, name: strin
 }
 
 export function registerBackend(getWindow: () => BrowserWindow | null): void {
+  const ipcMain = {
+    handle(channel: string, listener: Parameters<typeof electronIpcMain.handle>[1]): void {
+      electronIpcMain.handle(channel, async (event, ...args) => {
+        const window = getWindow();
+        if (!window || event.sender.id !== window.webContents.id) throw new Error("IPC 请求来源未授权");
+        return await listener(event, ...args);
+      });
+    },
+  };
+  stateDatabase = new StateDatabase(userDataFile("rux.sqlite"));
   runtimeManager = new RuntimeManager(join(app.getPath("userData"), "runtimes"), getWindow);
   providerProfileStore = new ProviderProfileStore(userDataFile("provider-profiles.json"));
   codexStreamClient = new CodexAppServerClient(
@@ -586,28 +666,29 @@ export function registerBackend(getWindow: () => BrowserWindow | null): void {
     (event) => getWindow()?.webContents.send("agent:event", event),
   );
   ipcMain.handle("runtimes:list", async () => ({ runtimes: await runtimeManager!.list() }));
-  ipcMain.handle("runtimes:ensure", async (_event, agentId: RuntimeAgentId) => {
+  ipcMain.handle("runtimes:ensure", async (_event, rawAgentId: unknown) => {
+    const agentId = parseInput(agentIdSchema, rawAgentId) as RuntimeAgentId;
     await runtimeManager!.ensure(agentId);
     return await runtimeManager!.status(agentId);
   });
   ipcMain.handle("settings:get", async () => publicSettings(await loadSettings()));
-  ipcMain.handle("settings:save", async (_event, input) => publicSettings(await saveSettings(input ?? {})));
-  ipcMain.handle("settings:test", async (_event, input) => {
-    const saved = await saveSettings(input ?? {});
-    if (saved.provider === "codex") {
+  ipcMain.handle("settings:save", async (_event, rawInput: unknown) => publicSettings(await saveSettings(parseInput(settingsInputSchema, rawInput ?? {}))));
+  ipcMain.handle("settings:test", async (_event, rawInput: unknown) => {
+    const candidate = mergeSettings(await loadSettings(), parseInput(settingsInputSchema, rawInput ?? {}));
+    if (candidate.provider === "codex") {
       await runtimeManager!.ensure("codex");
       const result = await runProcess(findExecutable("codex"), ["login", "status"], { timeoutMs: 20_000 });
       if (result.code !== 0) throw new Error(result.stderr.trim() || "Codex 未登录");
       return { ok: true, message: result.stdout.trim() || result.stderr.trim() };
     }
-    await sendWithCustomProvider({ prompt: "Reply with OK", model: saved.model, reasoning: "low" });
+    await sendWithCustomProvider({ prompt: "Reply with OK", model: candidate.model, reasoning: "low" }, candidate);
     return { ok: true, message: "连接成功" };
   });
   ipcMain.handle("providers:list", async () => await providerProfileStore!.list());
-  ipcMain.handle("providers:save", async (_event, input) => await providerProfileStore!.save(input || {}));
-  ipcMain.handle("providers:remove", async (_event, id: string) => await providerProfileStore!.remove(String(id)));
-  ipcMain.handle("providers:set-active", async (_event, id: string) => await providerProfileStore!.setActive(String(id)));
-  ipcMain.handle("providers:test", async (_event, id: string) => await providerProfileStore!.test(String(id)));
+  ipcMain.handle("providers:save", async (_event, rawInput: unknown) => await providerProfileStore!.save(parseInput(providerSaveSchema, rawInput || {})));
+  ipcMain.handle("providers:remove", async (_event, rawId: unknown) => await providerProfileStore!.remove(parseInput(threadIdSchema, rawId)));
+  ipcMain.handle("providers:set-active", async (_event, rawId: unknown) => await providerProfileStore!.setActive(parseInput(threadIdSchema, rawId)));
+  ipcMain.handle("providers:test", async (_event, rawId: unknown) => await providerProfileStore!.test(parseInput(threadIdSchema, rawId)));
 
   ipcMain.handle("auth:status", async () => {
     const runtime = await runtimeManager!.status("codex");
@@ -616,8 +697,22 @@ export function registerBackend(getWindow: () => BrowserWindow | null): void {
   });
   ipcMain.handle("auth:login", async () => {
     await runtimeManager!.ensure("codex");
-    const child = spawn(findExecutable("codex"), ["login", "--device-auth"], { detached: true, stdio: "ignore" });
-    child.unref();
+    if (authLoginProcess && !authLoginProcess.killed) return { started: true, alreadyRunning: true };
+    const child = spawn(findExecutable("codex"), ["login", "--device-auth"], { env: { ...process.env, NO_COLOR: "1" }, stdio: ["pipe", "pipe", "pipe"] });
+    authLoginProcess = child;
+    child.stdin.end();
+    const emitLogin = (event: Record<string, unknown>) => getWindow()?.webContents.send("auth:login-event", event);
+    const emitOutput = (chunk: Buffer | string) => {
+      const text = String(chunk).replace(/\u001b\[[0-9;]*m/g, "").trim();
+      if (text) emitLogin({ type: "output", text });
+    };
+    child.stdout.on("data", emitOutput);
+    child.stderr.on("data", emitOutput);
+    child.on("error", (error) => emitLogin({ type: "error", message: error.message }));
+    child.on("close", (code) => {
+      authLoginProcess = null;
+      emitLogin({ type: "complete", code: code ?? 1 });
+    });
     return { started: true };
   });
   ipcMain.handle("auth:logout", async () => {
@@ -626,7 +721,8 @@ export function registerBackend(getWindow: () => BrowserWindow | null): void {
     if (result.code !== 0) throw new Error(result.stderr.trim() || "退出登录失败");
     return { connected: false };
   });
-  ipcMain.handle("models:list", async (_event, input?: { agentId?: string; projectId?: string }) => {
+  ipcMain.handle("models:list", async (_event, rawInput: unknown) => {
+    const input = parseInput(modelListSchema, rawInput);
     if (input?.agentId === "claude-code") {
       await runtimeManager!.ensure("claude-code");
       const project = input.projectId ? await resolveProject(input.projectId) : null;
@@ -673,6 +769,12 @@ export function registerBackend(getWindow: () => BrowserWindow | null): void {
   ipcMain.handle("agents:list", async () => ({ agents: await listAgents() }));
 
   ipcMain.handle("projects:list", async () => await loadWorkspace());
+  ipcMain.handle("messages:list", async () => stateDatabase!.loadMessages());
+  ipcMain.handle("messages:save", async (_event, rawMessages: unknown) => {
+    if (Buffer.byteLength(JSON.stringify(rawMessages ?? {}), "utf8") > 20 * 1024 * 1024) throw new Error("会话数据超过 20 MB 上限");
+    stateDatabase!.saveMessages(parseInput(messagesStoreSchema, rawMessages ?? {}));
+    return { saved: true };
+  });
   ipcMain.handle("projects:default-parent", async () => {
     const path = join(app.getPath("documents"), "Rux Projects");
     await mkdir(path, { recursive: true });
@@ -686,7 +788,8 @@ export function registerBackend(getWindow: () => BrowserWindow | null): void {
       : await dialog.showOpenDialog(options);
     return result.canceled ? null : result.filePaths[0];
   });
-  ipcMain.handle("projects:import", async (_event, input: { path: string; createThread?: boolean }) => {
+  ipcMain.handle("projects:import", async (_event, rawInput: unknown) => {
+    const input = parseInput(projectImportSchema, rawInput);
     const path = resolve(String(input?.path ?? ""));
     const info = await stat(path);
     if (!info.isDirectory()) throw new Error("请选择项目文件夹");
@@ -699,7 +802,8 @@ export function registerBackend(getWindow: () => BrowserWindow | null): void {
     }
     return project;
   });
-  ipcMain.handle("projects:clone", async (_event, input: { url: string; parent: string; createThread?: boolean }) => {
+  ipcMain.handle("projects:clone", async (_event, rawInput: unknown) => {
+    const input = parseInput(projectCloneSchema, rawInput);
     const url = String(input?.url ?? "").trim();
     if (!/^(https?:\/\/|git@)/.test(url)) throw new Error("Git 地址无效");
     const parent = resolve(String(input?.parent ?? ""));
@@ -714,7 +818,8 @@ export function registerBackend(getWindow: () => BrowserWindow | null): void {
     await saveWorkspace(workspace);
     return project;
   });
-  ipcMain.handle("projects:create", async (_event, input: { name: string; parent: string; template: string; initGit: boolean; createThread?: boolean }) => {
+  ipcMain.handle("projects:create", async (_event, rawInput: unknown) => {
+    const input = parseInput(projectCreateSchema, rawInput);
     const name = validateProjectName(String(input?.name ?? ""));
     const parent = resolve(String(input?.parent ?? ""));
     if (!isAbsolute(parent)) throw new Error("保存位置无效");
@@ -722,15 +827,21 @@ export function registerBackend(getWindow: () => BrowserWindow | null): void {
     const path = join(parent, name);
     if (await pathExists(path)) throw new Error("同名项目已存在");
     await mkdir(path, { recursive: false });
-    await ensureProjectTemplate(path, String(input?.template ?? "empty"), name);
-    if (input?.initGit) await runGit(path, ["init"]);
-    const workspace = await loadWorkspace();
-    const project = { id: randomUUID(), name, path, threads: input.createThread === false ? [] : [{ id: randomUUID(), title: "项目会话" }] };
-    workspace.projects.push(project);
-    await saveWorkspace(workspace);
-    return project;
+    try {
+      await ensureProjectTemplate(path, input.template, name);
+      if (input.initGit) await runGit(path, ["init"]);
+      const workspace = await loadWorkspace();
+      const project = { id: randomUUID(), name, path, threads: input.createThread === false ? [] : [{ id: randomUUID(), title: "项目会话" }] };
+      workspace.projects.push(project);
+      await saveWorkspace(workspace);
+      return project;
+    } catch (error) {
+      await rm(path, { recursive: true, force: true }).catch(() => {});
+      throw error;
+    }
   });
-  ipcMain.handle("projects:remove", async (_event, projectId: string) => {
+  ipcMain.handle("projects:remove", async (_event, rawProjectId: unknown) => {
+    const projectId = parseInput(projectIdSchema, rawProjectId);
     const workspace = await loadWorkspace();
     const index = workspace.projects.findIndex((project) => project.id === projectId);
     if (index < 0) throw new Error("项目不存在");
@@ -738,7 +849,8 @@ export function registerBackend(getWindow: () => BrowserWindow | null): void {
     await saveWorkspace(workspace);
     return { project, workspace };
   });
-  ipcMain.handle("projects:add-thread", async (_event, input: { projectId: string; title?: string }) => {
+  ipcMain.handle("projects:add-thread", async (_event, rawInput: unknown) => {
+    const input = parseInput(addProjectThreadSchema, rawInput);
     const workspace = await loadWorkspace();
     const project = workspace.projects.find((item) => item.id === input.projectId);
     if (!project) throw new Error("项目不存在");
@@ -747,14 +859,16 @@ export function registerBackend(getWindow: () => BrowserWindow | null): void {
     await saveWorkspace(workspace);
     return thread;
   });
-  ipcMain.handle("projects:add-standalone", async (_event, input: { title?: string }) => {
+  ipcMain.handle("projects:add-standalone", async (_event, rawInput: unknown) => {
+    const input = parseInput(addStandaloneThreadSchema, rawInput) ?? {};
     const workspace = await loadWorkspace();
     const thread = { id: randomUUID(), title: String(input?.title || "未命名会话").slice(0, 100) };
     workspace.standaloneThreads.push(thread);
     await saveWorkspace(workspace);
     return thread;
   });
-  ipcMain.handle("projects:update-thread", async (_event, input: { projectId: string; threadId: string; codexThreadId?: string; agentId?: ThreadRecord["agentId"]; nativeSessionId?: string; agentMode?: string; title?: string }) => {
+  ipcMain.handle("projects:update-thread", async (_event, rawInput: unknown) => {
+    const input = parseInput(projectThreadUpdateSchema, rawInput);
     const workspace = await loadWorkspace();
     const project = workspace.projects.find((item) => item.id === input.projectId);
     const thread = project?.threads.find((item) => item.id === input.threadId);
@@ -767,7 +881,8 @@ export function registerBackend(getWindow: () => BrowserWindow | null): void {
     await saveWorkspace(workspace);
     return thread;
   });
-  ipcMain.handle("threads:update", async (_event, input: { type: "project" | "standalone"; projectId?: string; threadId: string; codexThreadId?: string; agentId?: ThreadRecord["agentId"]; nativeSessionId?: string; agentMode?: string; title?: string }) => {
+  ipcMain.handle("threads:update", async (_event, rawInput: unknown) => {
+    const input = parseInput(threadUpdateSchema, rawInput);
     const workspace = await loadWorkspace();
     const thread = input.type === "project"
       ? workspace.projects.find((item) => item.id === input.projectId)?.threads.find((item) => item.id === input.threadId)
@@ -781,7 +896,8 @@ export function registerBackend(getWindow: () => BrowserWindow | null): void {
     await saveWorkspace(workspace);
     return thread;
   });
-  ipcMain.handle("threads:remove", async (_event, input: { type: "project" | "standalone"; projectId?: string; threadId: string }) => {
+  ipcMain.handle("threads:remove", async (_event, rawInput: unknown) => {
+    const input = parseInput(threadUpdateSchema, rawInput);
     const workspace = await loadWorkspace();
     const threads = input.type === "project"
       ? workspace.projects.find((project) => project.id === input.projectId)?.threads
@@ -794,27 +910,16 @@ export function registerBackend(getWindow: () => BrowserWindow | null): void {
     return { thread, workspace };
   });
 
-  ipcMain.handle("agent:send", async (_event, input) => {
+  ipcMain.handle("agent:send", async (_event, rawInput: unknown) => {
+    const input = parseInput(agentSendSchema, rawInput);
     const settings = await loadSettings();
     if (settings.provider === "custom") return await sendWithCustomProvider(input);
     return await sendWithCodex(input);
   });
-  ipcMain.handle("agent:start", async (_event, input: {
-    runId: string;
-    projectId?: string;
-    prompt: string;
-    model?: string;
-    reasoning?: ReasoningEffort;
-    sandboxMode?: SandboxMode;
-    images?: string[];
-    webSearch?: boolean;
-    threadId?: string;
-    mode?: string;
-    agentId?: "codex" | "claude-code" | "pi";
-    nativeSessionId?: string;
-  }) => {
+  ipcMain.handle("agent:start", async (_event, rawInput: unknown) => {
+    const input = parseInput(agentStartSchema, rawInput);
     const settings = await loadSettings();
-    if (settings.provider === "custom" && input.agentId !== "claude-code") {
+    if (settings.provider === "custom" && (!input.agentId || input.agentId === "codex")) {
       const result = await sendWithCustomProvider(input);
       queueMicrotask(() => {
         const window = getWindow();
@@ -867,7 +972,8 @@ export function registerBackend(getWindow: () => BrowserWindow | null): void {
       mode: input.mode === "plan" ? "plan" : "default",
     });
   });
-  ipcMain.handle("agent:interrupt", async (_event, input: { agentId?: string; runId?: string; threadId: string; turnId: string }) => {
+  ipcMain.handle("agent:interrupt", async (_event, rawInput: unknown) => {
+    const input = parseInput(agentInterruptSchema, rawInput);
     if (input.agentId === "claude-code") {
       await claudeCodeClient!.interrupt(String(input.runId || input.turnId));
       return { interrupted: true };
@@ -879,7 +985,8 @@ export function registerBackend(getWindow: () => BrowserWindow | null): void {
     await codexStreamClient!.interrupt(String(input.threadId), String(input.turnId));
     return { interrupted: true };
   });
-  ipcMain.handle("agent:approval", async (_event, input: { approvalId: string; decision: "accept" | "acceptForSession" | "decline" }) => {
+  ipcMain.handle("agent:approval", async (_event, rawInput: unknown) => {
+    const input = parseInput(approvalSchema, rawInput);
     if (String(input.approvalId).startsWith("claude:")) {
       claudeCodeClient!.respondToApproval(String(input.approvalId), input.decision);
       return { responded: true };
@@ -888,36 +995,45 @@ export function registerBackend(getWindow: () => BrowserWindow | null): void {
     return { responded: true };
   });
 
-  ipcMain.handle("git:status", async (_event, projectId: string) => await gitStatus(projectId));
-  ipcMain.handle("git:diff", async (_event, input: { projectId: string; path: string }) => await gitDiff(input.projectId, input.path));
-  ipcMain.handle("files:list", async (_event, projectId: string) => await listProjectFiles(projectId));
-  ipcMain.handle("files:open", async (_event, input: { projectId: string; path: string }) => {
+  ipcMain.handle("git:status", async (_event, rawProjectId: unknown) => await gitStatus(parseInput(projectIdSchema, rawProjectId)));
+  ipcMain.handle("git:diff", async (_event, rawInput: unknown) => {
+    const input = parseInput(projectFileSchema, rawInput);
+    return await gitDiff(input.projectId, input.path);
+  });
+  ipcMain.handle("files:list", async (_event, rawProjectId: unknown) => await listProjectFiles(parseInput(projectIdSchema, rawProjectId)));
+  ipcMain.handle("files:open", async (_event, rawInput: unknown) => {
+    const input = parseInput(projectFileSchema, rawInput);
     const project = await resolveProject(input.projectId);
-    const absolute = resolve(project.path, String(input.path ?? ""));
-    if (!absolute.startsWith(`${project.path}/`)) throw new Error("文件路径越界");
-    const error = await shell.openPath(absolute);
+    const absolute = resolveProjectFile(project.path, input.path);
+    const canonical = await realpath(absolute);
+    resolveProjectFile(project.path, relative(project.path, canonical));
+    const error = await shell.openPath(canonical);
     if (error) throw new Error(error);
     return { opened: true };
   });
-  ipcMain.handle("git:branches", async (_event, projectId: string) => {
+  ipcMain.handle("git:branches", async (_event, rawProjectId: unknown) => {
+    const projectId = parseInput(projectIdSchema, rawProjectId);
     const project = await resolveProject(projectId);
     try {
       const output = await runGit(project.path, ["branch", "--format=%(refname:short)"]);
       return output.split(/\r?\n/).filter(Boolean);
     } catch { return []; }
   });
-  ipcMain.handle("git:switch", async (_event, input: { projectId: string; branch: string }) => {
+  ipcMain.handle("git:switch", async (_event, rawInput: unknown) => {
+    const input = parseInput(gitSwitchSchema, rawInput);
     const project = await resolveProject(input.projectId);
     const branches = (await runGit(project.path, ["branch", "--format=%(refname:short)"])).split(/\r?\n/).filter(Boolean);
     if (!branches.includes(input.branch)) throw new Error("分支不存在");
     await runGit(project.path, ["switch", input.branch]);
     return await gitStatus(input.projectId);
   });
-  ipcMain.handle("git:remote", async (_event, projectId: string) => {
+  ipcMain.handle("git:remote", async (_event, rawProjectId: unknown) => {
+    const projectId = parseInput(projectIdSchema, rawProjectId);
     const project = await resolveProject(projectId);
     try { return (await runGit(project.path, ["remote", "get-url", "origin"])).trim(); } catch { return ""; }
   });
-  ipcMain.handle("git:commit-push", async (_event, input: { projectId: string; message: string; push: boolean }) => {
+  ipcMain.handle("git:commit-push", async (_event, rawInput: unknown) => {
+    const input = parseInput(gitCommitSchema, rawInput);
     const project = await resolveProject(input.projectId);
     const message = String(input.message ?? "").trim();
     if (message) {
@@ -934,7 +1050,8 @@ export function registerBackend(getWindow: () => BrowserWindow | null): void {
     }
     return await gitStatus(input.projectId);
   });
-  ipcMain.handle("git:stage", async (_event, input: { projectId: string; paths: string[] }) => {
+  ipcMain.handle("git:stage", async (_event, rawInput: unknown) => {
+    const input = parseInput(gitStageSchema, rawInput);
     const project = await resolveProject(input.projectId);
     const allowed = (await gitStatus(input.projectId)).files.map((item) => item.path);
     const paths = input.paths.filter((path) => allowed.includes(path));
@@ -942,48 +1059,60 @@ export function registerBackend(getWindow: () => BrowserWindow | null): void {
     await runGit(project.path, ["add", "--", ...paths]);
     return await gitStatus(input.projectId);
   });
-  ipcMain.handle("git:discard", async (_event, input: { projectId: string; path: string }) => {
+  ipcMain.handle("git:discard", async (_event, rawInput: unknown) => {
+    const input = parseInput(projectFileSchema, rawInput);
     const project = await resolveProject(input.projectId);
     const status = await gitStatus(input.projectId);
     const file = status.files.find((item) => item.path === input.path);
     if (!file) throw new Error("变更不存在");
     if (file.untracked) throw new Error("为避免数据丢失，未跟踪文件不会自动删除");
-    await runGit(project.path, ["restore", "--staged", "--worktree", "--", input.path]);
+    if (file.status[1] === " ") throw new Error("此文件没有未暂存修改；已暂存内容不会被自动丢弃");
+    await runGit(project.path, ["restore", "--worktree", "--", input.path]);
     return await gitStatus(input.projectId);
   });
 
-  ipcMain.handle("terminal:start", async (event, projectId: string) => {
+  ipcMain.handle("terminal:start", async (event, rawProjectId: unknown) => {
+    const projectId = parseInput(projectIdSchema, rawProjectId);
     const project = await resolveProject(projectId);
     const senderId = event.sender.id;
-    terminalProcesses.get(senderId)?.kill("SIGTERM");
-    const shellPath = process.env.SHELL || "/bin/zsh";
-    const child = spawn(shellPath, ["-l"], { cwd: project.path, env: { ...process.env, TERM: "xterm-256color" }, stdio: ["pipe", "pipe", "pipe"] });
+    terminalProcesses.get(senderId)?.kill();
+    const shellPath = process.platform === "win32"
+      ? process.env.ComSpec || "cmd.exe"
+      : process.env.SHELL || "/bin/zsh";
+    const shellArgs = process.platform === "win32" ? [] : ["-l"];
+    const environment = Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
+    const child = spawnPty(shellPath, shellArgs, { name: "xterm-256color", cols: 120, rows: 30, cwd: project.path, env: environment });
     terminalProcesses.set(senderId, child);
     const send = (data: string) => event.sender.send("terminal:data", data);
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
-    child.stdout.on("data", send);
-    child.stderr.on("data", send);
-    child.on("close", (code) => {
-      send(`\n[进程已退出：${code ?? 1}]\n`);
+    child.onData(send);
+    child.onExit(({ exitCode }) => {
+      send(`\r\n[进程已退出：${exitCode}]\r\n`);
       terminalProcesses.delete(senderId);
     });
-    child.stdin.write("pwd\n");
     return { started: true, cwd: project.path };
   });
-  ipcMain.handle("terminal:write", async (event, input: string) => {
+  ipcMain.handle("terminal:write", async (event, rawInput: unknown) => {
+    const input = parseInput(terminalWriteSchema, rawInput);
     const process = terminalProcesses.get(event.sender.id);
-    if (!process || process.killed) throw new Error("终端未启动");
-    process.stdin.write(`${input}\n`);
+    if (!process) throw new Error("终端未启动");
+    process.write(input);
     return { written: true };
   });
+  ipcMain.handle("terminal:resize", async (event, rawInput: unknown) => {
+    const input = parseInput(terminalResizeSchema, rawInput);
+    const process = terminalProcesses.get(event.sender.id);
+    if (!process) throw new Error("终端未启动");
+    process.resize(input.cols, input.rows);
+    return { resized: true };
+  });
   ipcMain.handle("terminal:stop", async (event) => {
-    terminalProcesses.get(event.sender.id)?.kill("SIGTERM");
+    terminalProcesses.get(event.sender.id)?.kill();
     terminalProcesses.delete(event.sender.id);
     return { stopped: true };
   });
 
-  ipcMain.handle("system:open-path", async (_event, projectId: string) => {
+  ipcMain.handle("system:open-path", async (_event, rawProjectId: unknown) => {
+    const projectId = parseInput(projectIdSchema, rawProjectId);
     const project = await resolveProject(projectId);
     const error = await shell.openPath(project.path);
     if (error) throw new Error(error);
@@ -995,13 +1124,12 @@ export function registerBackend(getWindow: () => BrowserWindow | null): void {
     const result = window ? await dialog.showOpenDialog(window, options) : await dialog.showOpenDialog(options);
     return result.canceled ? [] : result.filePaths;
   });
-  ipcMain.handle("system:copy", async (_event, value: string) => {
-    clipboard.writeText(String(value ?? ""));
+  ipcMain.handle("system:copy", async (_event, rawValue: unknown) => {
+    clipboard.writeText(parseInput(clipboardTextSchema, rawValue));
     return { copied: true };
   });
-  ipcMain.handle("system:open-external", async (_event, url: string) => {
-    const value = String(url ?? "").trim();
-    if (!/^https?:\/\//.test(value)) throw new Error("仅支持 HTTP(S) 地址");
+  ipcMain.handle("system:open-external", async (_event, rawUrl: unknown) => {
+    const value = parseInput(externalUrlSchema, rawUrl);
     await shell.openExternal(value);
     return { opened: true };
   });
@@ -1021,12 +1149,16 @@ export function registerBackend(getWindow: () => BrowserWindow | null): void {
 }
 
 export function stopBackendProcesses(): void {
+  authLoginProcess?.kill("SIGTERM");
+  authLoginProcess = null;
   codexStreamClient?.stop();
   codexStreamClient = null;
   claudeCodeClient?.stop();
   claudeCodeClient = null;
   piRuntimeClient?.stop();
   piRuntimeClient = null;
-  for (const child of terminalProcesses.values()) child.kill("SIGTERM");
+  for (const child of terminalProcesses.values()) child.kill();
   terminalProcesses.clear();
+  stateDatabase?.close();
+  stateDatabase = null;
 }
