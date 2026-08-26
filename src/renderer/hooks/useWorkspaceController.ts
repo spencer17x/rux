@@ -1,0 +1,75 @@
+import { useCallback, useState } from "react";
+import type { RuxApi } from "../../electron/preload";
+import type { ActiveThread, ProjectAction, ProjectRecord, ThreadRecord, WorkspaceState } from "../types";
+
+type View = "project" | "standalone" | "review" | "settings";
+type ModalStep = "choose" | "import" | "create";
+
+export function useWorkspaceController(api: RuxApi, notify: (message: string) => void, onThreadsRemoved: (threadIds: string[]) => void, onThreadSelected: (thread: ThreadRecord) => void) {
+  const [workspace, setWorkspace] = useState<WorkspaceState>({ projects: [], standaloneThreads: [] });
+  const [activeThread, setActiveThread] = useState<ActiveThread | null>(null);
+  const [expandedProjects, setExpandedProjects] = useState<string[]>([]);
+  const [defaultParent, setDefaultParent] = useState("");
+  const [view, setView] = useState<View>("project");
+  const [modalStep, setModalStep] = useState<ModalStep | null>(null);
+  const selectProjectThread = useCallback((project: ProjectRecord, thread: ThreadRecord) => {
+    setActiveThread({ type: "project", projectId: project.id, projectName: project.name, projectPath: project.path, ...thread });
+    setView("project"); onThreadSelected(thread);
+  }, [onThreadSelected]);
+  const selectStandalone = useCallback((thread: ThreadRecord) => { setActiveThread({ type: "standalone", ...thread }); setView("standalone"); onThreadSelected(thread); }, [onThreadSelected]);
+  const reloadWorkspace = useCallback(async (selectProject?: ProjectRecord) => {
+    const next = await api.projects.list() as WorkspaceState; setWorkspace(next);
+    if (selectProject) {
+      const project = next.projects.find((item) => item.id === selectProject.id) || selectProject;
+      setExpandedProjects((current) => current.includes(project.id) ? current : [...current, project.id]);
+      if (project.threads[0]) selectProjectThread(project, project.threads[0]);
+    }
+    return next;
+  }, [api, selectProjectThread]);
+  const newProjectThread = useCallback(async (project: ProjectRecord) => {
+    try { const thread = await api.projects.addThread({ projectId: project.id, title: "未命名会话" }) as ThreadRecord; await reloadWorkspace(); selectProjectThread(project, thread); return thread; }
+    catch (error) { notify(error instanceof Error ? error.message : String(error)); return null; }
+  }, [api, notify, reloadWorkspace, selectProjectThread]);
+  const newStandalone = useCallback(async () => {
+    try { const thread = await api.projects.addStandalone({ title: "未命名会话" }) as ThreadRecord; await reloadWorkspace(); selectStandalone(thread); return thread; }
+    catch (error) { notify(error instanceof Error ? error.message : String(error)); return null; }
+  }, [api, notify, reloadWorkspace, selectStandalone]);
+  const initializeWorkspace = useCallback(async (nextWorkspace: WorkspaceState, parent: string) => {
+    setWorkspace(nextWorkspace); setDefaultParent(parent);
+    const firstProject = nextWorkspace.projects[0]; const firstThread = firstProject?.threads[0];
+    if (firstProject && firstThread) { setExpandedProjects([firstProject.id]); selectProjectThread(firstProject, firstThread); }
+    else if (nextWorkspace.standaloneThreads[0]) selectStandalone(nextWorkspace.standaloneThreads[0]);
+    else await newStandalone();
+  }, [newStandalone, selectProjectThread, selectStandalone]);
+  const renameActiveThread = useCallback(async () => {
+    if (!activeThread) return;
+    const title = window.prompt("输入新的会话名称", activeThread.title)?.trim(); if (!title || title === activeThread.title) return;
+    try { const updated = await api.threads.update({ type: activeThread.type, projectId: activeThread.projectId, threadId: activeThread.id, title }); setActiveThread((current) => current ? { ...current, ...(updated as Partial<ThreadRecord>) } : current); await reloadWorkspace(); notify("会话已重命名"); }
+    catch (error) { notify(error instanceof Error ? error.message : String(error)); }
+  }, [activeThread, api, notify, reloadWorkspace]);
+  const removeActiveThread = useCallback(async (sending: boolean) => {
+    if (sending) { notify("请先停止当前会话，再移除它"); return; }
+    if (!activeThread || !window.confirm(`从 Rux 中移除会话“${activeThread.title}”？`)) return;
+    try {
+      const { workspace: rawWorkspace } = await api.threads.remove({ type: activeThread.type, projectId: activeThread.projectId, threadId: activeThread.id }); const next = rawWorkspace as WorkspaceState;
+      setWorkspace(next); onThreadsRemoved([activeThread.id]);
+      const project = next.projects.find((item) => item.threads.length); if (project) selectProjectThread(project, project.threads[0]); else if (next.standaloneThreads[0]) selectStandalone(next.standaloneThreads[0]); else await newStandalone();
+      notify("会话已移除");
+    } catch (error) { notify(error instanceof Error ? error.message : String(error)); }
+  }, [activeThread, api, newStandalone, notify, onThreadsRemoved, selectProjectThread, selectStandalone]);
+  const removeProject = useCallback(async (project: ProjectRecord, projectRunning = false) => {
+    if (projectRunning) { notify("该项目仍有 Agent 正在运行，请先停止任务"); return; }
+    if (!window.confirm(`从 Rux 中移除“${project.name}”？\n\n仅解除侧栏关联，不会删除磁盘中的项目文件。`)) return;
+    try {
+      const { workspace: rawWorkspace } = await api.projects.remove(project.id); const next = rawWorkspace as WorkspaceState; setWorkspace(next);
+      onThreadsRemoved(project.threads.map((thread) => thread.id)); setExpandedProjects((current) => current.filter((id) => id !== project.id));
+      if (activeThread?.type === "project" && activeThread.projectId === project.id) { const nextProject = next.projects[0]; if (nextProject?.threads[0]) selectProjectThread(nextProject, nextProject.threads[0]); else if (next.standaloneThreads[0]) selectStandalone(next.standaloneThreads[0]); }
+      notify(`已移除 ${project.name}，本地文件未删除`);
+    } catch (error) { notify(error instanceof Error ? error.message : String(error)); }
+  }, [activeThread, api, notify, onThreadsRemoved, selectProjectThread, selectStandalone]);
+  const completeProjectAction = useCallback(async (action: ProjectAction) => {
+    const project = (action.kind === "create" ? await api.projects.create(action) : action.kind === "clone" ? await api.projects.clone(action) : await api.projects.import(action)) as ProjectRecord;
+    await reloadWorkspace(project); setModalStep(null); notify(action.kind === "create" ? "项目已创建并加入侧栏" : "项目已导入并加入侧栏");
+  }, [api, notify, reloadWorkspace]);
+  return { workspace, setWorkspace, activeThread, setActiveThread, expandedProjects, setExpandedProjects, defaultParent, view, setView, modalStep, setModalStep, initializeWorkspace, reloadWorkspace, selectProjectThread, selectStandalone, newProjectThread, newStandalone, renameActiveThread, removeActiveThread, removeProject, completeProjectAction };
+}

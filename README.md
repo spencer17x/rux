@@ -12,6 +12,9 @@ Useful commands:
 - `pnpm test` runs unit tests, checks Electron/shared TypeScript, and builds the Web and desktop clients.
 - `pnpm package` creates an unpacked desktop application for the current platform.
 - `pnpm dist` creates distributable desktop artifacts.
+- `pnpm test:e2e` builds and exercises the real Electron shell, SQLite persistence, and PTY terminal.
+
+Release signing, notarization, and CI matrix details are documented in `docs/releasing.md`.
 
 The renderer is sandboxed. Codex, filesystem dialogs, Git, terminal, account, model, and system operations are exposed through validated Electron IPC boundaries. Project, thread, and transcript state is stored in SQLite; the terminal uses a native PTY rendered with xterm.
 

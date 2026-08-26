@@ -20,7 +20,7 @@ const api = {
     onLoginEvent: (listener: (event: unknown) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, loginEvent: unknown) => listener(loginEvent);
       ipcRenderer.on("auth:login-event", handler);
-      return () => ipcRenderer.removeListener("auth:login-event", handler);
+      return () => { ipcRenderer.removeListener("auth:login-event", handler); };
     },
   },
   models: {
@@ -35,7 +35,7 @@ const api = {
     onProgress: (listener: (progress: unknown) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, progress: unknown) => listener(progress);
       ipcRenderer.on("runtime:progress", handler);
-      return () => ipcRenderer.removeListener("runtime:progress", handler);
+      return () => { ipcRenderer.removeListener("runtime:progress", handler); };
     },
   },
   projects: {
@@ -66,7 +66,7 @@ const api = {
     onEvent: (listener: (event: unknown) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, event: unknown) => listener(event);
       ipcRenderer.on("agent:event", handler);
-      return () => ipcRenderer.removeListener("agent:event", handler);
+      return () => { ipcRenderer.removeListener("agent:event", handler); };
     },
   },
   git: {
@@ -91,7 +91,7 @@ const api = {
     onData: (listener: (data: string) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, data: string) => listener(data);
       ipcRenderer.on("terminal:data", handler);
-      return () => ipcRenderer.removeListener("terminal:data", handler);
+      return () => { ipcRenderer.removeListener("terminal:data", handler); };
     },
   },
   system: {
@@ -102,5 +102,7 @@ const api = {
     info: () => ipcRenderer.invoke("system:info"),
   },
 };
+
+export type RuxApi = typeof api;
 
 contextBridge.exposeInMainWorld("rux", api);

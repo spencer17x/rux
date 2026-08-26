@@ -18,8 +18,10 @@
     "build:desktop": "electron-vite build",
     "package": "pnpm build:desktop && electron-builder --dir",
     "dist": "pnpm build:desktop && electron-builder",
+    "dist:mac:signed": "pnpm build:desktop && electron-builder --mac --config electron-builder.release.yml",
     "typecheck": "tsc --noEmit",
     "test:unit": "vitest run",
+    "test:e2e": "pnpm build:desktop && playwright test",
     "test": "pnpm test:unit && pnpm typecheck && pnpm build"
   },
   "dependencies": {
@@ -36,6 +38,7 @@
     "zod": "4.4.3"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@types/node": "^26.2.0",
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.3",

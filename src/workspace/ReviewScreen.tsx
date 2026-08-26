@@ -1,0 +1,14 @@
+import { ArrowLeft, CheckCircle, File, FileText, GitBranch } from "@phosphor-icons/react";
+import type { GitState } from "../renderer/types";
+
+type Props = { gitState: GitState; branches: string[]; selectedFile: string; diff: string; busy: boolean; onSelectFile: (path: string) => void; onBack: () => void; onSwitchBranch: (branch: string) => void; onCommitPush: () => void; onStageAll: () => void; onStageFile: () => void; onDiscard: () => void };
+
+export default function ReviewScreen(props: Props) {
+  const selected = props.gitState.files.find((file) => file.path === props.selectedFile);
+  return <div className="review-screen">
+    <div className="review-tabs"><button type="button" onClick={props.onBack}>对话</button><button type="button" className="is-active">变更 <span>{props.gitState.files.length}</span></button></div>
+    <div className="review-summary"><span><FileText size={18} />{props.gitState.files.length} 个真实文件变更</span><label className="review-branch"><GitBranch size={18} /><select aria-label="切换 Git 分支" value={props.gitState.branch || ""} onChange={(event) => props.onSwitchBranch(event.target.value)}>{props.branches.length ? props.branches.map((branch) => <option value={branch} key={branch}>{branch}</option>) : <option value={props.gitState.branch || ""}>{props.gitState.branch || "—"}</option>}</select></label><button type="button" className="secondary-button" disabled={props.busy} onClick={props.onCommitPush}>提交或推送</button></div>
+    {props.gitState.files.length ? <div className="review-workspace"><div className="file-list">{props.gitState.files.map((file) => <button type="button" key={file.path} className={props.selectedFile === file.path ? "is-selected" : ""} onClick={() => props.onSelectFile(file.path)}><File size={17} /><span>{file.path}</span><small>{file.staged && <i>已暂存</i>}{file.unstaged && !file.untracked && <i>未暂存</i>}<b>+{file.plus}</b> <em>−{file.minus}</em></small></button>)}</div><div className="real-diff-wrap"><div className="diff-heading">{props.selectedFile}</div><pre className="real-diff">{props.diff || "选择文件以查看真实 Git diff"}</pre></div></div> : <div className="review-empty"><CheckCircle size={30} /><h2>工作区没有变更</h2></div>}
+    <div className="review-actions"><button type="button" className="primary-button" disabled={props.busy || !props.gitState.files.length} onClick={props.onStageAll}>全部暂存</button><button type="button" className="secondary-button" disabled={props.busy || !props.selectedFile} onClick={props.onStageFile}>暂存此文件</button><button type="button" className="danger-link" disabled={props.busy || !selected?.unstaged || selected.untracked} onClick={props.onDiscard}>放弃未暂存修改</button><button type="button" className="back-to-chat" onClick={props.onBack}><ArrowLeft size={16} />返回对话</button></div>
+  </div>;
+}

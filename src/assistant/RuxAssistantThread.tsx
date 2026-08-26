@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   AssistantRuntimeProvider,
   ComposerPrimitive,
@@ -28,6 +28,20 @@ import {
   WarningCircle,
   X,
 } from "@phosphor-icons/react";
+import type { RuxMessage } from "../renderer/messages";
+import type { AgentId } from "../renderer/types";
+
+type AgentDefinition = { id: AgentId; name: string; installed: boolean; integrated: boolean; version: string; modes?: Array<{ id: string; label: string }> };
+type RuntimeProgress = Record<string, { state: string; percent?: number; message?: string }>;
+type ApprovalResponse = { approvalId: string; approved: boolean; optionId?: string };
+type Props = {
+  messages: RuxMessage[]; running: boolean; emptyTitle: string; onNewMessage: (text: string) => Promise<unknown>; onCancel: () => Promise<unknown>; onApproval: (response: ApprovalResponse) => Promise<unknown>;
+  agents: AgentDefinition[]; runtimeProgress: RuntimeProgress; selectedAgent: AgentId; onSelectAgent: (agentId: AgentId) => void; agentMode: string; onAgentMode: (mode: string) => void;
+  modelLabel: string; reasoningLabel: string; permissionLabel: string; showPermission?: boolean; modelOpen: "models" | "reasoning" | null; sandboxOpen: boolean;
+  modelPopover: ReactNode; permissionPopover: ReactNode; onToggleModel: (mode: "models" | "reasoning") => void; onToggleSandbox: () => void;
+  attachments: string[]; showAttachments?: boolean; webSearch?: boolean; showWebSearch?: boolean; onToggleWebSearch: () => void; voiceTranscript: string;
+  onAddFiles: () => void; onRemoveAttachment: (path: string) => void; listening: boolean; onVoice: () => void;
+};
 
 const toolPresentation = {
   shell: { label: "执行命令", Icon: TerminalWindow },
@@ -39,7 +53,7 @@ const toolPresentation = {
   collabAgentToolCall: { label: "调用子 Agent", Icon: Robot },
 };
 
-function normalizeMessage(message) {
+function normalizeMessage(message: RuxMessage): any {
   const content = message.parts?.length
     ? message.parts
     : [{ type: "text", text: message.text || "" }];
@@ -67,7 +81,7 @@ function AssistantText() {
   return <MarkdownTextPrimitive className="rux-markdown" />;
 }
 
-function ReasoningPart({ text, status }) {
+function ReasoningPart({ text, status }: { text?: string; status?: { type?: string } }) {
   const running = status?.type === "running";
   return (
     <details className={`reasoning-part ${running ? "is-running" : ""}`} open={running}>
@@ -77,8 +91,8 @@ function ReasoningPart({ text, status }) {
   );
 }
 
-function ToolPart({ toolName, args, result, isError, approval, respondToApproval, timing }) {
-  const definition = toolPresentation[toolName] || toolPresentation.dynamicToolCall;
+function ToolPart({ toolName, args, result, isError, approval, respondToApproval, timing }: Record<string, any>) {
+  const definition = toolPresentation[String(toolName) as keyof typeof toolPresentation] || toolPresentation.dynamicToolCall;
   const Icon = definition.Icon;
   const running = result === undefined && !isError;
   const title = args?.command || args?.path || args?.tool || definition.label;
@@ -125,7 +139,7 @@ function AssistantMessage() {
   );
 }
 
-function AgentSelector({ agents, selectedAgent, onSelectAgent, runtimeProgress }) {
+function AgentSelector({ agents, selectedAgent, onSelectAgent, runtimeProgress }: { agents: AgentDefinition[]; selectedAgent: AgentId; onSelectAgent: (agentId: AgentId) => void; runtimeProgress: RuntimeProgress }) {
   const [open, setOpen] = useState(false);
   const current = agents.find((agent) => agent.id === selectedAgent) || agents[0];
   return (
@@ -152,7 +166,7 @@ function AgentSelector({ agents, selectedAgent, onSelectAgent, runtimeProgress }
   );
 }
 
-function AgentModeSelector({ agent, mode, onMode }) {
+function AgentModeSelector({ agent, mode, onMode }: { agent?: AgentDefinition; mode: string; onMode: (mode: string) => void }) {
   const [open, setOpen] = useState(false);
   const current = agent?.modes?.find((item) => item.id === mode) || agent?.modes?.[0];
   if (!agent?.modes?.length) return null;
@@ -199,7 +213,7 @@ export default function RuxAssistantThread({
   onRemoveAttachment,
   listening,
   onVoice,
-}) {
+}: Props) {
   const runtime = useExternalStoreRuntime({
     messages,
     convertMessage: normalizeMessage,
@@ -208,8 +222,8 @@ export default function RuxAssistantThread({
       const text = message.content.filter((part) => part.type === "text").map((part) => part.text).join("\n").trim();
       if (text) await onNewMessage(text);
     },
-    onCancel,
-    onRespondToToolApproval: async ({ approvalId, approved, optionId }) => onApproval({ approvalId, approved, optionId }),
+    onCancel: async () => { await onCancel(); },
+    onRespondToToolApproval: async ({ approvalId, approved, optionId }) => { await onApproval({ approvalId, approved, optionId }); },
   });
   const selectedDefinition = useMemo(() => agents.find((agent) => agent.id === selectedAgent), [agents, selectedAgent]);
   useEffect(() => {

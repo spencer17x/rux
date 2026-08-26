@@ -1,0 +1,5 @@
+extends: electron-builder.yml
+
+mac:
+  notarize:
+    teamId: ${env.APPLE_TEAM_ID}
