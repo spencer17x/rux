@@ -25,6 +25,7 @@ export default function RuxTerminal({ output, onInput, onResize }: RuxTerminalPr
     const terminal = new Terminal({
       convertEol: true,
       cursorBlink: true,
+      screenReaderMode: true,
       fontFamily: '"SFMono-Regular", Consolas, monospace',
       fontSize: 12,
       theme: { background: "#1e1e1e", foreground: "#eeeeec", cursor: "#ffffff" },
@@ -57,5 +58,6 @@ export default function RuxTerminal({ output, onInput, onResize }: RuxTerminalPr
     }
   }, [output]);
 
-  return <section className="terminal-panel"><div className="xterm-container" ref={containerRef} aria-label="项目终端" /></section>;
+  const accessibleOutput = output.slice(-100).map((chunk) => chunk.data).join("").replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, "").slice(-4000);
+  return <section className="terminal-panel"><div className="xterm-container" ref={containerRef} aria-label="项目终端" /><pre className="sr-only" aria-live="polite" aria-label="终端输出">{accessibleOutput}</pre></section>;
 }

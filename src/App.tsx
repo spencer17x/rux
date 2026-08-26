@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 
 // Renderer orchestration remains here; reusable UI and protocol state live in typed modules.
 import {
@@ -28,6 +28,7 @@ const TypedWorkspaceDock = lazy(() => import("./workspace/WorkspaceDock"));
 const TypedAddProjectModal = lazy(() => import("./projects/AddProjectModal"));
 
 const api = window.rux;
+type OverlayId = "agents" | "agent-mode" | "models" | "reasoning" | "sandbox";
 
 function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error); }
 
@@ -37,14 +38,16 @@ function App() {
   const [workspaceReady, setWorkspaceReady] = useState(false);
   const { toast, notify } = useToast();
   const [messages, setMessages] = usePersistentMessages(api, workspaceReady, notify);
-  const [modelOpen, setModelOpen] = useState<"models" | "reasoning" | null>(null);
-  const [sandboxOpen, setSandboxOpen] = useState(false);
+  const [activeOverlay, setActiveOverlay] = useState<OverlayId | null>(null);
+  const addProjectTrigger = useRef<HTMLButtonElement | null>(null);
+  const modelOpen = activeOverlay === "models" || activeOverlay === "reasoning" ? activeOverlay : null;
+  const sandboxOpen = activeOverlay === "sandbox";
   const [attachments, setAttachments] = useState<string[]>([]);
   const [webSearch, setWebSearch] = useState(false);
   const [listening, setListening] = useState(false);
   const [composerValue, setComposerValue] = useState("");
   const handleThreadsRemoved = useCallback((threadIds: string[]) => setMessages((current) => Object.fromEntries(Object.entries(current).filter(([threadId]) => !threadIds.includes(threadId)))), [setMessages]);
-  const handleThreadSelected = useCallback((thread: { agentId?: AgentId; agentMode?: string }) => { setSelectedAgent(thread.agentId || "codex"); setAgentMode(thread.agentMode || "default"); setModelOpen(null); }, []);
+  const handleThreadSelected = useCallback((thread: { agentId?: AgentId; agentMode?: string }) => { setSelectedAgent(thread.agentId || "codex"); setAgentMode(thread.agentMode || "default"); setActiveOverlay(null); }, []);
   const { workspace, setWorkspace, activeThread, setActiveThread, expandedProjects, setExpandedProjects, defaultParent, view, setView, modalStep, setModalStep, initializeWorkspace, reloadWorkspace, selectProjectThread, selectStandalone, newProjectThread, newStandalone, renameActiveThread, removeActiveThread: removeWorkspaceThread, removeProject, completeProjectAction } = useWorkspaceController(
     api,
     notify,
@@ -73,7 +76,7 @@ function App() {
       if (event.metaKey && event.key.toLowerCase() === "n") { event.preventDefault(); newStandalone(); }
       if (event.ctrlKey && event.key === "`") { event.preventDefault(); selectWorkspaceTool("terminal"); }
       if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "g") { event.preventDefault(); openReview(); }
-      if (event.key === "Escape") { setModelOpen(null); setSandboxOpen(false); }
+      if (event.key === "Escape") setActiveOverlay(null);
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
@@ -95,7 +98,7 @@ function App() {
 
   async function selectSandbox(sandboxMode: SandboxMode) {
     if (sandboxMode === "danger-full-access" && !window.confirm("完全访问权限允许 Codex 访问互联网和电脑上的任何文件，并跳过操作批准。确认启用？")) return;
-    try { await saveSettings({ sandboxMode }); setSandboxOpen(false); notify(`权限已切换为${sandboxLabels[sandboxMode]}`); }
+    try { await saveSettings({ sandboxMode }); setActiveOverlay(null); notify(`权限已切换为${sandboxLabels[sandboxMode]}`); }
     catch (error) { notify(errorMessage(error)); }
   }
 
@@ -125,7 +128,7 @@ function App() {
       } else {
         setAgentPreferences((current) => ({ ...current, [selectedAgent]: { model: model.model, reasoning } }));
       }
-      setModelOpen(null);
+      setActiveOverlay(null);
       notify(`已切换到 ${model.displayName}`);
     } catch (error) { notify(errorMessage(error)); }
   }
@@ -138,7 +141,7 @@ function App() {
       } else {
         setAgentPreferences((current) => ({ ...current, [selectedAgent]: { ...current[selectedAgent], reasoning } }));
       }
-      setModelOpen(null);
+      setActiveOverlay(null);
       notify(`思考程度已切换为${reasoningLabels[reasoning] || reasoning}`);
     } catch (error) { notify(errorMessage(error)); }
   }
@@ -147,9 +150,9 @@ function App() {
   if (!activeThread) return <div className="fatal-screen"><CircleNotch size={30} className="spin" /><p>正在加载工作区…</p></div>;
   if (view === "settings") return <div className="app-frame"><Suspense fallback={<div className="fatal-screen"><CircleNotch size={30} className="spin" /><p>正在加载设置…</p></div>}><TypedSettingsScreen settings={settings} auth={auth} models={models} agents={agents} modelsByAgent={modelsByAgent} providerStore={providerStore} onProviderSave={saveProvider} onProviderRemove={removeProvider} onProviderSetActive={setActiveProvider} onProviderTest={(id) => api.providers.test(id)} systemInfo={systemInfo} projectCount={workspace.projects.length} activeProject={activeProject} gitState={gitState} onBack={() => setView(isStandalone ? "standalone" : "project")} onSave={saveSettings} onTest={testSettings} onLogin={async () => { await api.auth.login(); return "设备登录已启动，请按账户区域中的提示完成验证"; }} onLogout={async () => { await api.auth.logout(); setAuth(await api.auth.status()); return "已退出"; }} onNotify={notify} /></Suspense>{toast && <div className="toast" role="status" aria-live="polite"><CheckCircle size={18} />{toast}</div>}</div>;
 
-  const toggleModelMenu = (menu: "models" | "reasoning") => { setModelOpen((open) => open === menu ? null : menu); setSandboxOpen(false); };
-  const toggleSandboxMenu = () => { setSandboxOpen((open) => !open); setModelOpen(null); };
+  const toggleOverlay = (overlay: OverlayId) => setActiveOverlay((current) => current === overlay ? null : overlay);
   const removeAttachment = (path: string) => setAttachments((current) => current.filter((item) => item !== path));
+  const closeProjectModal = () => { setModalStep(null); requestAnimationFrame(() => addProjectTrigger.current?.focus()); };
   const assistantProps = {
     messages: activeMessages,
     running: sending,
@@ -192,10 +195,12 @@ function App() {
     showPermission: selectedAgent === "codex",
     modelOpen,
     sandboxOpen,
+    activeOverlay,
+    onOverlayChange: setActiveOverlay,
     modelPopover: modelOpen ? <ModelPopover mode={modelOpen} settings={activeComposerSettings} auth={auth} models={activeModels} loading={modelsLoading} error={modelsError} onSelectModel={selectModel} onSelectReasoning={selectReasoning} connectionLabel={selectedAgent === "claude-code" ? `${modelDisplayName(activeComposerSettings, activeModels)} · Claude Code` : undefined} /> : null,
     permissionPopover: <PermissionPopover selectedValue={settings.sandboxMode} onSelect={selectSandbox} onLearnMore={() => notify("可在设置 > 权限中修改默认批准方式")} />,
-    onToggleModel: toggleModelMenu,
-    onToggleSandbox: toggleSandboxMenu,
+    onToggleModel: (menu: "models" | "reasoning") => toggleOverlay(menu),
+    onToggleSandbox: () => toggleOverlay("sandbox"),
     attachments,
     showAttachments: selectedAgent === "codex",
     webSearch,
@@ -209,7 +214,7 @@ function App() {
   };
   return (
     <div className="app-frame">
-      <TypedSidebar workspace={workspace} auth={auth} expandedProjects={expandedProjects} activeThread={activeThread} onToggleProject={(projectId) => setExpandedProjects((current) => current.includes(projectId) ? current.filter((id) => id !== projectId) : [...current, projectId])} onSelectProjectThread={selectProjectThread} onSelectStandalone={selectStandalone} onAddProject={() => setModalStep("choose")} onRemoveProject={(project) => { void removeProject(project, isProjectRunning(project.id)); }} onOpenProjectPath={(project) => api.system.openPath(project.id).catch((error) => notify(errorMessage(error)))} onCopyProjectPath={(project) => api.system.copy(project.path).then(() => notify("项目路径已复制"))} onNewProjectThread={newProjectThread} onNewStandalone={newStandalone} onOpenSettings={() => setView("settings")} />
+      <TypedSidebar workspace={workspace} auth={auth} expandedProjects={expandedProjects} activeThread={activeThread} onToggleProject={(projectId) => setExpandedProjects((current) => current.includes(projectId) ? current.filter((id) => id !== projectId) : [...current, projectId])} onSelectProjectThread={selectProjectThread} onSelectStandalone={selectStandalone} onAddProject={(trigger) => { addProjectTrigger.current = trigger; setModalStep("choose"); }} onRemoveProject={(project) => { void removeProject(project, isProjectRunning(project.id)); }} onOpenProjectPath={(project) => api.system.openPath(project.id).catch((error) => notify(errorMessage(error)))} onCopyProjectPath={(project) => api.system.copy(project.path).then(() => notify("项目路径已复制"))} onNewProjectThread={newProjectThread} onNewStandalone={newStandalone} onOpenSettings={() => setView("settings")} />
       <main className="app-stage">
         <TypedTopBar activeThread={activeThread} bottomPanelOpen={bottomPanelOpen} rightPanelOpen={rightPanelOpen} onToggleBottomPanel={toggleBottomPanel} onToggleRightPanel={() => setRightPanelOpen((open) => !open)} onOpenSettings={() => setView("settings")} onOpenPath={() => activeProject && api.system.openPath(activeProject.id).catch((error) => notify(errorMessage(error)))} onCopyPath={() => activeProject && api.system.copy(activeProject.path).then(() => notify("项目路径已复制"))} onShare={copyConversation} onRename={renameActiveThread} onRemoveThread={() => { void removeWorkspaceThread(sending); }} />
         <div className={`stage-body ${bottomPanelOpen ? "bottom-panel-is-open" : ""}`}>
@@ -220,7 +225,7 @@ function App() {
           {bottomPanelOpen && <Suspense fallback={<div className="workspace-dock"><div className="runtime-inline-progress"><CircleNotch size={13} className="spin" /><span>正在加载工作区工具…</span></div></div>}><TypedWorkspaceDock activeTool={activeTool} hasProject={Boolean(activeProject)} gitState={gitState} terminalProps={{ output: terminalOutput, onInput: writeTerminalInput, onResize: resizeTerminal }} remoteUrl={remoteUrl} projectFiles={projectFiles} sideMessages={sideMessages} sideValue={sideValue} sideSending={sideSending} onSelectTool={selectWorkspaceTool} onClose={closeBottomPanel} onOpenReview={() => { setView("review"); setBottomPanelOpen(false); }} onOpenRemote={openRemote} onOpenFile={(path) => activeProject && api.files.open({ projectId: activeProject.id, path }).catch((error) => notify(errorMessage(error)))} onSideValue={setSideValue} onSendSide={sendSideChat} /></Suspense>}
         </div>
       </main>
-      {modalStep && <Suspense fallback={null}><TypedAddProjectModal step={modalStep} defaultParent={defaultParent} onClose={() => setModalStep(null)} onStep={setModalStep} onComplete={completeProjectAction} onChooseDirectory={() => api.projects.chooseDirectory()} /></Suspense>}
+      {modalStep && <Suspense fallback={null}><TypedAddProjectModal step={modalStep} defaultParent={defaultParent} onClose={closeProjectModal} onStep={setModalStep} onComplete={completeProjectAction} onChooseDirectory={() => api.projects.chooseDirectory()} /></Suspense>}
       {toast && <div className="toast" role="status" aria-live="polite"><CheckCircle size={18} />{toast}</div>}
     </div>
   );

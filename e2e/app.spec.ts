@@ -31,17 +31,35 @@ test("creates the initial standalone conversation and opens typed settings", asy
   await expect(page.getByText("独立会话", { exact: true }).first()).toBeVisible();
   await page.getByRole("button", { name: "添加项目" }).click();
   await expect(page.getByRole("dialog", { name: "添加项目" })).toBeVisible();
-  await page.getByRole("button", { name: "取消" }).click();
+  await expect(page.getByRole("button", { name: "设置" })).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog", { name: "添加项目" })).toBeHidden();
+  await expect(page.getByRole("button", { name: "添加项目" })).toBeFocused();
   await page.getByRole("button", { name: "设置" }).click();
   await expect(page.getByRole("heading", { name: "模型与连接" })).toBeVisible();
   await page.getByRole("button", { name: "常规" }).click();
   await expect(page.getByRole("heading", { name: "账户" })).toBeVisible();
   await page.getByRole("button", { name: "返回 Rux" }).click();
-  await page.getByRole("button", { name: /E2E Model/ }).click();
+  await page.getByRole("button", { name: "选择 Agent 模式" }).click();
+  await expect(page.getByRole("menu")).toBeVisible();
+  await page.getByRole("button", { name: "选择模型" }).click();
   await expect(page.getByRole("dialog", { name: "选择模型" })).toBeVisible();
+  await expect(page.getByRole("menu")).toBeHidden();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog", { name: "选择模型" })).toBeHidden();
+  await expect(page.getByRole("button", { name: "选择模型" })).toBeFocused();
+  await page.getByRole("button", { name: "选择 Agent", exact: true }).click();
+  await expect(page.getByRole("menu")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("menu")).toBeHidden();
+  await expect(page.getByRole("button", { name: "选择 Agent", exact: true })).toBeFocused();
+  await page.getByRole("textbox", { name: "消息" }).fill("E2E main turn");
+  await page.getByRole("button", { name: "发送" }).click();
+  await expect(page.getByText("RUX_E2E_AGENT_OK", { exact: true })).toBeVisible();
 });
 
 test("restores a SQLite project and executes a command through the PTY terminal", async () => {
+  test.slow();
   const projectPath = join(testRoot, "project");
   mkdirSync(projectPath, { recursive: true });
   await page.evaluate(async (path) => {
@@ -56,4 +74,5 @@ test("restores a SQLite project and executes a command through the PTY terminal"
   await terminalInput.pressSequentially("printf RUX_E2E_TERMINAL", { delay: 50 });
   await terminalInput.press("Enter");
   await expect(page.locator(".xterm-rows")).toContainText("RUX_E2E_TERMINAL", { timeout: 10_000 });
+  await expect(page.getByLabel("终端输出")).toContainText("RUX_E2E_TERMINAL");
 });
