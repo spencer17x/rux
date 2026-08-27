@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import TopBar from "../navigation/TopBar";
+import Sidebar from "../navigation/Sidebar";
 import AddProjectModal from "../projects/AddProjectModal";
 import ReviewScreen from "../workspace/ReviewScreen";
 import ToolLauncher from "../workspace/ToolLauncher";
@@ -10,6 +11,13 @@ describe("typed renderer components", () => {
   it("renders project context in the top bar", () => {
     const html = renderToStaticMarkup(<TopBar activeThread={{ id: "thread", title: "Task", type: "project", projectName: "Rux" }} bottomPanelOpen={false} rightPanelOpen onToggleBottomPanel={() => {}} onToggleRightPanel={() => {}} onOpenSettings={() => {}} onOpenPath={() => {}} onCopyPath={() => {}} onShare={() => {}} onRename={() => {}} onRemoveThread={() => {}} />);
     expect(html).toContain("Rux"); expect(html).toContain("Task");
+    expect(html).toContain('data-panel-icon="bottom"'); expect(html).toContain('data-panel-icon="right"');
+  });
+
+  it("exposes rename actions for standalone and project conversations", () => {
+    const html = renderToStaticMarkup(<Sidebar workspace={{ standaloneThreads: [{ id: "standalone", title: "独立任务" }], projects: [{ id: "project", name: "Demo", path: "/tmp/demo", threads: [{ id: "project-thread", title: "项目任务" }] }] }} auth={{ connected: true }} expandedProjects={["project"]} activeThread={{ id: "project-thread", title: "项目任务", type: "project", projectId: "project" }} onToggleProject={() => {}} onSelectProjectThread={() => {}} onSelectStandalone={() => {}} onAddProject={() => {}} onRemoveProject={() => {}} onOpenProjectPath={() => {}} onCopyProjectPath={() => {}} onNewProjectThread={() => {}} onNewStandalone={() => {}} onRenameThread={() => {}} onOpenSettings={() => {}} />);
+    expect(html).toContain('aria-label="重命名会话 独立任务"');
+    expect(html).toContain('aria-label="重命名会话 项目任务"');
   });
 
   it("keeps project-only tools disabled without a project", () => {

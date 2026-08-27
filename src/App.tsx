@@ -48,7 +48,7 @@ function App() {
   const [composerValue, setComposerValue] = useState("");
   const handleThreadsRemoved = useCallback((threadIds: string[]) => setMessages((current) => Object.fromEntries(Object.entries(current).filter(([threadId]) => !threadIds.includes(threadId)))), [setMessages]);
   const handleThreadSelected = useCallback((thread: { agentId?: AgentId; agentMode?: string }) => { setSelectedAgent(thread.agentId || "codex"); setAgentMode(thread.agentMode || "default"); setActiveOverlay(null); }, []);
-  const { workspace, setWorkspace, activeThread, setActiveThread, expandedProjects, setExpandedProjects, defaultParent, view, setView, modalStep, setModalStep, initializeWorkspace, reloadWorkspace, selectProjectThread, selectStandalone, newProjectThread, newStandalone, renameActiveThread, removeActiveThread: removeWorkspaceThread, removeProject, completeProjectAction } = useWorkspaceController(
+  const { workspace, setWorkspace, activeThread, setActiveThread, expandedProjects, setExpandedProjects, defaultParent, view, setView, modalStep, setModalStep, initializeWorkspace, reloadWorkspace, selectProjectThread, selectStandalone, newProjectThread, newStandalone, renameThread, renameActiveThread, removeActiveThread: removeWorkspaceThread, removeProject, completeProjectAction } = useWorkspaceController(
     api,
     notify,
     handleThreadsRemoved,
@@ -154,6 +154,7 @@ function App() {
   const removeAttachment = (path: string) => setAttachments((current) => current.filter((item) => item !== path));
   const closeProjectModal = () => { setModalStep(null); requestAnimationFrame(() => addProjectTrigger.current?.focus()); };
   const assistantProps = {
+    projectId: activeProject?.id,
     messages: activeMessages,
     running: sending,
     onNewMessage: sendMessage,
@@ -214,7 +215,7 @@ function App() {
   };
   return (
     <div className="app-frame">
-      <TypedSidebar workspace={workspace} auth={auth} expandedProjects={expandedProjects} activeThread={activeThread} onToggleProject={(projectId) => setExpandedProjects((current) => current.includes(projectId) ? current.filter((id) => id !== projectId) : [...current, projectId])} onSelectProjectThread={selectProjectThread} onSelectStandalone={selectStandalone} onAddProject={(trigger) => { addProjectTrigger.current = trigger; setModalStep("choose"); }} onRemoveProject={(project) => { void removeProject(project, isProjectRunning(project.id)); }} onOpenProjectPath={(project) => api.system.openPath(project.id).catch((error) => notify(errorMessage(error)))} onCopyProjectPath={(project) => api.system.copy(project.path).then(() => notify("项目路径已复制"))} onNewProjectThread={newProjectThread} onNewStandalone={newStandalone} onOpenSettings={() => setView("settings")} />
+      <TypedSidebar workspace={workspace} auth={auth} expandedProjects={expandedProjects} activeThread={activeThread} onToggleProject={(projectId) => setExpandedProjects((current) => current.includes(projectId) ? current.filter((id) => id !== projectId) : [...current, projectId])} onSelectProjectThread={selectProjectThread} onSelectStandalone={selectStandalone} onAddProject={(trigger) => { addProjectTrigger.current = trigger; setModalStep("choose"); }} onRemoveProject={(project) => { void removeProject(project, isProjectRunning(project.id)); }} onOpenProjectPath={(project) => api.system.openPath(project.id).catch((error) => notify(errorMessage(error)))} onCopyProjectPath={(project) => api.system.copy(project.path).then(() => notify("项目路径已复制"))} onNewProjectThread={newProjectThread} onNewStandalone={newStandalone} onRenameThread={(thread) => { void renameThread(thread); }} onOpenSettings={() => setView("settings")} />
       <main className="app-stage">
         <TypedTopBar activeThread={activeThread} bottomPanelOpen={bottomPanelOpen} rightPanelOpen={rightPanelOpen} onToggleBottomPanel={toggleBottomPanel} onToggleRightPanel={() => setRightPanelOpen((open) => !open)} onOpenSettings={() => setView("settings")} onOpenPath={() => activeProject && api.system.openPath(activeProject.id).catch((error) => notify(errorMessage(error)))} onCopyPath={() => activeProject && api.system.copy(activeProject.path).then(() => notify("项目路径已复制"))} onShare={copyConversation} onRename={renameActiveThread} onRemoveThread={() => { void removeWorkspaceThread(sending); }} />
         <div className={`stage-body ${bottomPanelOpen ? "bottom-panel-is-open" : ""}`}>

@@ -103,6 +103,10 @@ export const terminalResizeSchema = z.object({ cols: z.number().int().min(20).ma
 export const clipboardTextSchema = z.string().max(1_000_000);
 export const messagesStoreSchema = z.record(threadIdSchema, z.array(z.unknown()).max(200));
 export const externalUrlSchema = z.string().url().refine((value) => value.startsWith("https://") || value.startsWith("http://"), "仅支持 HTTP(S) 地址");
+export const messageTargetSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("link"), url: externalUrlSchema }),
+  z.object({ kind: z.literal("file"), projectId: projectIdSchema, path: z.string().min(1).max(4096).refine((value) => !value.includes("\0"), "文件路径包含无效字符") }),
+]);
 
 export function parseInput<T>(schema: z.ZodType<T>, input: unknown): T {
   const result = schema.safeParse(input);

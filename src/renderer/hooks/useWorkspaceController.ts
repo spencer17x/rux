@@ -41,12 +41,12 @@ export function useWorkspaceController(api: RuxApi, notify: (message: string) =>
     else if (nextWorkspace.standaloneThreads[0]) selectStandalone(nextWorkspace.standaloneThreads[0]);
     else await newStandalone();
   }, [newStandalone, selectProjectThread, selectStandalone]);
-  const renameActiveThread = useCallback(async () => {
-    if (!activeThread) return;
-    const title = window.prompt("输入新的会话名称", activeThread.title)?.trim(); if (!title || title === activeThread.title) return;
-    try { const updated = await api.threads.update({ type: activeThread.type, projectId: activeThread.projectId, threadId: activeThread.id, title }); setActiveThread((current) => current ? { ...current, ...(updated as Partial<ThreadRecord>) } : current); await reloadWorkspace(); notify("会话已重命名"); }
+  const renameThread = useCallback(async (thread: ActiveThread) => {
+    const title = window.prompt("输入新的会话名称", thread.title)?.trim(); if (!title || title === thread.title) return;
+    try { const updated = await api.threads.update({ type: thread.type, projectId: thread.projectId, threadId: thread.id, title }); if (activeThread?.id === thread.id) setActiveThread((current) => current ? { ...current, ...(updated as Partial<ThreadRecord>) } : current); await reloadWorkspace(); notify("会话已重命名"); }
     catch (error) { notify(error instanceof Error ? error.message : String(error)); }
   }, [activeThread, api, notify, reloadWorkspace]);
+  const renameActiveThread = useCallback(async () => { if (activeThread) await renameThread(activeThread); }, [activeThread, renameThread]);
   const removeActiveThread = useCallback(async (sending: boolean) => {
     if (sending) { notify("请先停止当前会话，再移除它"); return; }
     if (!activeThread || !window.confirm(`从 Rux 中移除会话“${activeThread.title}”？`)) return;
@@ -71,5 +71,5 @@ export function useWorkspaceController(api: RuxApi, notify: (message: string) =>
     const project = (action.kind === "create" ? await api.projects.create(action) : action.kind === "clone" ? await api.projects.clone(action) : await api.projects.import(action)) as ProjectRecord;
     await reloadWorkspace(project); setModalStep(null); notify(action.kind === "create" ? "项目已创建并加入侧栏" : "项目已导入并加入侧栏");
   }, [api, notify, reloadWorkspace]);
-  return { workspace, setWorkspace, activeThread, setActiveThread, expandedProjects, setExpandedProjects, defaultParent, view, setView, modalStep, setModalStep, initializeWorkspace, reloadWorkspace, selectProjectThread, selectStandalone, newProjectThread, newStandalone, renameActiveThread, removeActiveThread, removeProject, completeProjectAction };
+  return { workspace, setWorkspace, activeThread, setActiveThread, expandedProjects, setExpandedProjects, defaultParent, view, setView, modalStep, setModalStep, initializeWorkspace, reloadWorkspace, selectProjectThread, selectStandalone, newProjectThread, newStandalone, renameThread, renameActiveThread, removeActiveThread, removeProject, completeProjectAction };
 }

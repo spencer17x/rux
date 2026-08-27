@@ -99,6 +99,8 @@ const api = {
     chooseFiles: () => ipcRenderer.invoke("system:choose-files"),
     copy: (value: string) => ipcRenderer.invoke("system:copy", value),
     openExternal: (url: string) => ipcRenderer.invoke("system:open-external", url),
+    openMessageTarget: (input: unknown) => ipcRenderer.invoke("system:open-message-target", input),
+    showMessageContextMenu: (input: unknown) => ipcRenderer.invoke("system:message-context-menu", input),
     info: () => ipcRenderer.invoke("system:info"),
   },
 };

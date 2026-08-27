@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, type ReactNode, type RefObject } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, type ComponentPropsWithoutRef, type ReactNode, type RefObject } from "react";
 import {
+  AuiIf,
   AssistantRuntimeProvider,
   ComposerPrimitive,
   MessagePartPrimitive,
@@ -29,6 +30,7 @@ import {
   X,
 } from "@phosphor-icons/react";
 import type { RuxMessage } from "../renderer/messages";
+import { messageTargetFromHref } from "../renderer/message-targets";
 import type { AgentId } from "../renderer/types";
 
 type AgentDefinition = { id: AgentId; name: string; installed: boolean; integrated: boolean; version: string; modes?: Array<{ id: string; label: string }> };
@@ -36,7 +38,7 @@ type RuntimeProgress = Record<string, { state: string; percent?: number; message
 type ApprovalResponse = { approvalId: string; approved: boolean; optionId?: string };
 type OverlayId = "agents" | "agent-mode" | "models" | "reasoning" | "sandbox";
 type Props = {
-  messages: RuxMessage[]; running: boolean; emptyTitle: string; onNewMessage: (text: string) => Promise<unknown>; onCancel: () => Promise<unknown>; onApproval: (response: ApprovalResponse) => Promise<unknown>;
+  messages: RuxMessage[]; running: boolean; emptyTitle: string; projectId?: string; onNewMessage: (text: string) => Promise<unknown>; onCancel: () => Promise<unknown>; onApproval: (response: ApprovalResponse) => Promise<unknown>;
   agents: AgentDefinition[]; runtimeProgress: RuntimeProgress; selectedAgent: AgentId; onSelectAgent: (agentId: AgentId) => void; agentMode: string; onAgentMode: (mode: string) => void;
   modelLabel: string; reasoningLabel: string; permissionLabel: string; showPermission?: boolean; modelOpen: "models" | "reasoning" | null; sandboxOpen: boolean;
   modelPopover: ReactNode; permissionPopover: ReactNode; onToggleModel: (mode: "models" | "reasoning") => void; onToggleSandbox: () => void;
@@ -54,6 +56,30 @@ const toolPresentation = {
   webSearch: { label: "搜索网页", Icon: MagnifyingGlass },
   collabAgentToolCall: { label: "调用子 Agent", Icon: Robot },
 };
+
+const MessageProjectContext = createContext<string | undefined>(undefined);
+
+function MessageLink({ href, onClick, onContextMenu, ...props }: ComponentPropsWithoutRef<"a">) {
+  const projectId = useContext(MessageProjectContext);
+  const target = messageTargetFromHref(href, projectId);
+  return <a
+    {...props}
+    href={href}
+    data-message-target={target?.kind}
+    onClick={(event) => {
+      onClick?.(event);
+      if (!target || event.defaultPrevented) return;
+      event.preventDefault();
+      void window.rux.system.openMessageTarget(target);
+    }}
+    onContextMenu={(event) => {
+      onContextMenu?.(event);
+      if (!target || event.defaultPrevented) return;
+      event.preventDefault();
+      void window.rux.system.showMessageContextMenu(target);
+    }}
+  />;
+}
 
 function normalizeMessage(message: RuxMessage): any {
   const content = message.parts?.length
@@ -80,7 +106,7 @@ function UserText() {
 }
 
 function AssistantText() {
-  return <MarkdownTextPrimitive className="rux-markdown" />;
+  return <MarkdownTextPrimitive className="rux-markdown" components={{ a: MessageLink }} />;
 }
 
 function ReasoningPart({ text, status }: { text?: string; status?: { type?: string } }) {
@@ -134,6 +160,9 @@ function AssistantMessage() {
     <MessagePrimitive.Root className="aui-message aui-agent-message">
       <span className="avatar avatar-dark">R</span>
       <div className="aui-agent-content">
+        <AuiIf condition={(state) => state.message.status?.type === "running" && state.message.parts.length === 0}>
+          <div className="agent-response-loading" role="status" aria-live="polite"><CircleNotch size={15} className="spin" /><span>Rux 正在准备回复</span><i aria-hidden="true"><b /><b /><b /></i></div>
+        </AuiIf>
         <MessagePrimitive.Parts components={{ Text: AssistantText, Reasoning: ReasoningPart, tools: { Fallback: ToolPart } }} />
         <MessagePrimitive.Error><span className="aui-message-error">消息执行失败</span></MessagePrimitive.Error>
       </div>
@@ -184,6 +213,7 @@ export default function RuxAssistantThread({
   messages,
   running,
   emptyTitle,
+  projectId,
   onNewMessage,
   onCancel,
   onApproval,
@@ -253,6 +283,7 @@ export default function RuxAssistantThread({
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
+      <MessageProjectContext.Provider value={projectId}>
       <ThreadPrimitive.Root className="aui-thread-root">
         <ThreadPrimitive.Viewport className="aui-thread-viewport">
           <ThreadPrimitive.Empty>
@@ -291,6 +322,7 @@ export default function RuxAssistantThread({
           </div>
         </ComposerPrimitive.Root>
       </ThreadPrimitive.Root>
+      </MessageProjectContext.Provider>
     </AssistantRuntimeProvider>
   );
 }
