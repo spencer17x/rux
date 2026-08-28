@@ -29,9 +29,17 @@ test.afterEach(async () => {
 
 test("creates the initial standalone conversation and opens typed settings", async () => {
   await expect(page.getByText("独立会话", { exact: true }).first()).toBeVisible();
+  await page.getByRole("button", { name: /重命名会话 未命名会话/ }).click();
+  await expect(page.getByRole("dialog", { name: "重命名会话" })).toBeVisible();
+  await page.getByRole("textbox", { name: "会话名称" }).fill("E2E renamed");
+  await page.getByRole("button", { name: "保存", exact: true }).click();
+  await expect(page.getByRole("button", { name: "E2E renamed", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "添加项目" }).click();
   await expect(page.getByRole("dialog", { name: "添加项目" })).toBeVisible();
   await expect(page.getByRole("button", { name: "设置" })).toHaveCount(0);
+  await page.getByRole("button", { name: /新建项目 创建空项目/ }).click();
+  await page.getByRole("button", { name: "继续" }).click();
+  await expect(page.getByRole("textbox", { name: "项目名称" })).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog", { name: "添加项目" })).toBeHidden();
   await expect(page.getByRole("button", { name: "添加项目" })).toBeFocused();
@@ -68,6 +76,17 @@ test("restores a SQLite project and executes a command through the PTY terminal"
   await application.close();
   await launchApplication();
   await expect(page.getByText("project", { exact: true }).first()).toBeVisible();
+  const projectMenuTrigger = page.getByRole("button", { name: "项目操作 project" });
+  await projectMenuTrigger.click();
+  await expect(page.getByRole("menu")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("menu")).toBeHidden();
+  await expect(projectMenuTrigger).toBeFocused();
+  await page.getByRole("button", { name: "侧边聊天" }).first().click();
+  await page.getByRole("textbox", { name: "侧边聊天消息" }).fill("E2E side turn");
+  await page.getByRole("button", { name: "发送侧边聊天消息" }).click();
+  await expect(page.getByText("Rux 正在回复", { exact: true })).toBeVisible();
+  await expect(page.getByText("RUX_E2E_SIDE_OK", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: /终端/ }).first().click();
   const terminalInput = page.locator(".xterm-helper-textarea");
   await terminalInput.focus();
@@ -75,4 +94,5 @@ test("restores a SQLite project and executes a command through the PTY terminal"
   await terminalInput.press("Enter");
   await expect(page.locator(".xterm-rows")).toContainText("RUX_E2E_TERMINAL", { timeout: 10_000 });
   await expect(page.getByLabel("终端输出")).toContainText("RUX_E2E_TERMINAL");
+  await expect(page.getByLabel("终端输出")).not.toContainText("正在启动终端");
 });

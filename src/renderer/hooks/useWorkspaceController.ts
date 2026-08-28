@@ -12,6 +12,7 @@ export function useWorkspaceController(api: RuxApi, notify: (message: string) =>
   const [defaultParent, setDefaultParent] = useState("");
   const [view, setView] = useState<View>("project");
   const [modalStep, setModalStep] = useState<ModalStep | null>(null);
+  const [renameTarget, setRenameTarget] = useState<ActiveThread | null>(null);
   const selectProjectThread = useCallback((project: ProjectRecord, thread: ThreadRecord) => {
     setActiveThread({ type: "project", projectId: project.id, projectName: project.name, projectPath: project.path, ...thread });
     setView("project"); onThreadSelected(thread);
@@ -41,12 +42,14 @@ export function useWorkspaceController(api: RuxApi, notify: (message: string) =>
     else if (nextWorkspace.standaloneThreads[0]) selectStandalone(nextWorkspace.standaloneThreads[0]);
     else await newStandalone();
   }, [newStandalone, selectProjectThread, selectStandalone]);
-  const renameThread = useCallback(async (thread: ActiveThread) => {
-    const title = window.prompt("输入新的会话名称", thread.title)?.trim(); if (!title || title === thread.title) return;
-    try { const updated = await api.threads.update({ type: thread.type, projectId: thread.projectId, threadId: thread.id, title }); if (activeThread?.id === thread.id) setActiveThread((current) => current ? { ...current, ...(updated as Partial<ThreadRecord>) } : current); await reloadWorkspace(); notify("会话已重命名"); }
+  const renameThread = useCallback((thread: ActiveThread) => setRenameTarget(thread), []);
+  const renameActiveThread = useCallback(() => { if (activeThread) setRenameTarget(activeThread); }, [activeThread]);
+  const completeRename = useCallback(async (title: string) => {
+    const thread = renameTarget; const nextTitle = title.trim(); if (!thread || !nextTitle) return;
+    if (nextTitle === thread.title) { setRenameTarget(null); return; }
+    try { const updated = await api.threads.update({ type: thread.type, projectId: thread.projectId, threadId: thread.id, title: nextTitle }); if (activeThread?.id === thread.id) setActiveThread((current) => current ? { ...current, ...(updated as Partial<ThreadRecord>) } : current); await reloadWorkspace(); setRenameTarget(null); notify("会话已重命名"); }
     catch (error) { notify(error instanceof Error ? error.message : String(error)); }
-  }, [activeThread, api, notify, reloadWorkspace]);
-  const renameActiveThread = useCallback(async () => { if (activeThread) await renameThread(activeThread); }, [activeThread, renameThread]);
+  }, [activeThread, api, notify, reloadWorkspace, renameTarget]);
   const removeActiveThread = useCallback(async (sending: boolean) => {
     if (sending) { notify("请先停止当前会话，再移除它"); return; }
     if (!activeThread || !window.confirm(`从 Rux 中移除会话“${activeThread.title}”？`)) return;
@@ -71,5 +74,5 @@ export function useWorkspaceController(api: RuxApi, notify: (message: string) =>
     const project = (action.kind === "create" ? await api.projects.create(action) : action.kind === "clone" ? await api.projects.clone(action) : await api.projects.import(action)) as ProjectRecord;
     await reloadWorkspace(project); setModalStep(null); notify(action.kind === "create" ? "项目已创建并加入侧栏" : "项目已导入并加入侧栏");
   }, [api, notify, reloadWorkspace]);
-  return { workspace, setWorkspace, activeThread, setActiveThread, expandedProjects, setExpandedProjects, defaultParent, view, setView, modalStep, setModalStep, initializeWorkspace, reloadWorkspace, selectProjectThread, selectStandalone, newProjectThread, newStandalone, renameThread, renameActiveThread, removeActiveThread, removeProject, completeProjectAction };
+  return { workspace, setWorkspace, activeThread, setActiveThread, expandedProjects, setExpandedProjects, defaultParent, view, setView, modalStep, setModalStep, renameTarget, setRenameTarget, initializeWorkspace, reloadWorkspace, selectProjectThread, selectStandalone, newProjectThread, newStandalone, renameThread, renameActiveThread, completeRename, removeActiveThread, removeProject, completeProjectAction };
 }

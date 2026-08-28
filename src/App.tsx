@@ -13,6 +13,8 @@ import TypedTopBar from "./navigation/TopBar";
 import TypedReviewScreen from "./workspace/ReviewScreen";
 import TypedToolLauncher from "./workspace/ToolLauncher";
 import ConversationScreen from "./conversation/ConversationScreen";
+import RenameThreadModal from "./conversation/RenameThreadModal";
+import AddProjectModal from "./projects/AddProjectModal";
 import { ModelPopover, PermissionPopover, modelDisplayName, reasoningLabels, sandboxLabels, type ModelInfo, type Reasoning, type SandboxMode } from "./composer/ComposerControls";
 import type { AgentId } from "./renderer/types";
 import { usePersistentMessages } from "./renderer/hooks/usePersistentMessages";
@@ -22,15 +24,15 @@ import { useWorkspaceController } from "./renderer/hooks/useWorkspaceController"
 import { useAgentRuns } from "./renderer/hooks/useAgentRuns";
 import { useAppBootstrap, type AppSettings } from "./renderer/hooks/useAppBootstrap";
 import { useWorkspaceTools } from "./renderer/hooks/useWorkspaceTools";
+import { userFacingError } from "./renderer/errors";
 
 const TypedSettingsScreen = lazy(() => import("./settings/SettingsScreen"));
 const TypedWorkspaceDock = lazy(() => import("./workspace/WorkspaceDock"));
-const TypedAddProjectModal = lazy(() => import("./projects/AddProjectModal"));
 
 const api = window.rux;
 type OverlayId = "agents" | "agent-mode" | "models" | "reasoning" | "sandbox";
 
-function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error); }
+function errorMessage(error: unknown): string { return userFacingError(error); }
 
 function App() {
   const [selectedAgent, setSelectedAgent] = useState<AgentId>("codex");
@@ -48,7 +50,7 @@ function App() {
   const [composerValue, setComposerValue] = useState("");
   const handleThreadsRemoved = useCallback((threadIds: string[]) => setMessages((current) => Object.fromEntries(Object.entries(current).filter(([threadId]) => !threadIds.includes(threadId)))), [setMessages]);
   const handleThreadSelected = useCallback((thread: { agentId?: AgentId; agentMode?: string }) => { setSelectedAgent(thread.agentId || "codex"); setAgentMode(thread.agentMode || "default"); setActiveOverlay(null); }, []);
-  const { workspace, setWorkspace, activeThread, setActiveThread, expandedProjects, setExpandedProjects, defaultParent, view, setView, modalStep, setModalStep, initializeWorkspace, reloadWorkspace, selectProjectThread, selectStandalone, newProjectThread, newStandalone, renameThread, renameActiveThread, removeActiveThread: removeWorkspaceThread, removeProject, completeProjectAction } = useWorkspaceController(
+  const { workspace, setWorkspace, activeThread, setActiveThread, expandedProjects, setExpandedProjects, defaultParent, view, setView, modalStep, setModalStep, renameTarget, setRenameTarget, initializeWorkspace, reloadWorkspace, selectProjectThread, selectStandalone, newProjectThread, newStandalone, renameThread, renameActiveThread, completeRename, removeActiveThread: removeWorkspaceThread, removeProject, completeProjectAction } = useWorkspaceController(
     api,
     notify,
     handleThreadsRemoved,
@@ -58,14 +60,14 @@ function App() {
   const activeMessages = activeThread ? messages[activeThread.id] || [] : [];
   const isStandalone = activeThread?.type === "standalone";
   const activeProject = activeThread?.type === "project" ? workspace.projects.find((project) => project.id === activeThread.projectId) ?? null : null;
-  const { settings, setSettings, auth, setAuth, models, modelsByAgent, agents, agentPreferences, setAgentPreferences, providerStore, runtimeProgress, systemInfo, modelsLoading, modelsError, fatalError, saveSettings, testSettings, saveProvider, removeProvider, setActiveProvider } = useAppBootstrap(api, selectedAgent, activeProject?.id, workspaceReady, setWorkspaceReady, initializeWorkspace, setMessages);
+  const { settings, setSettings, auth, setAuth, models, modelsByAgent, agents, agentPreferences, setAgentPreferences, providerStore, runtimeProgress, systemInfo, modelsLoading, modelsError, codexModelsLoading, codexModelsError, fatalError, saveSettings, testSettings, saveProvider, removeProvider, setActiveProvider } = useAppBootstrap(api, selectedAgent, activeProject?.id, workspaceReady, setWorkspaceReady, initializeWorkspace, setMessages);
   const activeModels = selectedAgent === "codex" ? models : modelsByAgent[selectedAgent] || [];
   const activePreference = selectedAgent === "codex"
     ? { model: settings.model, reasoning: settings.reasoning }
     : agentPreferences[selectedAgent] || { model: "default", reasoning: "high" };
   const activeComposerSettings: AppSettings = { ...settings, ...activePreference, provider: selectedAgent === "codex" ? settings.provider : "codex" };
   const { gitState, branches, selectedFile, diff, busy, selectDiff, refreshGit, switchBranch, stage, discardSelected, commitOrPush, openReview } = useGitController(api, activeProject?.id, notify, setView);
-  const { bottomPanelOpen, setBottomPanelOpen, rightPanelOpen, setRightPanelOpen, activeTool, projectFiles, remoteUrl, sideMessages, sideValue, setSideValue, sideSending, closeBottomPanel, toggleBottomPanel, selectWorkspaceTool, openRemote, sendSideChat, terminalOutput, writeTerminalInput, resizeTerminal } = useWorkspaceTools(api, activeProject?.id, settings, refreshGit, notify);
+  const { bottomPanelOpen, setBottomPanelOpen, rightPanelOpen, setRightPanelOpen, activeTool, projectFiles, remoteUrl, sideMessages, sideValue, setSideValue, sideSending, closeBottomPanel, toggleBottomPanel, selectWorkspaceTool, openRemote, sendSideChat, terminalStarting, terminalOutput, writeTerminalInput, resizeTerminal } = useWorkspaceTools(api, activeProject?.id, settings, refreshGit, notify);
   const { sending, sendMessage: sendAgentMessage, cancelCurrentRun, respondToApproval, isProjectRunning } = useAgentRuns({ api, activeThread, activeProjectId: activeProject?.id, selectedAgent, agentMode, preference: activePreference, settings, attachments, webSearch, agents, setMessages, setAttachments, setComposerValue, setActiveThread, reloadWorkspace, refreshGit, notify });
   const sendMessage = (prompt: string = composerValue) => sendAgentMessage(prompt);
 
@@ -148,7 +150,7 @@ function App() {
 
   if (fatalError) return <div className="fatal-screen"><WarningCircle size={32} /><h1>Rux 无法启动</h1><p>{fatalError}</p></div>;
   if (!activeThread) return <div className="fatal-screen"><CircleNotch size={30} className="spin" /><p>正在加载工作区…</p></div>;
-  if (view === "settings") return <div className="app-frame"><Suspense fallback={<div className="fatal-screen"><CircleNotch size={30} className="spin" /><p>正在加载设置…</p></div>}><TypedSettingsScreen settings={settings} auth={auth} models={models} agents={agents} modelsByAgent={modelsByAgent} providerStore={providerStore} onProviderSave={saveProvider} onProviderRemove={removeProvider} onProviderSetActive={setActiveProvider} onProviderTest={(id) => api.providers.test(id)} systemInfo={systemInfo} projectCount={workspace.projects.length} activeProject={activeProject} gitState={gitState} onBack={() => setView(isStandalone ? "standalone" : "project")} onSave={saveSettings} onTest={testSettings} onLogin={async () => { await api.auth.login(); return "设备登录已启动，请按账户区域中的提示完成验证"; }} onLogout={async () => { await api.auth.logout(); setAuth(await api.auth.status()); return "已退出"; }} onNotify={notify} /></Suspense>{toast && <div className="toast" role="status" aria-live="polite"><CheckCircle size={18} />{toast}</div>}</div>;
+  if (view === "settings") return <div className="app-frame"><Suspense fallback={<div className="fatal-screen"><CircleNotch size={30} className="spin" /><p>正在加载设置…</p></div>}><TypedSettingsScreen settings={settings} auth={auth} models={models} modelsLoading={codexModelsLoading} modelsError={codexModelsError} agents={agents} modelsByAgent={modelsByAgent} providerStore={providerStore} onProviderSave={saveProvider} onProviderRemove={removeProvider} onProviderSetActive={setActiveProvider} onProviderTest={(id) => api.providers.test(id)} systemInfo={systemInfo} projectCount={workspace.projects.length} activeProject={activeProject} gitState={gitState} onBack={() => setView(isStandalone ? "standalone" : "project")} onSave={saveSettings} onTest={testSettings} onLogin={async () => { await api.auth.login(); return "设备登录已启动，请按账户区域中的提示完成验证"; }} onLogout={async () => { await api.auth.logout(); setAuth(await api.auth.status()); return "已退出"; }} onNotify={notify} /></Suspense>{toast && <div className="toast" role="status" aria-live="polite"><CheckCircle size={18} />{toast}</div>}</div>;
 
   const toggleOverlay = (overlay: OverlayId) => setActiveOverlay((current) => current === overlay ? null : overlay);
   const removeAttachment = (path: string) => setAttachments((current) => current.filter((item) => item !== path));
@@ -223,10 +225,11 @@ function App() {
             <div className="main-content">{view === "review" ? <TypedReviewScreen gitState={gitState} branches={branches} selectedFile={selectedFile} diff={diff} onSelectFile={selectDiff} onBack={() => setView("project")} onSwitchBranch={switchBranch} onCommitPush={commitOrPush} onStageAll={() => stage(gitState.files.map((file) => file.path))} onStageFile={() => stage([selectedFile])} onDiscard={discardSelected} busy={busy} /> : <ConversationScreen standalone={isStandalone} activeThread={activeThread} assistantProps={assistantProps} gitState={gitState} onReview={openReview} />}</div>
             {rightPanelOpen && <TypedToolLauncher activeTool={bottomPanelOpen ? activeTool : ""} hasProject={Boolean(activeProject)} onSelectTool={selectWorkspaceTool} />}
           </div>
-          {bottomPanelOpen && <Suspense fallback={<div className="workspace-dock"><div className="runtime-inline-progress"><CircleNotch size={13} className="spin" /><span>正在加载工作区工具…</span></div></div>}><TypedWorkspaceDock activeTool={activeTool} hasProject={Boolean(activeProject)} gitState={gitState} terminalProps={{ output: terminalOutput, onInput: writeTerminalInput, onResize: resizeTerminal }} remoteUrl={remoteUrl} projectFiles={projectFiles} sideMessages={sideMessages} sideValue={sideValue} sideSending={sideSending} onSelectTool={selectWorkspaceTool} onClose={closeBottomPanel} onOpenReview={() => { setView("review"); setBottomPanelOpen(false); }} onOpenRemote={openRemote} onOpenFile={(path) => activeProject && api.files.open({ projectId: activeProject.id, path }).catch((error) => notify(errorMessage(error)))} onSideValue={setSideValue} onSendSide={sendSideChat} /></Suspense>}
+          {bottomPanelOpen && <Suspense fallback={<div className="workspace-dock"><div className="runtime-inline-progress"><CircleNotch size={13} className="spin" /><span>正在加载工作区工具…</span></div></div>}><TypedWorkspaceDock activeTool={activeTool} hasProject={Boolean(activeProject)} gitState={gitState} terminalProps={{ starting: terminalStarting, output: terminalOutput, onInput: writeTerminalInput, onResize: resizeTerminal }} remoteUrl={remoteUrl} projectFiles={projectFiles} sideMessages={sideMessages} sideValue={sideValue} sideSending={sideSending} onSelectTool={selectWorkspaceTool} onClose={closeBottomPanel} onOpenReview={() => { setView("review"); setBottomPanelOpen(false); }} onOpenRemote={openRemote} onOpenFile={(path) => activeProject && api.files.open({ projectId: activeProject.id, path }).catch((error) => notify(errorMessage(error)))} onSideValue={setSideValue} onSendSide={sendSideChat} /></Suspense>}
         </div>
       </main>
-      {modalStep && <Suspense fallback={null}><TypedAddProjectModal step={modalStep} defaultParent={defaultParent} onClose={closeProjectModal} onStep={setModalStep} onComplete={completeProjectAction} onChooseDirectory={() => api.projects.chooseDirectory()} /></Suspense>}
+      {modalStep && <AddProjectModal step={modalStep} defaultParent={defaultParent} onClose={closeProjectModal} onStep={setModalStep} onComplete={completeProjectAction} onChooseDirectory={() => api.projects.chooseDirectory()} />}
+      {renameTarget && <RenameThreadModal currentTitle={renameTarget.title} onClose={() => setRenameTarget(null)} onSubmit={completeRename} />}
       {toast && <div className="toast" role="status" aria-live="polite"><CheckCircle size={18} />{toast}</div>}
     </div>
   );

@@ -1,12 +1,23 @@
+import { userFacingError } from "./errors";
+
 export type MessagePart = Record<string, any> & { type: string };
 export type RuxMessage = Record<string, any> & { id: string; role: "user" | "assistant"; parts?: MessagePart[]; status?: string };
 export type MessageStore = Record<string, RuxMessage[]>;
 export type AgentEvent = Record<string, any> & { type: string; itemId?: string };
 
+export function normalizedMessages(stored: MessageStore): MessageStore {
+  return Object.fromEntries(Object.entries(stored).map(([threadId, messages]) => [threadId, messages.map((message) => {
+    if (message.status === "running") return { ...message, status: "error", error: "应用已在 Agent 运行期间退出，请重新发送任务" };
+    const isError = message.status === "error" || message.error === true || typeof message.error === "string";
+    if (!isError) return message;
+    return { ...message, status: "error", error: userFacingError(typeof message.error === "string" ? message.error : message.text || "Agent 执行失败"), parts: message.parts?.map((part) => part.type === "text" && part.text ? { ...part, text: userFacingError(part.text) } : part) };
+  })]));
+}
+
 export function loadLegacyMessages(): MessageStore {
   try {
     const stored = JSON.parse(localStorage.getItem("rux.messages.v1") || "{}") as Record<string, unknown>;
-    return Object.fromEntries(Object.entries(stored).map(([threadId, threadMessages]) => [threadId, (Array.isArray(threadMessages) ? threadMessages : []).map((message: RuxMessage) => message.status === "running" ? { ...message, status: "error", error: "应用已在 Agent 运行期间退出，请重新发送任务" } : message)]));
+    return normalizedMessages(Object.fromEntries(Object.entries(stored).map(([threadId, threadMessages]) => [threadId, Array.isArray(threadMessages) ? threadMessages as RuxMessage[] : []])));
   } catch {
     return {};
   }
@@ -86,10 +97,11 @@ export function reduceStreamEvent(message: RuxMessage, event: AgentEvent): RuxMe
         : "dynamicToolCall";
     updatePart({ type: "tool-call", toolCallId: event.itemId, toolName, args: { tool: event.approval.toolName, ...event.approval }, argsText: JSON.stringify(event.approval), _itemId: event.itemId }, (part) => ({ ...part, approval: { id: event.approval.id, options: [{ id: "allow-once", kind: "allow-once", label: "允许一次" }, { id: "allow-session", kind: "allow-always", label: "本次会话允许" }, { id: "reject-once", kind: "reject-once", label: "拒绝" }] } }));
   } else if (event.type === "turn-completed") {
-    return { ...message, parts: parts.map((part) => part.status?.type === "running" ? { ...part, status: { type: "complete" } } : part), status: event.status === "completed" ? "complete" : "error", error: event.error };
+    return { ...message, parts: parts.map((part) => part.status?.type === "running" ? { ...part, status: { type: "complete" } } : part), status: event.status === "completed" ? "complete" : "error", error: event.error ? userFacingError(event.error) : undefined };
   } else if (event.type === "error") {
-    parts.push({ type: "text", text: event.error || "Agent 执行失败", status: { type: "incomplete", reason: "error" }, _itemId: `error-${Date.now()}` });
-    return { ...message, parts, status: "error", error: event.error };
+    const error = userFacingError(event.error || "Agent 执行失败");
+    parts.push({ type: "text", text: error, status: { type: "incomplete", reason: "error" }, _itemId: `error-${Date.now()}` });
+    return { ...message, parts, status: "error", error };
   }
   return { ...message, parts };
 }

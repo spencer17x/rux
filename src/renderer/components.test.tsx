@@ -2,10 +2,12 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import TopBar from "../navigation/TopBar";
 import Sidebar from "../navigation/Sidebar";
+import RenameThreadModal from "../conversation/RenameThreadModal";
 import AddProjectModal from "../projects/AddProjectModal";
 import ReviewScreen from "../workspace/ReviewScreen";
 import ToolLauncher from "../workspace/ToolLauncher";
 import { ModelPopover, PermissionPopover } from "../composer/ComposerControls";
+import WorkspaceDock from "../workspace/WorkspaceDock";
 
 describe("typed renderer components", () => {
   it("renders project context in the top bar", () => {
@@ -32,7 +34,14 @@ describe("typed renderer components", () => {
 
   it("renders the add-project decision dialog", () => {
     const html = renderToStaticMarkup(<AddProjectModal step="choose" defaultParent="/tmp" onClose={() => {}} onStep={() => {}} onComplete={async () => {}} onChooseDirectory={async () => null} />);
-    expect(html).toContain("导入已有项目"); expect(html).toContain("新建项目");
+    expect(html).toContain("导入已有项目"); expect(html).toContain("新建项目"); expect(html).toContain('aria-pressed="true"');
+  });
+
+  it("renders an in-app rename dialog and a visible side-chat wait state", () => {
+    const renameHtml = renderToStaticMarkup(<RenameThreadModal currentTitle="Task" onClose={() => {}} onSubmit={async () => {}} />);
+    expect(renameHtml).toContain('role="dialog"'); expect(renameHtml).toContain("会话名称");
+    const dockHtml = renderToStaticMarkup(<WorkspaceDock activeTool="chat" hasProject gitState={{ branch: "main", files: [] }} terminalProps={{ output: [], onInput: () => {}, onResize: () => {} }} remoteUrl="" projectFiles={[]} sideMessages={[{ id: "u", role: "user", text: "hello" }]} sideValue="" sideSending onSelectTool={() => {}} onClose={() => {}} onOpenReview={() => {}} onOpenRemote={() => {}} onOpenFile={() => {}} onSideValue={() => {}} onSendSide={() => {}} />);
+    expect(dockHtml).toContain("Rux 正在回复"); expect(dockHtml).toContain('role="status"');
   });
 
   it("renders typed model and permission choices", () => {
