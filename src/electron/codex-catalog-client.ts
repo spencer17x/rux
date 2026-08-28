@@ -8,13 +8,13 @@ type CodexModel = { id: string; model: string; displayName: string; description:
 type CodexAccount = { type: string; email?: string | null; planType?: string };
 
 export class CodexCatalogClient {
-  constructor(private readonly runtimeManager: RuntimeManager, private readonly executable: () => string, private readonly runProcess: RunProcess) {}
+  constructor(private readonly runtimeManager: RuntimeManager, private readonly executable: () => string, private readonly runProcess: RunProcess, private readonly environment: () => Record<string, string> = () => ({})) {}
   async models(): Promise<{ models: CodexModel[] }> { const result = await this.request<{ data?: CodexModel[] }>("model/list", { includeHidden: false, limit: 100 }); return { models: (result.data ?? []).filter((model) => !model.hidden) }; }
-  async account(): Promise<{ connected: boolean; account: CodexAccount | null; message: string }> { try { const result = await this.request<{ account?: CodexAccount | null }>("account/read", { refreshToken: false }); const account = result.account ?? null; return { connected: Boolean(account), account, message: account?.email || account?.type || "" }; } catch (error) { const status = await this.runProcess(this.executable(), ["login", "status"], { timeoutMs: 20_000 }); return { connected: status.code === 0, account: null, message: (status.stdout || status.stderr || String(error)).trim() }; } }
+  async account(): Promise<{ connected: boolean; account: CodexAccount | null; message: string }> { try { const result = await this.request<{ account?: CodexAccount | null }>("account/read", { refreshToken: false }); const account = result.account ?? null; return { connected: Boolean(account), account, message: account?.email || account?.type || "" }; } catch (error) { const status = await this.runProcess(this.executable(), ["login", "status"], { timeoutMs: 20_000, env: this.environment() }); return { connected: status.code === 0, account: null, message: (status.stdout || status.stderr || String(error)).trim() }; } }
   async request<T>(method: string, params: unknown): Promise<T> {
     await this.runtimeManager.ensure("codex");
     return await new Promise((resolve, reject) => {
-      const child = spawn(this.executable(), ["app-server", "--stdio"], { env: { ...process.env, NO_COLOR: "1" }, stdio: ["pipe", "pipe", "pipe"] }); let stdout = ""; let settled = false;
+      const child = spawn(this.executable(), ["app-server", "--stdio"], { env: { ...process.env, ...this.environment(), NO_COLOR: "1" }, stdio: ["pipe", "pipe", "pipe"] }); let stdout = ""; let settled = false;
       const finish = (error?: Error, result?: T) => { if (settled) return; settled = true; clearTimeout(timeout); child.kill("SIGTERM"); error ? reject(error) : resolve(result as T); };
       const send = (message: unknown) => child.stdin.write(`${JSON.stringify(message)}\n`);
       const handle = (line: string) => { if (!line.trim().startsWith("{")) return; try { const message = JSON.parse(line) as { id?: number; error?: { message?: string }; result?: T }; if (message.id === 1) { send({ method: "initialized", params: {} }); send({ id: 2, method, params }); } if (message.id === 2) message.error ? finish(new Error(message.error.message || `Codex ${method} 请求失败`)) : finish(undefined, message.result); } catch {} };

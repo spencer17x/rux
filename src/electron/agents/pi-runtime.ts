@@ -1,4 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import { StringDecoder } from "node:string_decoder";
 import { randomUUID } from "node:crypto";
 import type { CodexStreamEvent } from "./codex-app-server";
@@ -40,6 +41,14 @@ export class PiRuntimeClient {
     const run = this.spawnRun(`models-${randomUUID()}`, cwd, true, runtime);
     try { return (await this.request(run, { type: "get_available_models" }))?.models || []; }
     finally { this.stopRun(run.runId); }
+  }
+
+  async readSession(sessionFile: string): Promise<any[]> {
+    if (!sessionFile) return [];
+    const text = await readFile(sessionFile, "utf8");
+    return text.split(/\r?\n/).filter(Boolean).flatMap((line) => {
+      try { return [JSON.parse(line)]; } catch { return []; }
+    });
   }
 
   async startTurn(input: PiRuntimeInput): Promise<{ runId: string; sessionId: string; turnId: string }> {

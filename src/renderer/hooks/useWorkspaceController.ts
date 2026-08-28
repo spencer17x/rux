@@ -27,10 +27,12 @@ export function useWorkspaceController(api: RuxApi, notify: (message: string) =>
     }
     return next;
   }, [api, selectProjectThread]);
-  const newProjectThread = useCallback(async (project: ProjectRecord) => {
-    try { const thread = await api.projects.addThread({ projectId: project.id, title: "未命名会话" }) as ThreadRecord; await reloadWorkspace(); selectProjectThread(project, thread); return thread; }
-    catch (error) { notify(error instanceof Error ? error.message : String(error)); return null; }
-  }, [api, notify, reloadWorkspace, selectProjectThread]);
+  const newProjectThread = useCallback((project: ProjectRecord) => {
+    const thread: ThreadRecord = { id: `draft:${crypto.randomUUID()}`, title: "未命名会话", draft: true };
+    setExpandedProjects((current) => current.includes(project.id) ? current : [...current, project.id]);
+    selectProjectThread(project, thread);
+    return thread;
+  }, [selectProjectThread]);
   const newStandalone = useCallback(async () => {
     try { const thread = await api.projects.addStandalone({ title: "未命名会话" }) as ThreadRecord; await reloadWorkspace(); selectStandalone(thread); return thread; }
     catch (error) { notify(error instanceof Error ? error.message : String(error)); return null; }
@@ -47,11 +49,19 @@ export function useWorkspaceController(api: RuxApi, notify: (message: string) =>
   const completeRename = useCallback(async (title: string) => {
     const thread = renameTarget; const nextTitle = title.trim(); if (!thread || !nextTitle) return;
     if (nextTitle === thread.title) { setRenameTarget(null); return; }
+    if (thread.draft) { setActiveThread((current) => current?.id === thread.id ? { ...current, title: nextTitle } : current); setRenameTarget(null); notify("草稿名称已更新"); return; }
     try { const updated = await api.threads.update({ type: thread.type, projectId: thread.projectId, threadId: thread.id, title: nextTitle }); if (activeThread?.id === thread.id) setActiveThread((current) => current ? { ...current, ...(updated as Partial<ThreadRecord>) } : current); await reloadWorkspace(); setRenameTarget(null); notify("会话已重命名"); }
     catch (error) { notify(error instanceof Error ? error.message : String(error)); }
   }, [activeThread, api, notify, reloadWorkspace, renameTarget]);
   const removeThread = useCallback(async (thread: ActiveThread, running = false) => {
     if (running) { notify("请先停止该会话，再删除它"); return; }
+    if (thread.draft) {
+      const project = thread.projectId ? workspace.projects.find((item) => item.id === thread.projectId) : undefined;
+      if (project?.threads[0]) selectProjectThread(project, project.threads[0]);
+      else if (workspace.standaloneThreads[0]) selectStandalone(workspace.standaloneThreads[0]);
+      else await newStandalone();
+      return;
+    }
     if (!window.confirm(`删除会话“${thread.title}”？\n\n这会删除 Rux 中的会话记录，但不会删除项目文件。`)) return;
     try {
       const { workspace: rawWorkspace } = await api.threads.remove({ type: thread.type, projectId: thread.projectId, threadId: thread.id }); const next = rawWorkspace as WorkspaceState;
@@ -64,7 +74,7 @@ export function useWorkspaceController(api: RuxApi, notify: (message: string) =>
       }
       notify("会话已删除");
     } catch (error) { notify(error instanceof Error ? error.message : String(error)); }
-  }, [activeThread, api, newStandalone, notify, onThreadsRemoved, selectProjectThread, selectStandalone]);
+  }, [activeThread, api, newStandalone, notify, onThreadsRemoved, selectProjectThread, selectStandalone, workspace]);
   const removeActiveThread = useCallback(async (sending: boolean) => { if (activeThread) await removeThread(activeThread, sending); }, [activeThread, removeThread]);
   const removeProject = useCallback(async (project: ProjectRecord, projectRunning = false) => {
     if (projectRunning) { notify("该项目仍有 Agent 正在运行，请先停止任务"); return; }

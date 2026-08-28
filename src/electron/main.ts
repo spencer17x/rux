@@ -38,7 +38,7 @@ async function createWindow(): Promise<void> {
 }
 
 app.whenReady().then(async () => {
-  registerBackend(() => mainWindow);
+  await registerBackend(() => mainWindow);
   await createWindow();
 
   app.on("activate", () => {

@@ -174,9 +174,7 @@ function App() {
       if (activeMessages.length || (boundAgent && boundAgent !== agentId) || activeThread.nativeSessionId) {
         if (!window.confirm(`当前会话已绑定 ${agents.find((item) => item.id === selectedAgent)?.name || selectedAgent}。\n\n切换到 ${agent.name} 将新建一个空白 Rux 会话，当前会话会保留。`)) return;
         if (activeProject) {
-          const thread = await api.projects.addThread({ projectId: activeProject.id, title: `未命名 ${agent.name} 会话` });
-          await reloadWorkspace();
-          selectProjectThread(activeProject, { ...thread, agentId });
+          newProjectThread(activeProject);
         } else {
           const thread = await api.projects.addStandalone({ title: `未命名 ${agent.name} 会话` });
           await reloadWorkspace();

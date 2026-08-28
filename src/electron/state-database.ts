@@ -125,6 +125,10 @@ export class StateDatabase {
     return result;
   }
 
+  messageThreadIds(): Set<string> {
+    return new Set((this.database.prepare("SELECT thread_id FROM messages").all() as Array<{ thread_id: string }>).map((row) => row.thread_id));
+  }
+
   saveMessages(messages: Record<string, unknown[]>): void {
     const existingThreads = new Set((this.database.prepare("SELECT id FROM threads").all() as Array<{ id: string }>).map((row) => row.id));
     const upsert = this.database.prepare("INSERT INTO messages(thread_id, data_json, updated_at) VALUES (?, ?, ?) ON CONFLICT(thread_id) DO UPDATE SET data_json = excluded.data_json, updated_at = excluded.updated_at");

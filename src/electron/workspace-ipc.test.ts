@@ -21,10 +21,12 @@ describe("workspace IPC", () => {
   it("adds, updates, and removes project threads", async () => {
     const { database, invoke, current } = harness({ projects: [{ id: "project", name: "Project", path: "/tmp/project", threads: [] }], standaloneThreads: [] });
     const thread = await invoke("projects:add-thread", { projectId: "project", title: "Task" });
+    await invoke("projects:add-thread", { projectId: "project", title: "Second" });
+    expect(current().projects[0].threads).toHaveLength(2);
     await invoke("threads:update", { type: "project", projectId: "project", threadId: thread.id, title: "Renamed", agentId: "codex" });
     expect(current().projects[0].threads[0]).toMatchObject({ title: "Renamed", agentId: "codex" });
     await invoke("threads:remove", { type: "project", projectId: "project", threadId: thread.id });
-    expect(current().projects[0].threads).toEqual([]); database.close();
+    expect(current().projects[0].threads).toMatchObject([{ title: "Second" }]); database.close();
   });
 
   it("persists messages only for registered threads", async () => {

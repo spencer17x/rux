@@ -1,4 +1,4 @@
-import { query, type ModelInfo, type PermissionMode, type Query, type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+import { getSessionMessages, query, type ModelInfo, type PermissionMode, type Query, type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { randomUUID } from "node:crypto";
 import type { CodexStreamEvent } from "./codex-app-server";
 
@@ -34,7 +34,13 @@ export class ClaudeCodeClient {
   constructor(
     private readonly executable: () => string,
     private readonly emit: (event: CodexStreamEvent) => void,
+    private readonly environment: () => Record<string, string> = () => ({}),
   ) {}
+
+  async readSession(sessionId: string, cwd?: string): Promise<any[]> {
+    if (!sessionId) return [];
+    return await getSessionMessages(sessionId, { ...(cwd ? { dir: cwd } : {}), limit: 1000 });
+  }
 
   async listModels(cwd: string): Promise<ModelInfo[]> {
     async function* idle(): AsyncGenerator<any> {
@@ -42,7 +48,7 @@ export class ClaudeCodeClient {
     }
     const instance = query({
       prompt: idle(),
-      options: { cwd, pathToClaudeCodeExecutable: this.executable() },
+      options: { cwd, pathToClaudeCodeExecutable: this.executable(), env: { ...process.env, ...this.environment() } },
     });
     try {
       return await instance.supportedModels();
@@ -55,7 +61,7 @@ export class ClaudeCodeClient {
     async function* idle(): AsyncGenerator<any> {
       await new Promise<void>(() => {});
     }
-    const instance = query({ prompt: idle(), options: { cwd, pathToClaudeCodeExecutable: this.executable() } });
+    const instance = query({ prompt: idle(), options: { cwd, pathToClaudeCodeExecutable: this.executable(), env: { ...process.env, ...this.environment() } } });
     try {
       return await instance.accountInfo();
     } finally {
@@ -71,6 +77,7 @@ export class ClaudeCodeClient {
       options: {
         cwd: input.cwd,
         pathToClaudeCodeExecutable: this.executable(),
+        env: { ...process.env, ...this.environment() },
         includePartialMessages: true,
         includeHookEvents: true,
         forwardSubagentText: true,

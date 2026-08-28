@@ -2,7 +2,7 @@ export type AgentId = "codex" | "claude-code" | "pi";
 
 export type ThreadRecord = {
   id: string; title: string; codexThreadId?: string; agentId?: AgentId;
-  nativeSessionId?: string; agentMode?: string;
+  nativeSessionId?: string; agentMode?: string; draft?: boolean;
 };
 
 export type ProjectRecord = { id: string; name: string; path: string; threads: ThreadRecord[] };

@@ -1,6 +1,7 @@
 import { app, type BrowserWindow, ipcMain as electronIpcMain } from "electron";
 import { join } from "node:path";
 import { AgentSendService } from "./agent-send-service";
+import { agentDataPaths, prepareAgentData } from "./agent-data";
 import { registerAgentRuntimeIpc } from "./agent-runtime-ipc";
 import { ClaudeCodeClient } from "./agents/claude-code";
 import { CodexAppServerClient } from "./agents/codex-app-server";
@@ -12,6 +13,7 @@ import type { IpcRegistrar } from "./ipc-types";
 import { runProcess } from "./process-runner";
 import { ProviderProfileStore } from "./provider-profiles";
 import { RuntimeManager } from "./runtime-manager";
+import { NativeHistoryService } from "./native-history";
 import { SettingsAuthModelsIpc } from "./settings-auth-models-ipc";
 import { SettingsStore } from "./settings-store";
 import { StateDatabase } from "./state-database";
@@ -29,7 +31,7 @@ let settingsAuthModels: SettingsAuthModelsIpc | null = null;
 let terminalManager: TerminalManager | null = null;
 let stateDatabase: StateDatabase | null = null;
 
-export function registerBackend(getWindow: () => BrowserWindow | null): void {
+export async function registerBackend(getWindow: () => BrowserWindow | null): Promise<void> {
   const ipc: IpcRegistrar = {
     handle(channel, listener) {
       electronIpcMain.handle(channel, async (event, ...args) => {
@@ -43,6 +45,12 @@ export function registerBackend(getWindow: () => BrowserWindow | null): void {
   const userData = app.getPath("userData");
   stateDatabase = new StateDatabase(join(userData, "rux.sqlite"));
   const workspaceStore = new WorkspaceStore(stateDatabase, join(userData, "workspace.json"));
+  const dataPaths = agentDataPaths(userData);
+  const workspace = await workspaceStore.load();
+  if (await prepareAgentData(dataPaths, workspace)) await workspaceStore.save(workspace);
+  process.env.CLAUDE_CONFIG_DIR = dataPaths.claudeHome;
+  const codexEnvironment = () => ({ CODEX_HOME: dataPaths.codexHome });
+  const claudeEnvironment = () => ({ CLAUDE_CONFIG_DIR: dataPaths.claudeHome, CLAUDE_AGENT_SDK_CLIENT_APP: `rux/${app.getVersion()}` });
   const settingsStore = new SettingsStore(join(userData, "settings.json"));
   runtimeManager = new RuntimeManager(join(userData, "runtimes"), getWindow);
   providerStore = new ProviderProfileStore(join(userData, "provider-profiles.json"));
@@ -51,12 +59,13 @@ export function registerBackend(getWindow: () => BrowserWindow | null): void {
     : [process.env.GIT_BIN, "/usr/bin/git", "/opt/homebrew/bin/git", "git"].find(Boolean) as string;
   const emitAgentEvent = (event: any) => getWindow()?.webContents.send("agent:event", event);
 
-  codexClient = new CodexAppServerClient(() => executable("codex"), emitAgentEvent);
-  claudeClient = new ClaudeCodeClient(() => runtimeManager!.resolveInstalled("claude-code").command, emitAgentEvent);
+  codexClient = new CodexAppServerClient(() => executable("codex"), emitAgentEvent, codexEnvironment);
+  claudeClient = new ClaudeCodeClient(() => runtimeManager!.resolveInstalled("claude-code").command, emitAgentEvent, claudeEnvironment);
   piClient = new PiRuntimeClient(() => runtimeManager!.resolveInstalled("pi"), emitAgentEvent);
+  const nativeHistory = new NativeHistoryService(codexClient, claudeClient, piClient);
 
-  const catalog = new CodexCatalogClient(runtimeManager, () => executable("codex"), runProcess);
-  const sendService = new AgentSendService(settingsStore, workspaceStore, runProcess, () => executable("codex"), () => executable("git"), userData);
+  const catalog = new CodexCatalogClient(runtimeManager, () => executable("codex"), runProcess, codexEnvironment);
+  const sendService = new AgentSendService(settingsStore, workspaceStore, runProcess, () => executable("codex"), () => executable("git"), userData, codexEnvironment);
   settingsAuthModels = new SettingsAuthModelsIpc({
     getWindow,
     runtimeManager,
@@ -67,6 +76,7 @@ export function registerBackend(getWindow: () => BrowserWindow | null): void {
     settingsStore,
     runProcess,
     codexExecutable: () => executable("codex"),
+    codexEnvironment,
     loadCodexModels: () => catalog.models(),
     loadCodexAccount: () => catalog.account(),
     testCustomProvider: async (settings) => { await sendService.custom({ prompt: "Reply with OK", model: settings.model, reasoning: "low" }, settings); },
@@ -78,6 +88,7 @@ export function registerBackend(getWindow: () => BrowserWindow | null): void {
     loadWorkspace: () => workspaceStore.load(),
     saveWorkspace: (workspace) => workspaceStore.save(workspace),
     stateDatabase: () => stateDatabase!,
+    nativeHistory,
     runProcess,
     gitExecutable: () => executable("git"),
   });

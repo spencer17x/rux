@@ -25,7 +25,7 @@ function ThreadRow({ thread, active, child = false, onSelect, onRename, onDelete
     return () => { document.removeEventListener("pointerdown", onPointerDown); document.removeEventListener("keydown", onKeyDown); };
   }, [menuOpen]);
   return <div ref={scopeRef} className={`thread-row-wrap ${child ? "is-child" : ""}`} onContextMenu={(event) => { event.preventDefault(); setMenuOpen(true); }}>
-    <button type="button" className={`sidebar-row ${child ? "child-row" : ""} ${active ? "is-selected" : ""}`} title="双击重命名会话" onClick={onSelect} onDoubleClick={(event) => { event.preventDefault(); onRename(); }}><ChatCircle size={child ? 16 : 17} /><span>{thread.title}</span></button>
+    <button type="button" className={`sidebar-row ${child ? "child-row" : ""} ${active ? "is-selected" : ""}`} title="双击重命名会话" onClick={onSelect} onDoubleClick={(event) => { event.preventDefault(); onRename(); }}><ChatCircle size={16} /><span>{thread.title}</span></button>
     <IconButton ref={triggerRef} label={`会话操作 ${thread.title}`} className="thread-action-button" active={menuOpen} onClick={(event) => { event.stopPropagation(); setMenuOpen((open) => !open); }}><DotsThree size={16} /></IconButton>
     {menuOpen && <div className="thread-action-popover" role="menu"><button type="button" role="menuitem" onClick={() => { setMenuOpen(false); onRename(); }}><PencilSimple size={15} />重命名会话</button><button type="button" role="menuitem" className="danger-text" onClick={() => { setMenuOpen(false); onDelete(); }}><Trash size={15} />删除会话</button></div>}
   </div>;

@@ -8,7 +8,7 @@ export type BufferedSendInput = { projectId?: string; prompt: string; model?: st
 export type CustomSendInput = { prompt: string; model?: string; reasoning?: ReasoningEffort };
 
 export class AgentSendService {
-  constructor(private readonly settingsStore: SettingsStore, private readonly workspaceStore: WorkspaceStore, private readonly runProcess: RunProcess, private readonly codexExecutable: () => string, private readonly gitExecutable: () => string, private readonly userDataRoot: string) {}
+  constructor(private readonly settingsStore: SettingsStore, private readonly workspaceStore: WorkspaceStore, private readonly runProcess: RunProcess, private readonly codexExecutable: () => string, private readonly gitExecutable: () => string, private readonly userDataRoot: string, private readonly codexEnvironment: () => Record<string, string> = () => ({})) {}
 
   async codex(input: BufferedSendInput): Promise<{ text: string; threadId?: string; diagnostics: string }> {
     const project = input.projectId ? await this.workspaceStore.resolve(input.projectId) : null; const cwd = project?.path ?? join(this.userDataRoot, "standalone-workspace"); await mkdir(cwd, { recursive: true }); let prompt = input.prompt.trim(); if (!prompt) throw new Error("消息不能为空");
@@ -18,7 +18,7 @@ export class AgentSendService {
     if (input.webSearch) input.threadId ? args.push("-c", 'web_search="live"') : args.push("--search"); if (model && model !== "default") args.push("-m", model); args.push("-c", `model_reasoning_effort=\"${reasoning}\"`);
     const contextFiles: string[] = []; for (const image of (input.images ?? []).slice(0, 8)) { const path = resolve(image); if (!await this.exists(path)) continue; /\.(png|jpe?g|gif|webp)$/i.test(path) ? args.push("-i", path) : contextFiles.push(path); }
     if (contextFiles.length) prompt += `\n\n用户选择的上下文文件：\n${contextFiles.map((path) => `- ${path}`).join("\n")}`; if (input.threadId) args.push(input.threadId); args.push(prompt);
-    const result = await this.runProcess(this.codexExecutable(), args, { cwd, timeoutMs: 10 * 60_000 }); if (result.code !== 0) throw new Error(result.stderr.trim() || "Codex 执行失败"); const parsed = this.parseOutput(result.stdout); if (!parsed.text) throw new Error("Codex 未返回可显示的消息"); return { ...parsed, diagnostics: result.stderr.trim() };
+    const result = await this.runProcess(this.codexExecutable(), args, { cwd, timeoutMs: 10 * 60_000, env: this.codexEnvironment() }); if (result.code !== 0) throw new Error(result.stderr.trim() || "Codex 执行失败"); const parsed = this.parseOutput(result.stdout); if (!parsed.text) throw new Error("Codex 未返回可显示的消息"); return { ...parsed, diagnostics: result.stderr.trim() };
   }
 
   async custom(input: CustomSendInput, override?: RuxSettings): Promise<{ text: string }> {

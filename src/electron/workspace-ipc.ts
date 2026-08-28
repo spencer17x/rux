@@ -5,8 +5,9 @@ import { basename, isAbsolute, join, resolve } from "node:path";
 import { addProjectThreadSchema, addStandaloneThreadSchema, messagesStoreSchema, parseInput, projectCloneSchema, projectCreateSchema, projectIdSchema, projectImportSchema, projectThreadUpdateSchema, threadUpdateSchema } from "../shared/ipc";
 import type { StateDatabase, StoredProject, StoredThread, StoredWorkspace } from "./state-database";
 import type { IpcRegistrar, RunProcess } from "./ipc-types";
+import type { NativeHistoryService } from "./native-history";
 
-type Dependencies = { getWindow: () => BrowserWindow | null; loadWorkspace: () => Promise<StoredWorkspace>; saveWorkspace: (workspace: StoredWorkspace) => Promise<void>; stateDatabase: () => StateDatabase; runProcess: RunProcess; gitExecutable: () => string };
+type Dependencies = { getWindow: () => BrowserWindow | null; loadWorkspace: () => Promise<StoredWorkspace>; saveWorkspace: (workspace: StoredWorkspace) => Promise<void>; stateDatabase: () => StateDatabase; nativeHistory?: NativeHistoryService; runProcess: RunProcess; gitExecutable: () => string };
 
 function projectName(value: string): string { const clean = value.trim(); if (!clean || clean.length > 80 || clean === "." || clean === ".." || /[\\/:*?"<>|]/.test(clean)) throw new Error("项目名称无效"); return clean; }
 async function exists(path: string): Promise<boolean> { try { await stat(path); return true; } catch { return false; } }
@@ -19,8 +20,17 @@ function updateThread(thread: StoredThread, input: Record<string, any>): void { 
 
 export function registerWorkspaceIpc(ipc: IpcRegistrar, deps: Dependencies): void {
   ipc.handle("projects:list", deps.loadWorkspace);
-  ipc.handle("messages:list", async () => deps.stateDatabase().loadMessages());
-  ipc.handle("messages:save", async (_event, value) => { if (Buffer.byteLength(JSON.stringify(value ?? {}), "utf8") > 20 * 1024 * 1024) throw new Error("会话数据超过 20 MB 上限"); deps.stateDatabase().saveMessages(parseInput(messagesStoreSchema, value ?? {})); return { saved: true }; });
+  ipc.handle("messages:list", async () => {
+    const fallback = deps.stateDatabase().loadMessages();
+    return deps.nativeHistory ? await deps.nativeHistory.load(await deps.loadWorkspace(), fallback) : fallback;
+  });
+  ipc.handle("messages:save", async (_event, value) => {
+    if (Buffer.byteLength(JSON.stringify(value ?? {}), "utf8") > 20 * 1024 * 1024) throw new Error("会话数据超过 20 MB 上限");
+    const messages = parseInput(messagesStoreSchema, value ?? {});
+    const filtered = deps.nativeHistory ? deps.nativeHistory.filterFallback(await deps.loadWorkspace(), messages, deps.stateDatabase().messageThreadIds()) : messages;
+    deps.stateDatabase().saveMessages(filtered);
+    return { saved: true };
+  });
   ipc.handle("projects:default-parent", async () => { const path = join(app.getPath("documents"), "Rux Projects"); await mkdir(path, { recursive: true }); return path; });
   ipc.handle("projects:choose-directory", async () => { const options = { properties: ["openDirectory", "createDirectory"] as Array<"openDirectory" | "createDirectory"> }; const window = deps.getWindow(); const result = window ? await dialog.showOpenDialog(window, options) : await dialog.showOpenDialog(options); return result.canceled ? null : result.filePaths[0]; });
   ipc.handle("projects:import", async (_event, value) => { const input = parseInput(projectImportSchema, value); const path = resolve(input.path); if (!(await stat(path)).isDirectory()) throw new Error("请选择项目文件夹"); const workspace = await deps.loadWorkspace(); let project = workspace.projects.find((item) => item.path === path); if (!project) { project = { id: randomUUID(), name: basename(path), path, threads: input.createThread === false ? [] : [{ id: randomUUID(), title: "项目会话" }] }; workspace.projects.push(project); await deps.saveWorkspace(workspace); } return project; });
@@ -29,7 +39,7 @@ export function registerWorkspaceIpc(ipc: IpcRegistrar, deps: Dependencies): voi
   ipc.handle("projects:remove", async (_event, value) => { const id = parseInput(projectIdSchema, value); const workspace = await deps.loadWorkspace(); const index = workspace.projects.findIndex((item) => item.id === id); if (index < 0) throw new Error("项目不存在"); const [project] = workspace.projects.splice(index, 1); await deps.saveWorkspace(workspace); return { project, workspace }; });
   ipc.handle("projects:add-thread", async (_event, value) => { const input = parseInput(addProjectThreadSchema, value); const workspace = await deps.loadWorkspace(); const project = workspace.projects.find((item) => item.id === input.projectId); if (!project) throw new Error("项目不存在"); const thread = { id: randomUUID(), title: String(input.title || "未命名会话").slice(0, 100) }; project.threads.push(thread); await deps.saveWorkspace(workspace); return thread; });
   ipc.handle("projects:add-standalone", async (_event, value) => { const input = parseInput(addStandaloneThreadSchema, value) ?? {}; const workspace = await deps.loadWorkspace(); const thread = { id: randomUUID(), title: String(input.title || "未命名会话").slice(0, 100) }; workspace.standaloneThreads.push(thread); await deps.saveWorkspace(workspace); return thread; });
-  ipc.handle("projects:update-thread", async (_event, value) => { const input = parseInput(projectThreadUpdateSchema, value); const workspace = await deps.loadWorkspace(); const thread = workspace.projects.find((item) => item.id === input.projectId)?.threads.find((item) => item.id === input.threadId); if (!thread) throw new Error("会话不存在"); updateThread(thread, input); await deps.saveWorkspace(workspace); return thread; });
-  ipc.handle("threads:update", async (_event, value) => { const input = parseInput(threadUpdateSchema, value); const workspace = await deps.loadWorkspace(); const thread = input.type === "project" ? workspace.projects.find((item) => item.id === input.projectId)?.threads.find((item) => item.id === input.threadId) : workspace.standaloneThreads.find((item) => item.id === input.threadId); if (!thread) throw new Error("会话不存在"); updateThread(thread, input); await deps.saveWorkspace(workspace); return thread; });
+  ipc.handle("projects:update-thread", async (_event, value) => { const input = parseInput(projectThreadUpdateSchema, value); const workspace = await deps.loadWorkspace(); const thread = workspace.projects.find((item) => item.id === input.projectId)?.threads.find((item) => item.id === input.threadId); if (!thread) throw new Error("会话不存在"); updateThread(thread, input); await deps.saveWorkspace(workspace); if (input.nativeSessionId || input.codexThreadId) deps.nativeHistory?.markAuthoritative(input.threadId); return thread; });
+  ipc.handle("threads:update", async (_event, value) => { const input = parseInput(threadUpdateSchema, value); const workspace = await deps.loadWorkspace(); const thread = input.type === "project" ? workspace.projects.find((item) => item.id === input.projectId)?.threads.find((item) => item.id === input.threadId) : workspace.standaloneThreads.find((item) => item.id === input.threadId); if (!thread) throw new Error("会话不存在"); updateThread(thread, input); await deps.saveWorkspace(workspace); if (input.nativeSessionId || input.codexThreadId) deps.nativeHistory?.markAuthoritative(input.threadId); return thread; });
   ipc.handle("threads:remove", async (_event, value) => { const input = parseInput(threadUpdateSchema, value); const workspace = await deps.loadWorkspace(); const threads = input.type === "project" ? workspace.projects.find((item) => item.id === input.projectId)?.threads : workspace.standaloneThreads; if (!threads) throw new Error("会话不存在"); const index = threads.findIndex((item) => item.id === input.threadId); if (index < 0) throw new Error("会话不存在"); const [thread] = threads.splice(index, 1); await deps.saveWorkspace(workspace); return { thread, workspace }; });
 }

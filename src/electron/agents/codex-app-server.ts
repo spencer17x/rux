@@ -66,7 +66,23 @@ export class CodexAppServerClient {
   constructor(
     private readonly executable: () => string,
     private readonly emit: (event: CodexStreamEvent) => void,
+    private readonly environment: () => Record<string, string> = () => ({}),
   ) {}
+
+  async readThread(threadId: string): Promise<Record<string, any> | null> {
+    if (!threadId) return null;
+    await this.ensureStarted();
+    try {
+      const result = await this.request("thread/read", { threadId, includeTurns: true });
+      return result?.thread || null;
+    } catch {
+      // A newly isolated CODEX_HOME starts without Codex's metadata database.
+      // Listing once scans rollout JSONL files and repairs the local index.
+      await this.request("thread/list", { limit: 100, sourceKinds: ["appServer", "exec", "cli", "vscode"] });
+      const result = await this.request("thread/read", { threadId, includeTurns: true });
+      return result?.thread || null;
+    }
+  }
 
   async startTurn(input: CodexStreamInput): Promise<{ threadId: string; turnId: string }> {
     await this.ensureStarted();
@@ -180,7 +196,7 @@ export class CodexAppServerClient {
 
   private async initialize(): Promise<void> {
     const child = spawn(this.executable(), ["app-server", "--stdio"], {
-      env: { ...process.env, NO_COLOR: "1" },
+      env: { ...process.env, ...this.environment(), NO_COLOR: "1" },
       stdio: ["pipe", "pipe", "pipe"],
     });
     this.process = child;
