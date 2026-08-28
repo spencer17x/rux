@@ -50,16 +50,22 @@ export function useWorkspaceController(api: RuxApi, notify: (message: string) =>
     try { const updated = await api.threads.update({ type: thread.type, projectId: thread.projectId, threadId: thread.id, title: nextTitle }); if (activeThread?.id === thread.id) setActiveThread((current) => current ? { ...current, ...(updated as Partial<ThreadRecord>) } : current); await reloadWorkspace(); setRenameTarget(null); notify("会话已重命名"); }
     catch (error) { notify(error instanceof Error ? error.message : String(error)); }
   }, [activeThread, api, notify, reloadWorkspace, renameTarget]);
-  const removeActiveThread = useCallback(async (sending: boolean) => {
-    if (sending) { notify("请先停止当前会话，再移除它"); return; }
-    if (!activeThread || !window.confirm(`从 Rux 中移除会话“${activeThread.title}”？`)) return;
+  const removeThread = useCallback(async (thread: ActiveThread, running = false) => {
+    if (running) { notify("请先停止该会话，再删除它"); return; }
+    if (!window.confirm(`删除会话“${thread.title}”？\n\n这会删除 Rux 中的会话记录，但不会删除项目文件。`)) return;
     try {
-      const { workspace: rawWorkspace } = await api.threads.remove({ type: activeThread.type, projectId: activeThread.projectId, threadId: activeThread.id }); const next = rawWorkspace as WorkspaceState;
-      setWorkspace(next); onThreadsRemoved([activeThread.id]);
-      const project = next.projects.find((item) => item.threads.length); if (project) selectProjectThread(project, project.threads[0]); else if (next.standaloneThreads[0]) selectStandalone(next.standaloneThreads[0]); else await newStandalone();
-      notify("会话已移除");
+      const { workspace: rawWorkspace } = await api.threads.remove({ type: thread.type, projectId: thread.projectId, threadId: thread.id }); const next = rawWorkspace as WorkspaceState;
+      setWorkspace(next); onThreadsRemoved([thread.id]);
+      if (activeThread?.id === thread.id) {
+        const sameProject = thread.type === "project" ? next.projects.find((item) => item.id === thread.projectId) : undefined;
+        if (sameProject?.threads[0]) selectProjectThread(sameProject, sameProject.threads[0]);
+        else if (next.standaloneThreads[0]) selectStandalone(next.standaloneThreads[0]);
+        else { const project = next.projects.find((item) => item.threads.length); if (project) selectProjectThread(project, project.threads[0]); else await newStandalone(); }
+      }
+      notify("会话已删除");
     } catch (error) { notify(error instanceof Error ? error.message : String(error)); }
   }, [activeThread, api, newStandalone, notify, onThreadsRemoved, selectProjectThread, selectStandalone]);
+  const removeActiveThread = useCallback(async (sending: boolean) => { if (activeThread) await removeThread(activeThread, sending); }, [activeThread, removeThread]);
   const removeProject = useCallback(async (project: ProjectRecord, projectRunning = false) => {
     if (projectRunning) { notify("该项目仍有 Agent 正在运行，请先停止任务"); return; }
     if (!window.confirm(`从 Rux 中移除“${project.name}”？\n\n仅解除侧栏关联，不会删除磁盘中的项目文件。`)) return;
@@ -74,5 +80,5 @@ export function useWorkspaceController(api: RuxApi, notify: (message: string) =>
     const project = (action.kind === "create" ? await api.projects.create(action) : action.kind === "clone" ? await api.projects.clone(action) : await api.projects.import(action)) as ProjectRecord;
     await reloadWorkspace(project); setModalStep(null); notify(action.kind === "create" ? "项目已创建并加入侧栏" : "项目已导入并加入侧栏");
   }, [api, notify, reloadWorkspace]);
-  return { workspace, setWorkspace, activeThread, setActiveThread, expandedProjects, setExpandedProjects, defaultParent, view, setView, modalStep, setModalStep, renameTarget, setRenameTarget, initializeWorkspace, reloadWorkspace, selectProjectThread, selectStandalone, newProjectThread, newStandalone, renameThread, renameActiveThread, completeRename, removeActiveThread, removeProject, completeProjectAction };
+  return { workspace, setWorkspace, activeThread, setActiveThread, expandedProjects, setExpandedProjects, defaultParent, view, setView, modalStep, setModalStep, renameTarget, setRenameTarget, initializeWorkspace, reloadWorkspace, selectProjectThread, selectStandalone, newProjectThread, newStandalone, renameThread, renameActiveThread, completeRename, removeThread, removeActiveThread, removeProject, completeProjectAction };
 }

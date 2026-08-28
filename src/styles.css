@@ -249,7 +249,7 @@ textarea:focus-visible {
   padding-right: 36px;
 }
 
-.thread-rename-button {
+.thread-action-button {
   position: absolute;
   z-index: 1;
   top: 3px;
@@ -262,12 +262,44 @@ textarea:focus-visible {
   transition: opacity 140ms ease, transform 140ms ease, background 120ms ease;
 }
 
-.thread-row-wrap:hover .thread-rename-button,
-.thread-rename-button:focus-visible,
-.thread-row-wrap:focus-within .thread-rename-button {
+.thread-row-wrap:hover .thread-action-button,
+.thread-action-button:focus-visible,
+.thread-action-button.is-active,
+.thread-row-wrap:focus-within .thread-action-button {
   opacity: 1;
   transform: translateX(0);
 }
+
+.thread-action-popover {
+  position: absolute;
+  z-index: 45;
+  top: 33px;
+  right: 3px;
+  display: grid;
+  width: 156px;
+  padding: 5px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: #ffffff;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.14);
+  animation: pop-in 120ms ease-out;
+}
+
+.thread-action-popover button {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  font-size: 12px;
+  text-align: left;
+}
+
+.thread-action-popover button:hover,
+.thread-action-popover button:focus-visible { background: var(--surface-muted); }
 
 .sidebar-row,
 .project-row {

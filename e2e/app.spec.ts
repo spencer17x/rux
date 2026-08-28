@@ -29,7 +29,8 @@ test.afterEach(async () => {
 
 test("creates the initial standalone conversation and opens typed settings", async () => {
   await expect(page.getByText("独立会话", { exact: true }).first()).toBeVisible();
-  await page.getByRole("button", { name: /重命名会话 未命名会话/ }).click();
+  await page.getByRole("button", { name: /会话操作 未命名会话/ }).click();
+  await page.getByRole("menuitem", { name: "重命名会话" }).click();
   await expect(page.getByRole("dialog", { name: "重命名会话" })).toBeVisible();
   await page.getByRole("textbox", { name: "会话名称" }).fill("E2E renamed");
   await page.getByRole("button", { name: "保存", exact: true }).click();
@@ -64,6 +65,21 @@ test("creates the initial standalone conversation and opens typed settings", asy
   await page.getByRole("textbox", { name: "消息" }).fill("E2E main turn");
   await page.getByRole("button", { name: "发送" }).click();
   await expect(page.getByText("RUX_E2E_AGENT_OK", { exact: true })).toBeVisible();
+});
+
+test("deletes a conversation from the sidebar action menu", async () => {
+  await page.getByRole("button", { name: "新建独立会话" }).click();
+  await page.getByRole("button", { name: /会话操作 未命名会话/ }).last().click();
+  await page.getByRole("menuitem", { name: "重命名会话" }).click();
+  await page.getByRole("textbox", { name: "会话名称" }).fill("Delete me");
+  await page.getByRole("button", { name: "保存", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Delete me", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "会话操作 Delete me" }).click();
+  const confirmation = new Promise<void>((resolve) => page.once("dialog", async (dialog) => { expect(dialog.message()).toContain("删除会话"); await dialog.accept(); resolve(); }));
+  await page.getByRole("menuitem", { name: "删除会话" }).click();
+  await confirmation;
+  await expect(page.getByRole("button", { name: "Delete me", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("textbox", { name: "消息" })).toBeVisible();
 });
 
 test("restores a SQLite project and executes a command through the PTY terminal", async () => {
