@@ -29,6 +29,9 @@ test.afterEach(async () => {
 
 test("creates the initial standalone conversation and opens typed settings", async () => {
   await expect(page.getByText("独立会话", { exact: true }).first()).toBeVisible();
+  await page.getByRole("textbox", { name: "消息" }).fill("Create standalone draft");
+  await page.getByRole("button", { name: "发送" }).click();
+  await expect(page.getByText("RUX_E2E_AGENT_OK", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: /会话操作 未命名会话/ }).click();
   await page.getByRole("menuitem", { name: "重命名会话" }).click();
   await expect(page.getByRole("dialog", { name: "重命名会话" })).toBeVisible();
@@ -68,7 +71,9 @@ test("creates the initial standalone conversation and opens typed settings", asy
 });
 
 test("deletes a conversation from the sidebar action menu", async () => {
-  await page.getByRole("button", { name: "新建独立会话" }).click();
+  await page.getByRole("textbox", { name: "消息" }).fill("Create deletable standalone");
+  await page.getByRole("button", { name: "发送" }).click();
+  await expect(page.getByText("RUX_E2E_AGENT_OK", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: /会话操作 未命名会话/ }).last().click();
   await page.getByRole("menuitem", { name: "重命名会话" }).click();
   await page.getByRole("textbox", { name: "会话名称" }).fill("Delete me");

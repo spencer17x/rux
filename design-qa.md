@@ -93,6 +93,72 @@ final result: passed
 
 ---
 
+# Project Tree Interaction Design QA — 2026-08-29
+
+## Comparison target
+
+- Source visual truth:
+  - `/var/folders/hl/d5hg44c53b958y88jbqlwdw00000gn/T/codex-clipboard-914721f3-e456-4ed6-84e8-83f9f44236cf.png`
+  - `/var/folders/hl/d5hg44c53b958y88jbqlwdw00000gn/T/codex-clipboard-7a46ad81-9253-4a60-99ad-4e395df73146.png`
+- Explicit negative reference: `/var/folders/hl/d5hg44c53b958y88jbqlwdw00000gn/T/codex-clipboard-a347f956-757d-4027-8730-dbd607c89acc.png` — the project-summary popover shown here must not be implemented.
+- Packaged implementation:
+  - `/Users/17a/projects/rux/qa/product-design-sidebar/implementation-final-full.jpeg`
+  - `/Users/17a/projects/rux/qa/product-design-sidebar/implementation-menu-portal-final.png`
+- Combined comparison evidence:
+  - `/Users/17a/projects/rux/qa/product-design-sidebar/comparison-project-tree-final.png`
+  - `/Users/17a/projects/rux/qa/product-design-sidebar/comparison-menu-final.png`
+- State: packaged macOS client, light theme, expanded project with active child conversation; project action menu open for the focused comparison.
+
+## Normalization
+
+- Application window: configured `1440 × 900` CSS px; full CUA capture `1364 × 768` px for the closed-menu tree state.
+- Project-tree source: `472 × 1034` px at approximately 2× density, normalized to a `236` CSS-px sidebar.
+- Menu source: `1162 × 878` px Retina crop; menu measures approximately `182` CSS px wide.
+- Window-specific menu capture: `3104 × 1846` px including Retina window shadow; focused crops were normalized to a common 500 px height before side-by-side comparison.
+
+## Full-view and focused evidence
+
+- Full-view comparison confirms the same hierarchy: muted `项目` heading, 40 px project row, outline folder icon, text-only child conversations, 31 px child rhythm, and a full-row neutral selected state.
+- Focused menu comparison confirms the ellipsis menu opens across the sidebar boundary with a translucent white surface, 14 px radius, separated action groups, consistent outline icons, destructive red action, and no project-summary card.
+- The target contains only standard UI icons; the implementation uses the existing Phosphor outline family. No raster asset substitution was needed.
+
+## Findings and comparison history
+
+### Iteration 1
+
+- [P2] The inherited project-row rule reduced the intended 40 px project row and made project/current-thread labels too heavy.
+  - Fix: restored the 40 px row, regularized project and selected-child weights, removed child chat icons, and removed tree guide lines.
+  - Post-fix evidence: `qa/product-design-sidebar/comparison-project-tree-final.png`.
+- [P1] The first menu implementation was clipped at the sidebar scroll boundary.
+  - Fix: rendered the menu through a body portal with fixed coordinates derived from the ellipsis trigger; retained outside-click close, Escape close, focus restoration, and right-click positioning.
+  - Post-fix evidence: `qa/product-design-sidebar/implementation-menu-portal-final.png` and `qa/product-design-sidebar/comparison-menu-final.png`.
+
+## Final pass
+
+- Fonts and typography: passed. System SF/PingFang rendering, regular project/conversation weights, 14–15 px hierarchy, truncation, and row labels match the reference density.
+- Spacing and layout rhythm: passed. Project rows are 40 px with 11 px radii; child rows are 31 px with aligned 38 px text inset; menu dimensions and grouped spacing match the source language.
+- Colors and visual tokens: passed. Muted heading, neutral hover/selection fill, translucent menu surface, hairline separators, and destructive red action align with the supplied screenshots.
+- Image quality and asset fidelity: passed. Both target and implementation use code-native standard outline icons; there are no custom image assets or handcrafted SVG/CSS substitutes.
+- Copy and content: passed with intentional capability-bound differences. The menu includes only implemented Rux actions (`新建会话`, open directory, copy path, remove project) rather than presenting unsupported pin/section/archive/worktree controls.
+- Interaction and accessibility: passed. Project row toggles only expansion; it does not open the rejected summary popover. Ellipsis opens the action menu, pencil opens the existing draft-preview flow, Escape restores trigger focus, and keyboard traversal reaches both project actions.
+
+## Primary interactions tested
+
+1. Focus the project ellipsis by keyboard and open the portal menu.
+2. Verify all four real menu actions and separators are exposed to accessibility APIs.
+3. Close with Escape and confirm focus returns to the project action trigger.
+4. Activate the project row and confirm it collapses/expands without showing a project-summary popover.
+5. Re-expand the project and preserve the active conversation.
+
+## Follow-up polish
+
+- [P3] The reference menu overlaps the project row by a few more pixels; the implementation starts just below the trigger to reduce accidental pointer overlap.
+- [P3] Live system-font antialiasing remains slightly crisper than the downsampled Retina reference.
+
+final result: passed
+
+---
+
 # Workspace Panels Design QA — 2026-08-25
 
 ## Comparison target

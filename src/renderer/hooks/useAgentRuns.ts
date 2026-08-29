@@ -41,9 +41,11 @@ export function useAgentRuns(input: Input) {
     const agent = input.agents.find((item) => item.id === input.selectedAgent); if (!agent?.integrated) { input.notify(`${agent?.name || input.selectedAgent} 适配器尚未启用`); return; }
     let targetThread = input.activeThread;
     if (targetThread.draft) {
-      if (targetThread.type !== "project" || !targetThread.projectId) return;
       try {
-        const persisted = await input.api.projects.addThread({ projectId: targetThread.projectId, title: targetThread.title }) as ThreadRecord;
+        const persisted = targetThread.type === "project"
+          ? targetThread.projectId ? await input.api.projects.addThread({ projectId: targetThread.projectId, title: targetThread.title }) as ThreadRecord : null
+          : await input.api.projects.addStandalone({ title: targetThread.title }) as ThreadRecord;
+        if (!persisted) return;
         targetThread = { ...targetThread, ...persisted, draft: false };
         await input.reloadWorkspace();
         input.setActiveThread(targetThread);

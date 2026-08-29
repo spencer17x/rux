@@ -33,10 +33,11 @@ export function useWorkspaceController(api: RuxApi, notify: (message: string) =>
     selectProjectThread(project, thread);
     return thread;
   }, [selectProjectThread]);
-  const newStandalone = useCallback(async () => {
-    try { const thread = await api.projects.addStandalone({ title: "未命名会话" }) as ThreadRecord; await reloadWorkspace(); selectStandalone(thread); return thread; }
-    catch (error) { notify(error instanceof Error ? error.message : String(error)); return null; }
-  }, [api, notify, reloadWorkspace, selectStandalone]);
+  const newStandalone = useCallback(() => {
+    const thread: ThreadRecord = { id: `draft:${crypto.randomUUID()}`, title: "未命名会话", draft: true };
+    selectStandalone(thread);
+    return thread;
+  }, [selectStandalone]);
   const initializeWorkspace = useCallback(async (nextWorkspace: WorkspaceState, parent: string) => {
     setWorkspace(nextWorkspace); setDefaultParent(parent);
     const firstProject = nextWorkspace.projects[0]; const firstThread = firstProject?.threads[0];

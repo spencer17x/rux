@@ -176,9 +176,7 @@ function App() {
         if (activeProject) {
           newProjectThread(activeProject);
         } else {
-          const thread = await api.projects.addStandalone({ title: `未命名 ${agent.name} 会话` });
-          await reloadWorkspace();
-          selectStandalone({ ...thread, agentId });
+          newStandalone();
         }
       }
       setSelectedAgent(agentId);
