@@ -9,7 +9,7 @@ type SideMessage = { id: string; role: "user" | "assistant"; text: string };
 const projectOnlyTools = new Set<WorkspaceToolId>(["review", "terminal", "browser", "files"]);
 
 export function useWorkspaceTools(api: RuxApi, projectId: string | undefined, settings: AppSettings, refreshGit: (projectId?: string) => Promise<void>, notify: (message: string) => void) {
-  const [bottomPanelOpen, setBottomPanelOpen] = useState(false); const [rightPanelOpen, setRightPanelOpen] = useState(true); const [activeTool, setActiveTool] = useState<WorkspaceToolId>("terminal");
+  const [bottomPanelOpen, setBottomPanelOpen] = useState(false); const [rightPanelOpen, setRightPanelOpen] = useState(false); const [activeTool, setActiveTool] = useState<WorkspaceToolId>("terminal");
   const [projectFiles, setProjectFiles] = useState<string[]>([]); const [remoteUrl, setRemoteUrl] = useState(""); const [sideMessages, setSideMessages] = useState<SideMessage[]>([]); const [sideValue, setSideValue] = useState(""); const [sideSending, setSideSending] = useState(false); const [sideThreadId, setSideThreadId] = useState("");
   const terminal = useTerminalController(api, projectId, () => { void refreshGit(); }, notify);
   useEffect(() => { if (projectId) { api.files.list(projectId).then((files) => setProjectFiles(files as string[])).catch(() => setProjectFiles([])); api.git.remote(projectId).then((url) => setRemoteUrl(String(url))).catch(() => setRemoteUrl("")); } else { setProjectFiles([]); setRemoteUrl(""); } setSideMessages([]); setSideThreadId(""); setSideValue(""); }, [api, projectId]);

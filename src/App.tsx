@@ -11,7 +11,7 @@ import { messageExportText } from "./renderer/messages";
 import TypedSidebar from "./navigation/Sidebar";
 import TypedTopBar from "./navigation/TopBar";
 import TypedReviewScreen from "./workspace/ReviewScreen";
-import TypedToolLauncher from "./workspace/ToolLauncher";
+import EnvironmentPanel from "./workspace/EnvironmentPanel";
 import ConversationScreen from "./conversation/ConversationScreen";
 import RenameThreadModal from "./conversation/RenameThreadModal";
 import AddProjectModal from "./projects/AddProjectModal";
@@ -37,6 +37,7 @@ function errorMessage(error: unknown): string { return userFacingError(error); }
 function App() {
   const [selectedAgent, setSelectedAgent] = useState<AgentId>("codex");
   const [agentMode, setAgentMode] = useState("default");
+  const [leftPanelOpen, setLeftPanelOpen] = useState(false);
   const [workspaceReady, setWorkspaceReady] = useState(false);
   const { toast, notify } = useToast();
   const [messages, setMessages] = usePersistentMessages(api, workspaceReady, notify);
@@ -58,6 +59,7 @@ function App() {
   );
 
   const activeMessages = activeThread ? messages[activeThread.id] || [] : [];
+  const environmentSources = [...new Set([...activeMessages.flatMap((message) => Array.isArray(message.attachments) ? message.attachments.map(String) : []), ...attachments])];
   const isStandalone = activeThread?.type === "standalone";
   const activeProject = activeThread?.type === "project" ? workspace.projects.find((project) => project.id === activeThread.projectId) ?? null : null;
   const { settings, setSettings, auth, setAuth, models, modelsByAgent, agents, agentPreferences, setAgentPreferences, providerStore, runtimeProgress, systemInfo, modelsLoading, modelsError, codexModelsLoading, codexModelsError, fatalError, saveSettings, testSettings, saveProvider, removeProvider, setActiveProvider } = useAppBootstrap(api, selectedAgent, activeProject?.id, workspaceReady, setWorkspaceReady, initializeWorkspace, setMessages);
@@ -75,6 +77,7 @@ function App() {
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.metaKey && event.key === ",") { event.preventDefault(); setView("settings"); }
+      if (event.metaKey && event.key.toLowerCase() === "b") { event.preventDefault(); setLeftPanelOpen((open) => !open); }
       if (event.metaKey && event.key.toLowerCase() === "n") { event.preventDefault(); newStandalone(); }
       if (event.ctrlKey && event.key === "`") { event.preventDefault(); selectWorkspaceTool("terminal"); }
       if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "g") { event.preventDefault(); openReview(); }
@@ -213,13 +216,13 @@ function App() {
   };
   return (
     <div className="app-frame">
-      <TypedSidebar workspace={workspace} auth={auth} expandedProjects={expandedProjects} activeThread={activeThread} onToggleProject={(projectId) => setExpandedProjects((current) => current.includes(projectId) ? current.filter((id) => id !== projectId) : [...current, projectId])} onSelectProjectThread={selectProjectThread} onSelectStandalone={selectStandalone} onAddProject={(trigger) => { addProjectTrigger.current = trigger; setModalStep("choose"); }} onRemoveProject={(project) => { void removeProject(project, isProjectRunning(project.id)); }} onOpenProjectPath={(project) => api.system.openPath(project.id).catch((error) => notify(errorMessage(error)))} onCopyProjectPath={(project) => api.system.copy(project.path).then(() => notify("项目路径已复制"))} onNewProjectThread={newProjectThread} onNewStandalone={newStandalone} onRenameThread={(thread) => { void renameThread(thread); }} onDeleteThread={(thread) => { void removeThread(thread, isThreadRunning(thread.id)); }} onOpenSettings={() => setView("settings")} />
+      {leftPanelOpen && <TypedSidebar workspace={workspace} auth={auth} expandedProjects={expandedProjects} activeThread={activeThread} onToggleProject={(projectId) => setExpandedProjects((current) => current.includes(projectId) ? current.filter((id) => id !== projectId) : [...current, projectId])} onSelectProjectThread={selectProjectThread} onSelectStandalone={selectStandalone} onAddProject={(trigger) => { addProjectTrigger.current = trigger; setModalStep("choose"); }} onRemoveProject={(project) => { void removeProject(project, isProjectRunning(project.id)); }} onOpenProjectPath={(project) => api.system.openPath(project.id).catch((error) => notify(errorMessage(error)))} onCopyProjectPath={(project) => api.system.copy(project.path).then(() => notify("项目路径已复制"))} onNewProjectThread={newProjectThread} onNewStandalone={newStandalone} onRenameThread={(thread) => { void renameThread(thread); }} onDeleteThread={(thread) => { void removeThread(thread, isThreadRunning(thread.id)); }} onOpenSettings={() => setView("settings")} />}
       <main className="app-stage">
-        <TypedTopBar activeThread={activeThread} bottomPanelOpen={bottomPanelOpen} rightPanelOpen={rightPanelOpen} onToggleBottomPanel={toggleBottomPanel} onToggleRightPanel={() => setRightPanelOpen((open) => !open)} onOpenSettings={() => setView("settings")} onOpenPath={() => activeProject && api.system.openPath(activeProject.id).catch((error) => notify(errorMessage(error)))} onCopyPath={() => activeProject && api.system.copy(activeProject.path).then(() => notify("项目路径已复制"))} onShare={copyConversation} onRename={renameActiveThread} onRemoveThread={() => { void removeWorkspaceThread(sending); }} />
+        <TypedTopBar activeThread={activeThread} leftPanelOpen={leftPanelOpen} bottomPanelOpen={bottomPanelOpen} rightPanelOpen={rightPanelOpen} onToggleLeftPanel={() => setLeftPanelOpen((open) => !open)} onToggleBottomPanel={toggleBottomPanel} onToggleRightPanel={() => setRightPanelOpen((open) => !open)} onOpenSettings={() => setView("settings")} onOpenPath={() => activeProject && api.system.openPath(activeProject.id).catch((error) => notify(errorMessage(error)))} onCopyPath={() => activeProject && api.system.copy(activeProject.path).then(() => notify("项目路径已复制"))} onShare={copyConversation} onRename={renameActiveThread} onRemoveThread={() => { void removeWorkspaceThread(sending); }} />
         <div className={`stage-body ${bottomPanelOpen ? "bottom-panel-is-open" : ""}`}>
           <div className="work-pane">
             <div className="main-content">{view === "review" ? <TypedReviewScreen gitState={gitState} branches={branches} selectedFile={selectedFile} diff={diff} onSelectFile={selectDiff} onBack={() => setView("project")} onSwitchBranch={switchBranch} onCommitPush={commitOrPush} onStageAll={() => stage(gitState.files.map((file) => file.path))} onStageFile={() => stage([selectedFile])} onDiscard={discardSelected} busy={busy} /> : <ConversationScreen standalone={isStandalone} activeThread={activeThread} assistantProps={assistantProps} gitState={gitState} onReview={openReview} />}</div>
-            {rightPanelOpen && <TypedToolLauncher activeTool={bottomPanelOpen ? activeTool : ""} hasProject={Boolean(activeProject)} onSelectTool={selectWorkspaceTool} />}
+            {rightPanelOpen && <EnvironmentPanel hasProject={Boolean(activeProject)} gitState={gitState} branches={branches} sources={environmentSources} busy={busy} onOpenReview={openReview} onOpenPath={() => activeProject && api.system.openPath(activeProject.id).catch((error) => notify(errorMessage(error)))} onSwitchBranch={switchBranch} onCommitPush={commitOrPush} onAddSource={addFiles} />}
           </div>
           {bottomPanelOpen && <Suspense fallback={<div className="workspace-dock"><div className="runtime-inline-progress"><CircleNotch size={13} className="spin" /><span>正在加载工作区工具…</span></div></div>}><TypedWorkspaceDock activeTool={activeTool} hasProject={Boolean(activeProject)} gitState={gitState} terminalProps={{ starting: terminalStarting, output: terminalOutput, onInput: writeTerminalInput, onResize: resizeTerminal }} remoteUrl={remoteUrl} projectFiles={projectFiles} sideMessages={sideMessages} sideValue={sideValue} sideSending={sideSending} onSelectTool={selectWorkspaceTool} onClose={closeBottomPanel} onOpenReview={() => { setView("review"); setBottomPanelOpen(false); }} onOpenRemote={openRemote} onOpenFile={(path) => activeProject && api.files.open({ projectId: activeProject.id, path }).catch((error) => notify(errorMessage(error)))} onSideValue={setSideValue} onSendSide={sendSideChat} /></Suspense>}
         </div>

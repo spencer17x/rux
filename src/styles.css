@@ -653,6 +653,11 @@ textarea:focus-visible {
 
 .panel-toggle-button:hover svg { transform: scale(1.04); }
 
+.panel-layout-right { transform: scaleX(-1); }
+.panel-layout-bottom { transform: rotate(-90deg); }
+.panel-toggle-button:hover .panel-layout-right { transform: scaleX(-1) scale(1.04); }
+.panel-toggle-button:hover .panel-layout-bottom { transform: rotate(-90deg) scale(1.04); }
+
 .toolbar-button,
 .secondary-button,
 .primary-button,
@@ -1584,6 +1589,78 @@ button.environment-row:hover {
 
 .environment-row.is-disabled {
   color: #aaa;
+}
+
+.environment-row:disabled {
+  cursor: default;
+}
+
+.environment-divider {
+  height: 1px;
+  margin: 7px 7px 8px;
+  background: var(--border);
+}
+
+.environment-sources-heading {
+  padding-top: 1px;
+}
+
+.environment-sources {
+  display: grid;
+  gap: 2px;
+}
+
+.environment-source,
+.environment-source-empty {
+  display: grid;
+  min-width: 0;
+  min-height: 36px;
+  grid-template-columns: 28px minmax(0, 1fr);
+  align-items: center;
+  gap: 5px;
+  padding: 0 7px;
+  color: #6f6f6b;
+}
+
+.environment-source > span:last-child,
+.environment-source-empty > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.source-file-icon {
+  display: grid;
+  width: 25px;
+  height: 25px;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: #555552;
+  background: #fafaf9;
+}
+
+.environment-source-empty {
+  color: #aaa;
+}
+
+.environment-show-all {
+  display: flex;
+  min-height: 35px;
+  align-items: center;
+  gap: 9px;
+  margin: 2px 0 0;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 8px;
+  color: #999995;
+  background: transparent;
+  text-align: left;
+}
+
+.environment-show-all:hover {
+  color: var(--text);
+  background: var(--surface-muted);
 }
 
 .environment-menu-wrap { display: block; }

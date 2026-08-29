@@ -8,12 +8,13 @@ import ReviewScreen from "../workspace/ReviewScreen";
 import ToolLauncher from "../workspace/ToolLauncher";
 import { ModelPopover, PermissionPopover } from "../composer/ComposerControls";
 import WorkspaceDock from "../workspace/WorkspaceDock";
+import EnvironmentPanel from "../workspace/EnvironmentPanel";
 
 describe("typed renderer components", () => {
   it("renders project context in the top bar", () => {
-    const html = renderToStaticMarkup(<TopBar activeThread={{ id: "thread", title: "Task", type: "project", projectName: "Rux" }} bottomPanelOpen={false} rightPanelOpen onToggleBottomPanel={() => {}} onToggleRightPanel={() => {}} onOpenSettings={() => {}} onOpenPath={() => {}} onCopyPath={() => {}} onShare={() => {}} onRename={() => {}} onRemoveThread={() => {}} />);
+    const html = renderToStaticMarkup(<TopBar activeThread={{ id: "thread", title: "Task", type: "project", projectName: "Rux" }} leftPanelOpen={false} bottomPanelOpen={false} rightPanelOpen onToggleLeftPanel={() => {}} onToggleBottomPanel={() => {}} onToggleRightPanel={() => {}} onOpenSettings={() => {}} onOpenPath={() => {}} onCopyPath={() => {}} onShare={() => {}} onRename={() => {}} onRemoveThread={() => {}} />);
     expect(html).toContain("Rux"); expect(html).toContain("Task");
-    expect(html).toContain('data-panel-icon="bottom"'); expect(html).toContain('data-panel-icon="right"');
+    expect(html).toContain('aria-label="切换左侧面板"'); expect(html).toContain('aria-label="切换底部面板"'); expect(html).toContain('aria-label="切换环境信息"');
   });
 
   it("exposes conversation action menus for standalone and project conversations", () => {
@@ -26,6 +27,11 @@ describe("typed renderer components", () => {
   it("keeps project-only tools disabled without a project", () => {
     const html = renderToStaticMarkup(<ToolLauncher activeTool="" hasProject={false} onSelectTool={() => {}} />);
     expect(html).toContain('disabled=""'); expect(html).toContain("终端");
+  });
+
+  it("renders real environment information and sources", () => {
+    const html = renderToStaticMarkup(<EnvironmentPanel hasProject gitState={{ branch: "main", files: [{ path: "src/a.ts", status: "M", plus: 4, minus: 2, untracked: false, staged: false, unstaged: true }] }} branches={["main", "feature"]} sources={["/tmp/design.png"]} busy={false} onOpenReview={() => {}} onOpenPath={() => {}} onSwitchBranch={() => {}} onCommitPush={() => {}} onAddSource={() => {}} />);
+    expect(html).toContain("环境信息"); expect(html).toContain("+4"); expect(html).toContain("−2"); expect(html).toContain("design.png");
   });
 
   it("shows staged and unstaged Git state", () => {

@@ -11,7 +11,8 @@ export function registerGitIpc(ipc: IpcRegistrar, service: GitService): void {
   ipc.handle("git:branches", async (_event, value) => await service.branches(parseInput(projectIdSchema, value)));
   ipc.handle("git:switch", async (_event, value) => { const input = parseInput(gitSwitchSchema, value); return await service.switchBranch(input.projectId, input.branch); });
   ipc.handle("git:remote", async (_event, value) => await service.remote(parseInput(projectIdSchema, value)));
-  ipc.handle("git:commit-push", async (_event, value) => { const input = parseInput(gitCommitSchema, value); return await service.commitPush(input.projectId, input.message.trim(), input.push); });
+  ipc.handle("git:instructions", async (_event, value) => await service.instructions(parseInput(projectIdSchema, value)));
+  ipc.handle("git:commit-push", async (_event, value) => { const input = parseInput(gitCommitSchema, value); return await service.commitPush(input.projectId, input.message.trim(), input.push, input.rulesAcknowledged === true); });
   ipc.handle("git:stage", async (_event, value) => { const input = parseInput(gitStageSchema, value); return await service.stage(input.projectId, input.paths); });
   ipc.handle("git:discard", async (_event, value) => { const input = parseInput(projectFileSchema, value); return await service.discard(input.projectId, input.path); });
 }

@@ -28,10 +28,17 @@ test.afterEach(async () => {
 });
 
 test("creates the initial standalone conversation and opens typed settings", async () => {
+  await expect(page.locator("aside.sidebar")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "切换左侧面板" })).toHaveAttribute("aria-pressed", "false");
+  await expect(page.getByRole("button", { name: "切换底部面板" })).toHaveAttribute("aria-pressed", "false");
+  await expect(page.getByRole("button", { name: "切换环境信息" })).toHaveAttribute("aria-pressed", "false");
+  await page.getByRole("button", { name: "切换左侧面板" }).click();
   await expect(page.getByText("独立会话", { exact: true }).first()).toBeVisible();
   await page.getByRole("textbox", { name: "消息" }).fill("Create standalone draft");
   await page.getByRole("button", { name: "发送" }).click();
-  await expect(page.getByText("RUX_E2E_AGENT_OK", { exact: true })).toBeVisible();
+  await expect(page.getByText("RUX_E2E_AGENT_OK", { exact: true }).last()).toBeVisible();
+  await page.getByRole("button", { name: "复制会话内容" }).click();
+  await expect(page.getByRole("status")).toContainText("会话内容已复制");
   await page.getByRole("button", { name: /会话操作 未命名会话/ }).click();
   await page.getByRole("menuitem", { name: "重命名会话" }).click();
   await expect(page.getByRole("dialog", { name: "重命名会话" })).toBeVisible();
@@ -67,13 +74,14 @@ test("creates the initial standalone conversation and opens typed settings", asy
   await expect(page.getByRole("button", { name: "选择 Agent", exact: true })).toBeFocused();
   await page.getByRole("textbox", { name: "消息" }).fill("E2E main turn");
   await page.getByRole("button", { name: "发送" }).click();
-  await expect(page.getByText("RUX_E2E_AGENT_OK", { exact: true })).toBeVisible();
+  await expect(page.getByText("RUX_E2E_AGENT_OK", { exact: true }).last()).toBeVisible();
 });
 
 test("deletes a conversation from the sidebar action menu", async () => {
   await page.getByRole("textbox", { name: "消息" }).fill("Create deletable standalone");
   await page.getByRole("button", { name: "发送" }).click();
   await expect(page.getByText("RUX_E2E_AGENT_OK", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "切换左侧面板" }).click();
   await page.getByRole("button", { name: /会话操作 未命名会话/ }).last().click();
   await page.getByRole("menuitem", { name: "重命名会话" }).click();
   await page.getByRole("textbox", { name: "会话名称" }).fill("Delete me");
@@ -97,18 +105,30 @@ test("restores a SQLite project and executes a command through the PTY terminal"
   await application.close();
   await launchApplication();
   await expect(page.getByText("project", { exact: true }).first()).toBeVisible();
+  await expect(page.getByRole("button", { name: "切换环境信息" })).toHaveAttribute("aria-pressed", "false");
+  await page.getByRole("button", { name: "打开位置" }).click();
+  await expect(page.getByRole("button", { name: "复制项目路径" })).toBeVisible();
+  await page.getByRole("button", { name: "复制项目路径" }).click();
+  await expect(page.getByRole("status")).toContainText("项目路径已复制");
+  await page.getByRole("button", { name: "切换环境信息" }).click();
+  await expect(page.getByRole("complementary", { name: "环境信息" })).toBeVisible();
+  await expect(page.getByRole("button", { name: /变更/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: "提交或推送" })).toBeVisible();
+  await expect(page.getByRole("button", { name: /比较分支/ })).toBeVisible();
+  await page.getByRole("button", { name: "切换左侧面板" }).click();
   const projectMenuTrigger = page.getByRole("button", { name: "项目操作 project" });
   await projectMenuTrigger.click();
   await expect(page.getByRole("menu")).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("menu")).toBeHidden();
   await expect(projectMenuTrigger).toBeFocused();
-  await page.getByRole("button", { name: "侧边聊天" }).first().click();
+  await page.getByRole("button", { name: "切换底部面板" }).click();
+  await page.getByRole("tab", { name: "侧边聊天" }).click();
   await page.getByRole("textbox", { name: "侧边聊天消息" }).fill("E2E side turn");
   await page.getByRole("button", { name: "发送侧边聊天消息" }).click();
   await expect(page.getByText("Rux 正在回复", { exact: true })).toBeVisible();
   await expect(page.getByText("RUX_E2E_SIDE_OK", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: /终端/ }).first().click();
+  await page.getByRole("tab", { name: "终端" }).click();
   const terminalInput = page.locator(".xterm-helper-textarea");
   await terminalInput.focus();
   await terminalInput.pressSequentially("printf RUX_E2E_TERMINAL", { delay: 50 });

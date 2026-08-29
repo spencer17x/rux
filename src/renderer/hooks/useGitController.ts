@@ -54,10 +54,20 @@ export function useGitController(api: RuxApi, projectId: string | undefined, not
   }, [api, notify, projectId, selectDiff, selectedFile, setView]);
   const commitOrPush = useCallback(async () => {
     if (!projectId) return;
+    let rulesAcknowledged = false;
+    try {
+      const guidance = await api.git.instructions(projectId) as { files: Array<{ path: string; content: string }>; stagedPaths: string[] };
+      if (guidance.files.length) {
+        const summary = guidance.files.map((file) => `【${file.path}】\n${file.content.trim()}`).join("\n\n").slice(0, 6000);
+        const staged = guidance.stagedPaths.length ? `\n\n适用的已暂存文件：\n${guidance.stagedPaths.map((path) => `• ${path}`).join("\n")}` : "";
+        if (!window.confirm(`提交前请阅读并遵循以下项目规则：\n\n${summary}${staged}\n\n确认当前已暂存内容、提交信息和推送操作均符合这些规则？`)) return;
+        rulesAcknowledged = true;
+      }
+    } catch (error) { notify(error instanceof Error ? error.message : String(error)); return; }
     const message = window.prompt("输入提交信息；留空则仅推送当前分支", ""); if (message === null) return;
     const push = window.confirm(message.trim() ? "提交完成后是否推送到 origin？" : "确认推送当前分支到 origin？"); if (!message.trim() && !push) return;
     setBusy(true);
-    try { setGitState(await api.git.commitPush({ projectId, message, push }) as GitState); notify(push ? "Git 提交/推送已完成" : "Git 提交已完成"); }
+    try { setGitState(await api.git.commitPush({ projectId, message, push, rulesAcknowledged }) as GitState); notify(push ? "Git 提交/推送已完成" : "Git 提交已完成"); }
     catch (error) { notify(error instanceof Error ? error.message : String(error)); }
     finally { setBusy(false); }
   }, [api, notify, projectId]);

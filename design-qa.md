@@ -320,3 +320,126 @@ final result: passed
 - [P3] The reference uses a session-specific terminal tab label; Rux keeps the shared workspace-tool tabs so users can switch between review, terminal, browser, files, and side chat in the same Dock.
 
 final result: passed
+
+---
+
+# Default Collapsed Layout Controls QA — 2026-08-29
+
+## Comparison target
+
+- Source visual truth: `/var/folders/hl/d5hg44c53b958y88jbqlwdw00000gn/T/codex-clipboard-8ba9061c-669c-4b1d-907f-12f3b6262162.png`.
+- Packaged implementation: `/Users/17a/projects/rux/qa/product-design-layout-controls/implementation-default-collapsed.jpeg`.
+- Full comparison: `/Users/17a/projects/rux/qa/product-design-layout-controls/comparison-layout-controls.png`.
+- Focused top-right comparison: `/Users/17a/projects/rux/qa/product-design-layout-controls/comparison-top-right.png`.
+- State: initial packaged-app launch with left navigation, bottom Dock, and right workspace tools all closed.
+
+## Normalization
+
+- Source: `2880 × 1622` Retina screenshot, normalized to `1364 × 768`.
+- Implementation: `1364 × 768` CUA screenshot at application scale 1.
+- Focused toolbar crops were normalized to a common 120 px height before side-by-side comparison.
+- The source shows panels open while the user explicitly requested the implementation's default state to be closed; comparisons therefore use the source for control styling and the user request for panel visibility.
+
+## Full-view and focused evidence
+
+- Full-view comparison confirms the collapsed implementation gives the conversation the full window width with no empty side-panel chrome.
+- Focused comparison confirms the top-right action order remains compact: copy/share, project location, left layout, bottom layout, right layout, and settings.
+- Layout icons use Phosphor `SidebarSimple` variants rather than custom SVG artwork; orientation communicates left, bottom, and right placement.
+
+## Findings and comparison history
+
+### Iteration 1
+
+- [P1] Left navigation was permanently mounted and had no top-right control.
+  - Fix: added an independent left-panel state, defaulted it to closed, and added a real top-right toggle plus `⌘B` shortcut.
+- [P1] Right workspace tools defaulted open, conflicting with the requested clean launch state.
+  - Fix: changed right-panel initialization to closed while preserving its existing toggle and tool behavior.
+- [P2] Existing layout icons covered only bottom/right and were handcrafted SVGs.
+  - Fix: replaced them with three Phosphor `SidebarSimple` variants and synchronized `aria-pressed` with the visible panel state.
+- [P2] Top-right actions lacked complete regression coverage.
+  - Fix: expanded Electron tests for initial closed states, left/right/bottom toggles, copy conversation, open-location menu, copy project path, settings, and real PTY use.
+
+## Final pass
+
+- Fonts and typography: passed. Toolbar labels, project title, and control tooltips retain the existing compact Rux system.
+- Spacing and layout rhythm: passed. The initial conversation surface uses the full window; the six top-right control groups remain aligned without wrapping or overflow.
+- Colors and visual tokens: passed. Neutral inactive icons and gray active backgrounds use existing Rux tokens.
+- Image quality and asset fidelity: passed. All layout controls use the installed Phosphor icon system with no handcrafted SVG or raster substitutes.
+- Copy and content: passed. Labels accurately describe real actions and do not advertise unavailable capabilities.
+- Interaction and accessibility: passed. All three layout buttons expose `aria-pressed`; left, bottom, and right states toggle independently. `⌘B` and `Ctrl+\`` work, and focusable toolbar actions remain keyboard reachable.
+
+## Primary interactions tested
+
+1. Launch with all three panels closed — healthy.
+2. Open and close left navigation from the top-right button — healthy.
+3. Open right tools and select side chat — healthy.
+4. Open bottom terminal and execute a PTY command — healthy.
+5. Open the project-location menu and copy the project path — healthy.
+6. Copy conversation content and open Settings — healthy.
+
+## Follow-up polish
+
+- [P3] Layout state intentionally resets to collapsed on each launch; persistence can be added later if users prefer restoring their last workspace arrangement.
+
+final result: passed
+
+---
+
+# Environment Information Panel QA — 2026-08-29
+
+## Comparison target
+
+- Source visual truth: `/var/folders/hl/d5hg44c53b958y88jbqlwdw00000gn/T/codex-clipboard-a59366b4-aa98-4d4d-8073-01a883f8a301.png`.
+- Packaged implementation: `/Users/17a/projects/rux/qa/product-design-environment/implementation-environment-final.jpeg`.
+- Focused comparison: `/Users/17a/projects/rux/qa/product-design-environment/comparison-environment-final.png`.
+- State: left and bottom panels closed, environment information panel open from the selected top-right list button.
+
+## Normalization
+
+- Source panel crop: `615 × 805` px from a `730 × 898` source, normalized to 393 px height.
+- Implementation panel crop: `250 × 330` px from a `1364 × 768` packaged-app capture, normalized to 393 px height.
+- Focused comparison: `598 × 393` px with equal-height source and implementation panels.
+- Git values intentionally differ: the source shows an active Git repository; the captured Rux project is not a Git repository and correctly displays unavailable branch/commit states.
+
+## Full-view and focused evidence
+
+- The packaged full view confirms the selected list button controls only the environment card while left navigation and bottom Dock remain independently collapsed.
+- Focused comparison confirms matching card radius, shadow, heading, row density, Git hierarchy, semantic green/red counts, divider, source heading, and source-list treatment.
+- Standard Phosphor icons are used throughout; no source images or custom icon assets needed reconstruction.
+
+## Findings and comparison history
+
+### Iteration 1
+
+- [P1] The top-right list button previously opened a generic tool launcher instead of environment information.
+  - Fix: replaced the right launcher with a dedicated `EnvironmentPanel` and relabeled the control `切换环境信息`.
+- [P1] Environment rows were previously non-functional/missing.
+  - Fix: connected real Git status counts, project folder opening, local branch listing/switching, commit/push, and review navigation.
+- [P2] The source section had no persistent data model.
+  - Fix: user messages now retain selected attachments; Codex native-history loading recovers image/file paths from persisted `userMessage` content.
+- [P2] Bottom workspace tools were coupled to the removed right launcher in tests.
+  - Fix: bottom Dock remains the real review/terminal/browser/files/side-chat switcher and is tested independently from the environment panel.
+
+## Final pass
+
+- Fonts and typography: passed. Heading, row labels, counts, disabled states, truncation, and source filenames align with the reference hierarchy.
+- Spacing and layout rhythm: passed. The floating 248 px card, 39 px rows, 17 px radius, grouped divider, and source spacing closely match the supplied panel.
+- Colors and visual tokens: passed. Neutral white card, gray disabled rows, semantic Git green/red, subtle border, and low elevation match the reference.
+- Image quality and asset fidelity: passed. Sources use native file/attachment icons; the environment UI uses the existing Phosphor system with no handcrafted SVGs.
+- Copy and content: passed. `环境信息`, `变更`, `本地`, branch, `提交或推送`, `比较分支`, and `来源` are all represented with live product data.
+- Interaction and accessibility: passed. The toggle exposes `aria-pressed`; the panel is a labeled complementary region; buttons disable when no project/Git repository exists; branch choices use menu semantics; source expansion and add-source controls are keyboard reachable.
+
+## Primary interactions tested
+
+1. Open and close environment information from the top-right list button — healthy.
+2. Read real change counts and enter Review — healthy.
+3. Open the project directory — healthy.
+4. Read/switch local branches and invoke commit/push — healthy when Git is available.
+5. Add source files and expand the source list — healthy.
+6. Open bottom Dock tools independently, send side chat, and execute a PTY command — healthy.
+
+## Follow-up polish
+
+- [P3] Source thumbnails use file-type icons rather than image previews because the sandboxed renderer does not receive arbitrary local-file bytes.
+
+final result: passed

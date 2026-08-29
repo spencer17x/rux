@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -34,5 +34,19 @@ describe("GitService", () => {
 
   it("rejects project path traversal", async () => {
     await expect(service.canonicalFile("project", "../outside.txt")).rejects.toThrow("文件路径越界");
+  });
+
+  it("discovers scoped project rules and requires acknowledgement before commit", async () => {
+    writeFileSync(join(root, "AGENTS.md"), "Use conventional commit messages.\n");
+    mkdirSync(join(root, "src"));
+    writeFileSync(join(root, "src", "AGENTS.md"), "Run tests for files under src.\n");
+    writeFileSync(join(root, "src", "feature.ts"), "export const feature = true;\n");
+    await execute("git", ["add", "src/feature.ts"], { cwd: root, encoding: "utf8" });
+    const guidance = await service.instructions("project");
+    expect(guidance.files.map((file) => file.path)).toEqual(expect.arrayContaining(["AGENTS.md", "src/AGENTS.md"]));
+    expect(guidance.stagedPaths).toContain("src/feature.ts");
+    await expect(service.commitPush("project", "feat: add feature", false)).rejects.toThrow("必须阅读并确认");
+    await service.commitPush("project", "feat: add feature", false, true);
+    expect((await execute("git", ["log", "-1", "--pretty=%s"], { cwd: root, encoding: "utf8" })).stdout.trim()).toBe("feat: add feature");
   });
 });

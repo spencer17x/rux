@@ -4,7 +4,7 @@ import type { PiRuntimeClient } from "./agents/pi-runtime";
 import type { StoredThread, StoredWorkspace } from "./state-database";
 
 type RuxPart = Record<string, any> & { type: string };
-type RuxMessage = { id: string; role: "user" | "assistant"; parts: RuxPart[]; text?: string; status?: string; agentId?: string };
+type RuxMessage = { id: string; role: "user" | "assistant"; parts: RuxPart[]; text?: string; attachments?: string[]; status?: string; agentId?: string };
 
 function nativeId(thread: StoredThread): string {
   return thread.nativeSessionId || thread.codexThreadId || "";
@@ -35,6 +35,14 @@ function contentText(content: unknown): string {
   return content.map((part: any) => typeof part === "string" ? part : part?.text || part?.content || "").filter(Boolean).join("\n");
 }
 
+function contentAttachments(content: unknown): string[] {
+  if (!Array.isArray(content)) return [];
+  return content.flatMap((part: any) => {
+    const value = part?.path || part?.url || part?.image_url;
+    return typeof value === "string" && value ? [value] : [];
+  });
+}
+
 function codexMessages(thread: Record<string, any>, agentId: string): RuxMessage[] {
   return (thread.turns || []).flatMap((turn: Record<string, any>, turnIndex: number) => {
     const items = Array.isArray(turn.items) ? turn.items : [];
@@ -43,7 +51,8 @@ function codexMessages(thread: Record<string, any>, agentId: string): RuxMessage
     const result: RuxMessage[] = [];
     if (userItems.length) {
       const text = userItems.map((item: any) => contentText(item.content)).filter(Boolean).join("\n\n");
-      result.push({ id: userItems[0]?.id || `${turn.id || turnIndex}:user`, role: "user", text, parts: [{ type: "text", text }], agentId });
+      const attachments = userItems.flatMap((item: any) => contentAttachments(item.content));
+      result.push({ id: userItems[0]?.id || `${turn.id || turnIndex}:user`, role: "user", text, parts: [{ type: "text", text }], ...(attachments.length ? { attachments } : {}), agentId });
     }
     if (assistantParts.length) result.push({ id: `${turn.id || turnIndex}:assistant`, role: "assistant", parts: assistantParts, status: turn.status === "failed" ? "error" : "complete", agentId });
     return result;

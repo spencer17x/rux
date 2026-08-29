@@ -75,6 +75,7 @@ const api = {
     branches: (projectId: string) => ipcRenderer.invoke("git:branches", projectId),
     switchBranch: (input: unknown) => ipcRenderer.invoke("git:switch", input),
     remote: (projectId: string) => ipcRenderer.invoke("git:remote", projectId),
+    instructions: (projectId: string) => ipcRenderer.invoke("git:instructions", projectId),
     commitPush: (input: unknown) => ipcRenderer.invoke("git:commit-push", input),
     stage: (input: unknown) => ipcRenderer.invoke("git:stage", input),
     discard: (input: unknown) => ipcRenderer.invoke("git:discard", input),

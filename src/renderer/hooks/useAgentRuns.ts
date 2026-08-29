@@ -55,7 +55,7 @@ export function useAgentRuns(input: Input) {
       }
     }
     const runId = crypto.randomUUID();
-    const userMessage: RuxMessage = { id: crypto.randomUUID(), role: "user", text: prompt, parts: [{ type: "text", text: prompt }], createdAt: new Date().toISOString(), agentId: input.selectedAgent };
+    const userMessage: RuxMessage = { id: crypto.randomUUID(), role: "user", text: prompt, parts: [{ type: "text", text: prompt }], attachments: [...input.attachments], createdAt: new Date().toISOString(), agentId: input.selectedAgent };
     const assistantMessage: RuxMessage = { id: crypto.randomUUID(), role: "assistant", text: "", parts: [], status: "running", createdAt: new Date().toISOString(), agentId: input.selectedAgent };
     const nativeSessionId = targetThread.nativeSessionId || (input.selectedAgent === "codex" ? targetThread.codexThreadId : "") || "";
     const context: RunContext = { runId, localThreadId: targetThread.id, assistantMessageId: assistantMessage.id, type: targetThread.type, projectId: targetThread.projectId, prompt, shouldRename: targetThread.title.startsWith("未命名") || targetThread.title === "项目会话", agentId: input.selectedAgent, agentMode: input.agentMode, threadId: nativeSessionId, turnId: "" };
