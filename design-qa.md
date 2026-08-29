@@ -204,3 +204,119 @@ final result: passed
 - Interactions: passed; right panel and bottom Dock toggle independently; review, terminal, browser, files, and side chat were exercised. Side chat returned `SIDE_CHAT_OK` through the real Codex runtime.
 
 final result: passed
+
+---
+
+# Terminal Dock Visual QA — 2026-08-29
+
+## Comparison target
+
+- Source problem-state screenshot: `/var/folders/hl/d5hg44c53b958y88jbqlwdw00000gn/T/codex-clipboard-abaae7a8-ab18-423d-b078-50b66bcbece7.png`.
+- Packaged implementation: `/Users/17a/projects/rux/qa/product-design-terminal/implementation-terminal-final.jpeg`.
+- Side-by-side evidence: `/Users/17a/projects/rux/qa/product-design-terminal/comparison-terminal-before-after.png`.
+- State: packaged macOS client, light theme, project conversation, right tool launcher visible, terminal selected and bottom Dock expanded.
+
+## Normalization
+
+- Source: `2880 × 1622` Retina screenshot, normalized to `1364 × 768`.
+- Implementation: `1364 × 768` CUA screenshot from the packaged Rux window.
+- Both views use the same project, conversation, right-panel state, terminal selection, and approximate scroll position.
+
+## Full-view and focused evidence
+
+- Full-view evidence shows the earlier terminal as a full-bleed black rectangle with a hard white-to-black seam and excessive vertical weight.
+- The implementation keeps the terminal dark for code legibility but places it inside a 12 px rounded card on a light-gray tool tray, with 10 px outer breathing room and a reduced 232 px Dock height.
+- No focused crop was necessary because the full-width comparison clearly shows the relevant boundaries, tabs, black-area proportion, prompt contrast, and container transition.
+
+## Findings and comparison history
+
+### Iteration 1
+
+- [P1] Full-bleed terminal visually severed the conversation from the bottom workspace.
+  - Fix: inset the xterm surface in a bordered, rounded card with a restrained shadow and light tray background.
+  - Post-fix evidence: `qa/product-design-terminal/comparison-terminal-before-after.png`.
+- [P2] White tab strip and pure dark terminal formed an abrupt contrast edge.
+  - Fix: extended the neutral tray through the tab area and changed the active tab to a small white elevated control.
+- [P2] Terminal occupied too much vertical space relative to its sparse content.
+  - Fix: reduced terminal Dock basis from 260 px to 232 px and increased internal padding instead of empty black area.
+- [P2] Terminal palette and typography felt harsher than the surrounding product.
+  - Fix: moved to `#202327`, softened foreground/cursor/selection colors, and increased SF Mono size and line height slightly.
+
+## Final pass
+
+- Fonts and typography: passed. SF Mono remains appropriate; 12.5 px sizing, 1.3 line height, and subtle letter spacing improve scanability without changing terminal density materially.
+- Spacing and layout rhythm: passed. The terminal is visually contained, the light tray bridges the conversation and terminal, and the reduced height preserves more conversation context.
+- Colors and visual tokens: passed. Neutral tray, soft charcoal terminal, mint cursor, muted foreground, and low-elevation shadow fit the existing light Rux system.
+- Image quality and asset fidelity: passed. The surface contains no custom imagery; existing Phosphor icons and xterm rendering remain native and sharp.
+- Copy and content: passed. Tool labels and terminal content are unchanged.
+- Interaction and accessibility: passed. Terminal input, PTY output, resize handling, keyboard shortcut, close control, and accessible output mirror remain intact. The real Electron PTY command flow passed after the visual changes.
+
+## Primary interactions tested
+
+1. Expand the terminal through `Ctrl+\`` — healthy.
+2. Verify xterm mounts, fits, and exposes the terminal input — healthy.
+3. Execute a real PTY command and observe output — healthy.
+4. Preserve right-panel navigation and bottom-Dock close controls — healthy.
+
+## Follow-up polish
+
+- [P3] A future draggable height handle could give users manual control over Dock height; this was not added because resize behavior is not currently implemented end to end.
+
+final result: passed
+
+---
+
+# Light Terminal Theme QA — 2026-08-29
+
+## Comparison target
+
+- Source visual truth: `/var/folders/hl/d5hg44c53b958y88jbqlwdw00000gn/T/codex-clipboard-8fc58293-27d4-4c11-b4b4-fd74a6853b6d.png`.
+- Packaged implementation: `/Users/17a/projects/rux/qa/product-design-terminal-light/implementation-terminal-light-final.jpeg`.
+- Side-by-side comparison: `/Users/17a/projects/rux/qa/product-design-terminal-light/comparison-terminal-light-final.png`.
+- State: light desktop theme, project conversation, right environment/tool panel visible, terminal selected in the open bottom Dock.
+
+## Normalization
+
+- Source: `2880 × 1622` Retina screenshot, normalized to `1364 × 768`.
+- Implementation: `1364 × 768` CUA capture at application scale 1.
+- Comparison image: `2728 × 768`, source and implementation horizontally aligned at equal pixel dimensions.
+
+## Full-view and focused evidence
+
+- Full-view comparison confirms the terminal now participates in the same white canvas, hairline-border, neutral-selection, and gray-icon system as the sidebar, conversation, composer, and right panel.
+- The prompt remains the only strongly colored terminal element, matching the reference's use of blue/green/red ANSI semantics on a white background.
+- No separate focused crop was required because the terminal occupies the full lower region and its typography, boundary, selected tab, prompt colors, and background are clearly legible in the normalized full-view comparison.
+
+## Findings and comparison history
+
+### Iteration 1
+
+- [P1] The previous dark terminal card still violated the supplied all-light product theme.
+  - Fix: removed the dark background, inset card, radius, border, and shadow; restored one continuous white workspace surface.
+  - Post-fix evidence: `qa/product-design-terminal-light/comparison-terminal-light-final.png`.
+- [P2] The dark-card active tab and tray treatment did not match the reference's neutral toolbar.
+  - Fix: restored a white 42 px Dock header, hairline divider, and gray selected tab without elevation.
+- [P2] ANSI colors and cursor were tuned for a dark background.
+  - Fix: introduced a complete light ANSI palette, dark gray foreground, gray cursor, and pale blue selection while preserving semantic command colors.
+
+## Final pass
+
+- Fonts and typography: passed. SF Mono at 12.5 px with 1.3 line height matches the compact reference terminal and remains legible on white.
+- Spacing and layout rhythm: passed. The Dock is a continuous lower workspace with a 42 px header, 20 px terminal inset, and no competing container chrome.
+- Colors and visual tokens: passed. White surface, neutral borders, gray selected tab, dark text, and restrained ANSI colors match the surrounding Rux light theme.
+- Image quality and asset fidelity: passed. The target contains standard product UI and code-native terminal text only; no image assets or substitute drawings were required.
+- Copy and content: passed. Existing Rux tool labels remain unchanged; terminal output retains native shell content.
+- Interaction and accessibility: passed. `Ctrl+\`` opens the terminal, PTY input/output and resize remain functional, and the screen-reader output mirror is unchanged. All three packaged Electron flows passed.
+
+## Primary interactions tested
+
+1. Open terminal with `Ctrl+\`` — healthy.
+2. Confirm terminal input focus and xterm mounting — healthy.
+3. Execute a real project command and read its output — healthy.
+4. Close and reopen the bottom Dock while preserving right-panel state — healthy.
+
+## Follow-up polish
+
+- [P3] The reference uses a session-specific terminal tab label; Rux keeps the shared workspace-tool tabs so users can switch between review, terminal, browser, files, and side chat in the same Dock.
+
+final result: passed

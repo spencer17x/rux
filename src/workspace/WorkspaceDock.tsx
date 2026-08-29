@@ -23,7 +23,7 @@ const tools = [
 
 export default function WorkspaceDock(props: Props) {
   const { activeTool, hasProject, gitState, terminalProps, remoteUrl, projectFiles, sideMessages, sideValue, sideSending } = props;
-  return <section className="workspace-dock" aria-label="底部工作区面板">
+  return <section className={`workspace-dock ${activeTool === "terminal" ? "is-terminal" : ""}`} aria-label="底部工作区面板">
     <header className="workspace-dock-header"><div className="workspace-dock-tabs" role="tablist" aria-label="工作区工具">{tools.map(({ id, label, Icon, projectOnly }) => <button type="button" role="tab" aria-selected={activeTool === id} key={id} className={activeTool === id ? "is-active" : ""} disabled={projectOnly && !hasProject} onClick={() => props.onSelectTool(id)}><Icon size={15} />{label}</button>)}</div><button type="button" className="icon-button" aria-label="关闭底部面板" onClick={props.onClose}><X size={16} /></button></header>
     <div className="workspace-dock-content">
       {activeTool === "review" && <div className="dock-review"><div><strong>{gitState.files.length} 个文件变更</strong><span>{gitState.branch || "—"}</span></div><div className="dock-file-chips">{gitState.files.slice(0, 8).map((file) => <span key={file.path}>{file.path}<small><b>+{file.plus}</b> <em>−{file.minus}</em></small></span>)}</div><button type="button" className="secondary-button" onClick={props.onOpenReview}><Eye size={15} />打开完整审查</button></div>}
