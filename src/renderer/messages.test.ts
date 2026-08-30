@@ -11,6 +11,11 @@ describe("canonical message reducer", () => {
     expect(completed.status).toBe("complete");
   });
 
+  it("keeps a user-stopped turn incomplete instead of marking it failed or complete", () => {
+    const interrupted = reduceStreamEvent(runningMessage(), { type: "turn-completed", status: "interrupted" });
+    expect(interrupted.status).toBe("incomplete");
+  });
+
   it("labels Claude file approvals as file changes", () => {
     const message = reduceStreamEvent(runningMessage(), { type: "approval-request", itemId: "tool-1", approval: { id: "approval-1", method: "claude/canUseTool", toolName: "Edit" } });
     expect(message.parts?.[0].toolName).toBe("fileChange");
@@ -21,6 +26,10 @@ describe("message persistence", () => {
   it("finds completed user turns for conversation sticky", () => {
     const messages = [{ id: "u1", role: "user", text: "First question" }, { id: "a1", role: "assistant", status: "complete", text: "Done" }, { id: "u2", role: "user", text: "Current question" }, { id: "a2", role: "assistant", status: "running", text: "" }] as RuxMessage[];
     expect(completedStickyTurns(messages)).toEqual([{ id: "u1", text: "First question" }]);
+  });
+  it("does not treat an incomplete historical turn as sticky-complete", () => {
+    const messages = [{ id: "u1", role: "user", text: "Interrupted" }, { id: "a1", role: "assistant", status: "incomplete", text: "Partial" }] as RuxMessage[];
+    expect(completedStickyTurns(messages)).toEqual([]);
   });
   it("exports streamed assistant text", () => {
     expect(messageExportText({ id: "a", role: "assistant", parts: [{ type: "text", text: "answer" }] })).toBe("answer");

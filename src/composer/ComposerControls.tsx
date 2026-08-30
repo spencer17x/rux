@@ -1,4 +1,5 @@
-import { Check, CircleNotch, HandPalm, ShieldCheck, WarningCircle } from "@phosphor-icons/react";
+import { useEffect, useRef, useState } from "react";
+import { Check, CircleNotch, FolderOpen, Globe, HandPalm, ShieldCheck, TerminalWindow, WarningCircle } from "@phosphor-icons/react";
 import type { AuthState } from "../renderer/types";
 import { userFacingError } from "../renderer/errors";
 
@@ -35,6 +36,37 @@ export function ModelPopover({ mode, settings, auth, models, loading, error, onS
   </div>;
 }
 
-export function PermissionPopover({ selectedValue, onSelect, onLearnMore }: { selectedValue: SandboxMode; onSelect: (value: SandboxMode) => void; onLearnMore: () => void }) {
-  return <span className="scope-popover permission-popover" role="dialog" aria-label="操作批准方式"><span className="permission-popover-heading"><strong>应如何批准 Rux 操作？</strong><button type="button" onClick={onLearnMore}>了解更多</button></span>{permissionOptions.map(({ value, title, description, Icon }) => <button type="button" key={value} aria-pressed={selectedValue === value} className={`permission-option ${selectedValue === value ? "is-selected" : ""}`} onClick={() => onSelect(value)}><Icon size={20} /><span><strong>{title}</strong><small>{description}</small></span>{selectedValue === value && <Check size={18} weight="bold" />}</button>)}</span>;
+export function PermissionPopover({ selectedValue, onSelect, onLearnMore, agentId = "codex" }: { selectedValue: SandboxMode; onSelect: (value: SandboxMode) => void; onLearnMore: () => void; agentId?: "codex" | "pi" }) {
+  const options = agentId === "pi" ? permissionOptions.map((option) => option.value === "read-only"
+    ? { ...option, title: "只读模式", description: "仅保留文件读取和搜索工具，不提供命令或写入工具" }
+    : option.value === "workspace-write"
+      ? { ...option, description: "Pi RPC 暂不支持逐次审批，请使用只读或完整访问" }
+      : option) : permissionOptions;
+  return <span className="scope-popover permission-popover" role="dialog" aria-label="操作批准方式"><span className="permission-popover-heading"><strong>应如何批准 Rux 操作？</strong><button type="button" onClick={onLearnMore}>了解更多</button></span>{options.map(({ value, title, description, Icon }) => {
+    const disabled = agentId === "pi" && value === "workspace-write";
+    return <button type="button" key={value} disabled={disabled} aria-disabled={disabled} aria-pressed={selectedValue === value} className={`permission-option ${value === "danger-full-access" ? "is-danger" : ""} ${selectedValue === value ? "is-selected" : ""}`} onClick={() => onSelect(value)}><Icon size={20} /><span><strong>{title}</strong><small>{description}</small></span>{selectedValue === value && <Check size={18} weight="bold" />}</button>;
+  })}</span>;
+}
+
+export function FullAccessModal({ onCancel, onConfirm, onLearnMore }: { onCancel: () => void; onConfirm: () => Promise<void>; onLearnMore: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const backdropRef = useRef<HTMLDivElement>(null);
+  const dialogRef = useRef<HTMLElement>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    const previousFocus = document.activeElement as HTMLElement | null;
+    const backdrop = backdropRef.current;
+    const siblings = backdrop?.parentElement ? [...backdrop.parentElement.children].filter((element) => element !== backdrop) as HTMLElement[] : [];
+    for (const sibling of siblings) { sibling.inert = true; sibling.setAttribute("aria-hidden", "true"); }
+    cancelRef.current?.focus();
+    return () => { for (const sibling of siblings) { sibling.inert = false; sibling.removeAttribute("aria-hidden"); } requestAnimationFrame(() => previousFocus?.focus()); };
+  }, []);
+  const confirm = async () => { if (busy) return; setBusy(true); try { await onConfirm(); } finally { setBusy(false); } };
+  return <div ref={backdropRef} className="modal-backdrop full-access-backdrop" role="presentation"><section ref={dialogRef} className="modal full-access-modal" role="alertdialog" aria-modal="true" aria-labelledby="full-access-title" onKeyDown={(event) => { if (event.key === "Escape" && !busy) { event.preventDefault(); onCancel(); return; } if (event.key !== "Tab") return; const focusable = [...(dialogRef.current?.querySelectorAll<HTMLElement>("button:not(:disabled)") || [])]; const first = focusable[0]; const last = focusable[focusable.length - 1]; if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); } else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); } }}>
+    <div className="full-access-title"><WarningCircle size={24} /><h2 id="full-access-title">要开启完整访问权限吗？</h2></div>
+    <p className="full-access-intro">Rux 将跳过逐次操作批准，并可在当前系统账户及操作系统已授予 Rux 的权限范围内运行命令、使用互联网，以及创建和编辑文件。这包括但不限于：</p>
+    <div className="full-access-capabilities"><div><FolderOpen size={25} weight="fill" /><span><strong>文件和文件夹</strong><small>读取、创建、修改、上传或删除操作系统允许访问位置的文件</small></span></div><div><TerminalWindow size={25} weight="fill" /><span><strong>终端命令</strong><small>运行命令、安装软件和更改当前账户可修改的系统设置</small></span></div><div><Globe size={26} weight="fill" /><span><strong>互联网和已连接的应用</strong><small>访问网站、发送数据并使用已启用的插件或连接</small></span></div></div>
+    <p className="full-access-risk">这会带来敏感数据丢失或泄露、提示注入等风险。你可以随时将其关闭。<button type="button" onClick={onLearnMore}>了解更多</button></p>
+    <div className="modal-footer full-access-actions"><button ref={cancelRef} type="button" className="secondary-button" disabled={busy} onClick={onCancel}>取消</button><button type="button" className="full-access-confirm" disabled={busy} onClick={() => void confirm()}><WarningCircle size={17} />{busy ? "正在启用…" : "确认"}</button></div>
+  </section></div>;
 }

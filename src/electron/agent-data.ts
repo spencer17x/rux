@@ -88,3 +88,25 @@ export async function prepareAgentData(paths: AgentDataPaths, workspace: StoredW
   }
   return workspaceChanged;
 }
+
+function isBelow(root: string, path: string): boolean {
+  const child = relative(resolve(root), resolve(path));
+  return Boolean(child) && child !== ".." && !child.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) && !isAbsolute(child);
+}
+
+export async function removeAgentConversation(paths: AgentDataPaths, thread: StoredThread): Promise<string[]> {
+  const agentId = thread.agentId || (thread.codexThreadId ? "codex" : undefined);
+  const nativeId = thread.nativeSessionId || thread.codexThreadId || "";
+  if (!agentId || !nativeId) return [];
+  const targets: string[] = [];
+  if (agentId === "pi" && isAbsolute(nativeId) && isBelow(paths.piHome, nativeId)) targets.push(nativeId);
+  if (agentId === "codex") {
+    for (const path of await filesBelow(join(paths.codexHome, "sessions"))) if (basename(path).includes(nativeId)) targets.push(path);
+  }
+  if (agentId === "claude-code") {
+    for (const path of await filesBelow(join(paths.claudeHome, "projects"))) if (basename(path) === `${nativeId}.jsonl` || path.includes(`${nativeId}/`)) targets.push(path);
+  }
+  const safeTargets = [...new Set(targets)].filter((path) => isBelow(paths.root, path));
+  await Promise.all(safeTargets.map((path) => rm(path, { recursive: true, force: true })));
+  return safeTargets;
+}

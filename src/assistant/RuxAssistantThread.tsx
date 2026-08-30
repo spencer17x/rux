@@ -44,9 +44,11 @@ type Props = {
   conversationSticky: boolean;
   agents: AgentDefinition[]; runtimeProgress: RuntimeProgress; selectedAgent: AgentId; onSelectAgent: (agentId: AgentId) => void; agentMode: string; onAgentMode: (mode: string) => void;
   modelLabel: string; reasoningLabel: string; permissionLabel: string; showPermission?: boolean; modelOpen: "models" | "reasoning" | null; sandboxOpen: boolean;
+  permissionDanger?: boolean; fullAccessEnabled?: boolean; onDisableFullAccess: () => void;
   modelPopover: ReactNode; permissionPopover: ReactNode; onToggleModel: (mode: "models" | "reasoning") => void; onToggleSandbox: () => void;
   activeOverlay: OverlayId | null; onOverlayChange: (overlay: OverlayId | null) => void;
-  attachments: string[]; showAttachments?: boolean; webSearch?: boolean; showWebSearch?: boolean; onToggleWebSearch: () => void; voiceTranscript: string;
+  attachments: string[]; showAttachments?: boolean; webSearch?: boolean; showWebSearch?: boolean; onToggleWebSearch: () => void;
+  draftKey: string; draftText: string; onDraftTextChange: (text: string) => void;
   onAddFiles: () => void; onRemoveAttachment: (path: string) => void; listening: boolean; onVoice: () => void;
 };
 
@@ -96,7 +98,7 @@ function normalizeMessage(message: RuxMessage): any {
     ...(message.role === "assistant" ? {
       status: message.status === "running"
         ? { type: "running" }
-        : message.status === "error"
+        : message.status === "error" || message.status === "incomplete"
           ? { type: "incomplete", reason: "error", error: message.error || message.text }
           : { type: "complete" },
     } : {}),
@@ -268,6 +270,9 @@ export default function RuxAssistantThread({
   modelLabel,
   reasoningLabel,
   permissionLabel,
+  permissionDanger = false,
+  fullAccessEnabled = false,
+  onDisableFullAccess,
   showPermission = true,
   modelOpen,
   sandboxOpen,
@@ -282,7 +287,9 @@ export default function RuxAssistantThread({
   webSearch = false,
   showWebSearch = false,
   onToggleWebSearch,
-  voiceTranscript,
+  draftKey,
+  draftText,
+  onDraftTextChange,
   onAddFiles,
   onRemoveAttachment,
   listening,
@@ -307,9 +314,12 @@ export default function RuxAssistantThread({
   const reasoningTrigger = useRef<HTMLButtonElement>(null);
   const sandboxTrigger = useRef<HTMLButtonElement>(null);
   const previousOverlay = useRef<OverlayId | null>(null);
+  const composerDraftRef = useRef({ key: "", text: "" });
   useEffect(() => {
-    if (voiceTranscript) runtime.thread.composer.setText(voiceTranscript);
-  }, [runtime, voiceTranscript]);
+    if (composerDraftRef.current.key === draftKey && composerDraftRef.current.text === draftText) return;
+    composerDraftRef.current = { key: draftKey, text: draftText };
+    runtime.thread.composer.setText(draftText);
+  }, [draftKey, draftText, runtime]);
   useEffect(() => {
     const previous = previousOverlay.current;
     if (previous && !activeOverlay) ({ agents: agentTrigger, "agent-mode": modeTrigger, models: modelTrigger, reasoning: reasoningTrigger, sandbox: sandboxTrigger }[previous]).current?.focus();
@@ -327,7 +337,7 @@ export default function RuxAssistantThread({
   return (
     <AssistantRuntimeProvider runtime={runtime}>
       <MessageProjectContext.Provider value={projectId}>
-      <ThreadPrimitive.Root className="aui-thread-root">
+      <ThreadPrimitive.Root className={`aui-thread-root ${fullAccessEnabled ? "has-full-access-banner" : ""}`}>
         <ConversationSticky enabled={conversationSticky} messages={messages} viewportRef={viewportRef} />
         <ThreadPrimitive.Viewport ref={viewportRef} className="aui-thread-viewport">
           <ThreadPrimitive.Empty>
@@ -337,17 +347,18 @@ export default function RuxAssistantThread({
         </ThreadPrimitive.Viewport>
         <ThreadPrimitive.ScrollToBottom className="aui-scroll-bottom" aria-label="滚动到底部"><ArrowDown size={16} /></ThreadPrimitive.ScrollToBottom>
         <ComposerPrimitive.Root className="composer-wrap aui-composer-wrap">
+          {fullAccessEnabled && <div className="full-access-banner" role="status"><WarningCircle size={19} /><span><strong>完整访问权限已开启</strong><small>Rux 可访问任意文件、运行命令并使用互联网</small></span><button type="button" onClick={onDisableFullAccess}>关闭</button></div>}
           {modelOpen && <div data-overlay-scope>{modelPopover}</div>}
           <div className="composer">
             {runtimeProgress?.[selectedAgent] && !["ready", "error"].includes(runtimeProgress[selectedAgent].state) && <div className="runtime-inline-progress"><CircleNotch size={13} className="spin" /><span>{runtimeProgress[selectedAgent].state === "downloading" ? `正在下载 ${agents.find((agent) => agent.id === selectedAgent)?.name || selectedAgent} 运行时` : "正在验证并安装运行时"}</span><em>{runtimeProgress[selectedAgent].percent || 0}%</em><i><i style={{ width: `${runtimeProgress[selectedAgent].percent || 4}%` }} /></i></div>}
             {runtimeProgress?.[selectedAgent]?.state === "error" && <div className="runtime-inline-progress is-error"><WarningCircle size={13} /><span>{runtimeProgress[selectedAgent].message || "运行时下载失败"}</span></div>}
             {showAttachments && attachments.length > 0 && <div className="attachment-list">{attachments.map((path) => <span key={path}><Paperclip size={13} />{path.split(/[\\/]/).pop()}<button type="button" onClick={() => onRemoveAttachment(path)}><X size={12} /></button></span>)}</div>}
-            <ComposerPrimitive.Input className="aui-composer-input" aria-label="消息" placeholder="向 Rux 发送消息" rows={2} />
+            <ComposerPrimitive.Input className="aui-composer-input" aria-label="消息" placeholder="向 Rux 发送消息" rows={2} onChange={(event) => { composerDraftRef.current = { key: draftKey, text: event.currentTarget.value }; onDraftTextChange(event.currentTarget.value); }} />
             <div className="composer-controls">
               <div className="composer-left">
                 {showAttachments && <button type="button" className="icon-button" aria-label="添加文件" onClick={onAddFiles}><Plus size={19} /></button>}
                 {showWebSearch && <button type="button" className={`icon-button ${webSearch ? "is-active" : ""}`} aria-label={webSearch ? "关闭网页搜索" : "启用网页搜索"} title={webSearch ? "网页搜索已启用" : "启用网页搜索"} onClick={onToggleWebSearch}><Globe size={18} /></button>}
-                {showPermission && <span className="scope-menu-wrap" data-overlay-scope><button ref={sandboxTrigger} type="button" className="scope-button" aria-label="操作批准方式" onClick={onToggleSandbox} aria-expanded={sandboxOpen} aria-haspopup="menu"><ShieldCheck size={16} />{permissionLabel}<CaretDown size={12} /></button>{sandboxOpen && permissionPopover}</span>}
+                {showPermission && <span className="scope-menu-wrap" data-overlay-scope><button ref={sandboxTrigger} type="button" className={`scope-button ${permissionDanger ? "" : "neutral"}`} aria-label="操作批准方式" onClick={onToggleSandbox} aria-expanded={sandboxOpen} aria-haspopup="menu"><ShieldCheck size={16} />{permissionLabel}<CaretDown size={12} /></button>{sandboxOpen && permissionPopover}</span>}
               </div>
               <div className="composer-right">
                 <AgentSelector agents={agents} selectedAgent={selectedAgent} onSelectAgent={onSelectAgent} runtimeProgress={runtimeProgress} open={activeOverlay === "agents"} onToggle={() => onOverlayChange(activeOverlay === "agents" ? null : "agents")} onClose={() => onOverlayChange(null)} buttonRef={agentTrigger} />

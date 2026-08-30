@@ -1,6 +1,7 @@
 import { app } from "electron";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface } from "node:readline";
+import { codexApprovalPolicy, codexSandboxPolicy, type CodexSandboxMode } from "./codex-permissions";
 
 export type CodexStreamInput = {
   runId: string;
@@ -10,7 +11,7 @@ export type CodexStreamInput = {
   model?: string;
   reasoning?: string;
   mode?: "default" | "plan";
-  sandboxMode: "read-only" | "workspace-write" | "danger-full-access";
+  sandboxMode: CodexSandboxMode;
   images?: string[];
   webSearch?: boolean;
 };
@@ -112,8 +113,8 @@ export class CodexAppServerClient {
       cwd: input.cwd,
       model: input.model || null,
       effort: input.reasoning || null,
-      approvalPolicy: this.approvalPolicy(input.sandboxMode),
-      sandboxPolicy: this.sandboxPolicy(input),
+      approvalPolicy: codexApprovalPolicy(input.sandboxMode),
+      sandboxPolicy: codexSandboxPolicy(input),
       collaborationMode: input.mode === "plan" ? {
         mode: "plan",
         settings: {
@@ -158,28 +159,10 @@ export class CodexAppServerClient {
     return {
       cwd: input.cwd,
       model: input.model || null,
-      approvalPolicy: this.approvalPolicy(input.sandboxMode),
+      approvalPolicy: codexApprovalPolicy(input.sandboxMode),
       sandbox: input.sandboxMode,
       serviceName: "rux",
       config: input.webSearch ? { web_search: "live" } : null,
-    };
-  }
-
-  private approvalPolicy(mode: CodexStreamInput["sandboxMode"]): "untrusted" | "on-request" | "never" {
-    if (mode === "danger-full-access") return "never";
-    if (mode === "read-only") return "untrusted";
-    return "on-request";
-  }
-
-  private sandboxPolicy(input: CodexStreamInput): Record<string, unknown> {
-    if (input.sandboxMode === "danger-full-access") return { type: "dangerFullAccess" };
-    if (input.sandboxMode === "read-only") return { type: "readOnly", networkAccess: Boolean(input.webSearch) };
-    return {
-      type: "workspaceWrite",
-      writableRoots: [input.cwd],
-      networkAccess: Boolean(input.webSearch),
-      excludeTmpdirEnvVar: false,
-      excludeSlashTmp: false,
     };
   }
 

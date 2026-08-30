@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type Dispatch, type SetStateAction } from "react";
+import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import type { RuxApi } from "../../electron/preload";
 import type { GitState } from "../types";
 
@@ -8,34 +8,36 @@ export function useGitController(api: RuxApi, projectId: string | undefined, not
   const [gitState, setGitState] = useState<GitState>({ branch: "—", files: [] });
   const [branches, setBranches] = useState<string[]>([]);
   const [selectedFile, setSelectedFile] = useState("");
+  const selectedFileRef = useRef("");
   const [diff, setDiff] = useState("");
   const [busy, setBusy] = useState(false);
+  const [comparisonBase, setComparisonBase] = useState("");
   const selectDiff = useCallback(async (path: string, targetProjectId = projectId) => {
     if (!targetProjectId) return;
-    setSelectedFile(path); setDiff("加载中…");
-    try { setDiff(await api.git.diff({ projectId: targetProjectId, path })); }
+    selectedFileRef.current = path; setSelectedFile(path); setDiff("加载中…");
+    try { setDiff(comparisonBase ? await api.git.compareDiff({ projectId: targetProjectId, baseBranch: comparisonBase, path }) : await api.git.diff({ projectId: targetProjectId, path })); }
     catch (error) { setDiff(error instanceof Error ? error.message : String(error)); }
-  }, [api, projectId]);
-  const refreshGit = useCallback(async (targetProjectId = projectId) => {
+  }, [api, comparisonBase, projectId]);
+  const refreshGit = useCallback(async (targetProjectId = projectId, _workingTreeOnly = false) => {
     if (!targetProjectId) return;
     try {
       const status = await api.git.status(targetProjectId) as GitState;
       setGitState(status);
-      if (status.files.length && !status.files.some((file) => file.path === selectedFile)) await selectDiff(status.files[0].path, targetProjectId);
-      if (!status.files.length) { setSelectedFile(""); setDiff(""); }
+      if (status.files.length) { const path = status.files.find((file) => file.path === selectedFileRef.current)?.path || status.files[0].path; selectedFileRef.current = path; setSelectedFile(path); setDiff(await api.git.diff({ projectId: targetProjectId, path })); }
+      if (!status.files.length) { selectedFileRef.current = ""; setSelectedFile(""); setDiff(""); }
     } catch (error) {
       setGitState({ branch: "—", files: [] }); notify(error instanceof Error ? error.message : String(error));
     }
-  }, [api, notify, projectId, selectDiff, selectedFile]);
+  }, [api, notify, projectId]);
   useEffect(() => {
-    if (!projectId) { setGitState({ branch: "—", files: [] }); setBranches([]); setSelectedFile(""); setDiff(""); return; }
+    if (!projectId) { setGitState({ branch: "—", files: [] }); setBranches([]); selectedFileRef.current = ""; setSelectedFile(""); setDiff(""); return; }
     void refreshGit(projectId);
     api.git.branches(projectId).then((value) => setBranches(value as string[])).catch(() => setBranches([]));
   }, [api, projectId, refreshGit]);
   const switchBranch = useCallback(async (branch: string) => {
     if (!projectId || branch === gitState.branch) return;
     if (gitState.files.length && !window.confirm(`当前有 ${gitState.files.length} 个变更，仍要切换到 ${branch}？`)) return;
-    try { setGitState(await api.git.switchBranch({ projectId, branch }) as GitState); notify(`已切换到 ${branch}`); }
+    try { setComparisonBase(""); setGitState(await api.git.switchBranch({ projectId, branch }) as GitState); notify(`已切换到 ${branch}`); }
     catch (error) { notify(error instanceof Error ? error.message : String(error)); }
   }, [api, gitState, notify, projectId]);
   const stage = useCallback(async (paths: string[]) => {
@@ -71,6 +73,8 @@ export function useGitController(api: RuxApi, projectId: string | undefined, not
     catch (error) { notify(error instanceof Error ? error.message : String(error)); }
     finally { setBusy(false); }
   }, [api, notify, projectId]);
-  const openReview = useCallback(async () => { if (projectId) await refreshGit(projectId); setView("review"); }, [projectId, refreshGit, setView]);
-  return { gitState, branches, selectedFile, diff, busy, selectDiff, refreshGit, switchBranch, stage, discardSelected, commitOrPush, openReview };
+  const openReview = useCallback(async () => { setComparisonBase(""); if (projectId) await refreshGit(projectId, true); setView("review"); }, [projectId, refreshGit, setView]);
+  const compareBranch = useCallback(async (baseBranch: string) => { if (!projectId) return; setBusy(true); try { const state = await api.git.compare({ projectId, baseBranch }) as GitState; setComparisonBase(baseBranch); setGitState(state); const path = state.files[0]?.path || ""; selectedFileRef.current = path; setSelectedFile(path); setDiff(path ? await api.git.compareDiff({ projectId, baseBranch, path }) : ""); setView("review"); } catch (error) { notify(error instanceof Error ? error.message : String(error)); } finally { setBusy(false); } }, [api, notify, projectId, setView]);
+  const closeReview = useCallback(async () => { setComparisonBase(""); if (projectId) await refreshGit(projectId, true); setView(projectId ? "project" : "standalone"); }, [projectId, refreshGit, setView]);
+  return { gitState, branches, selectedFile, diff, busy, comparisonBase, selectDiff, refreshGit, switchBranch, stage, discardSelected, commitOrPush, openReview, compareBranch, closeReview };
 }

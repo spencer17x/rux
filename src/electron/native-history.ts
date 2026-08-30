@@ -4,7 +4,8 @@ import type { PiRuntimeClient } from "./agents/pi-runtime";
 import type { StoredThread, StoredWorkspace } from "./state-database";
 
 type RuxPart = Record<string, any> & { type: string };
-type RuxMessage = { id: string; role: "user" | "assistant"; parts: RuxPart[]; text?: string; attachments?: string[]; status?: string; agentId?: string };
+type RuxMessage = { id: string; role: "user" | "assistant"; parts: RuxPart[]; text?: string; attachments?: string[]; status?: string; error?: string; agentId?: string };
+type HistoryStatus = "complete" | "error" | "incomplete";
 
 function nativeId(thread: StoredThread): string {
   return thread.nativeSessionId || thread.codexThreadId || "";
@@ -43,6 +44,29 @@ function contentAttachments(content: unknown): string[] {
   });
 }
 
+function historyStatus(value: unknown): HistoryStatus {
+  const status = String(value || "").toLowerCase();
+  if (["completed", "complete", "success", "succeeded", "stop", "end_turn"].includes(status)) return "complete";
+  if (["failed", "error"].includes(status)) return "error";
+  return "incomplete";
+}
+
+function toolPart(id: string, name: string, input: Record<string, any> = {}): RuxPart {
+  const normalized = name.toLowerCase();
+  if (["bash", "powershell"].includes(normalized)) return { type: "tool-call", toolCallId: id, toolName: "commandExecution", args: { command: input.command || input.script || "", cwd: input.cwd || "" }, argsText: JSON.stringify(input), _itemId: id };
+  if (["edit", "write", "notebookedit"].includes(normalized)) return { type: "tool-call", toolCallId: id, toolName: "fileChange", args: { path: input.path || input.file_path || input.notebook_path || "", changes: [{ path: input.path || input.file_path || input.notebook_path || "", kind: name, diff: input.content || input.new_string || input.newText || "" }] }, argsText: JSON.stringify(input), _itemId: id };
+  if (name.startsWith("mcp__")) return { type: "tool-call", toolCallId: id, toolName: "mcpToolCall", args: { server: name.split("__")[1] || "mcp", tool: name, ...input }, argsText: JSON.stringify(input), _itemId: id };
+  return { type: "tool-call", toolCallId: id, toolName: "dynamicToolCall", args: { tool: name, ...input }, argsText: JSON.stringify(input), _itemId: id };
+}
+
+function attachToolResult(message: RuxMessage | null, toolCallId: string, output: string, isError: boolean): void {
+  if (!message) return;
+  const part = message.parts.find((item) => item.toolCallId === toolCallId || item._itemId === toolCallId);
+  if (!part) return;
+  part.result = { output, status: isError ? "failed" : "completed" };
+  part.isError = isError;
+}
+
 function codexMessages(thread: Record<string, any>, agentId: string): RuxMessage[] {
   return (thread.turns || []).flatMap((turn: Record<string, any>, turnIndex: number) => {
     const items = Array.isArray(turn.items) ? turn.items : [];
@@ -54,38 +78,98 @@ function codexMessages(thread: Record<string, any>, agentId: string): RuxMessage
       const attachments = userItems.flatMap((item: any) => contentAttachments(item.content));
       result.push({ id: userItems[0]?.id || `${turn.id || turnIndex}:user`, role: "user", text, parts: [{ type: "text", text }], ...(attachments.length ? { attachments } : {}), agentId });
     }
-    if (assistantParts.length) result.push({ id: `${turn.id || turnIndex}:assistant`, role: "assistant", parts: assistantParts, status: turn.status === "failed" ? "error" : "complete", agentId });
+    const status = historyStatus(turn.status);
+    const error = String(turn.error?.message || turn.error || "");
+    if (assistantParts.length || (userItems.length && status !== "complete")) result.push({ id: `${turn.id || turnIndex}:assistant`, role: "assistant", parts: error && !assistantParts.length ? [{ type: "text", text: error, status: { type: "incomplete", reason: "error" } }] : assistantParts, status, ...(error ? { error } : {}), agentId });
     return result;
   });
 }
 
 function claudeMessages(entries: any[], agentId: string): RuxMessage[] {
-  return entries.flatMap((entry, index) => {
+  const result: RuxMessage[] = [];
+  let assistant: RuxMessage | null = null;
+  for (const [index, entry] of entries.entries()) {
     const message = entry.message || {};
-    const role = entry.type === "user" || message.role === "user" ? "user" : entry.type === "assistant" || message.role === "assistant" ? "assistant" : null;
-    if (!role) return [];
     const blocks = Array.isArray(message.content) ? message.content : [{ type: "text", text: contentText(message.content) }];
-    const parts: RuxPart[] = blocks.flatMap((block: any, blockIndex: number) => {
-      if (block.type === "text") return [{ type: "text", text: block.text || "" }];
-      if (block.type === "thinking") return [{ type: "reasoning", text: block.thinking || "", status: { type: "complete" } }];
-      if (block.type === "tool_use") return [{ type: "tool-call", toolCallId: block.id || `${entry.uuid}:${blockIndex}`, toolName: block.name || "dynamicToolCall", args: block.input || {}, argsText: JSON.stringify(block.input || {}) }];
-      if (block.type === "tool_result") return [{ type: "text", text: contentText(block.content) }];
-      return [];
-    });
-    const text = parts.filter((part) => part.type === "text").map((part) => part.text).join("\n");
-    return [{ id: entry.uuid || `${entry.session_id || "claude"}:${index}`, role, parts, ...(text ? { text } : {}), ...(role === "assistant" ? { status: "complete" } : {}), agentId } as RuxMessage];
-  });
+    if (entry.type === "user" || message.role === "user") {
+      const toolResults = blocks.filter((block: any) => block.type === "tool_result");
+      for (const block of toolResults) attachToolResult(assistant, String(block.tool_use_id || ""), contentText(block.content), Boolean(block.is_error));
+      const text = blocks.filter((block: any) => block.type !== "tool_result").map((block: any) => block.text || "").filter(Boolean).join("\n");
+      if (text) {
+        result.push({ id: entry.uuid || `${entry.session_id || "claude"}:${index}`, role: "user", text, parts: [{ type: "text", text }], attachments: contentAttachments(message.content), agentId });
+        assistant = null;
+      }
+      continue;
+    }
+    if (entry.type === "assistant" || message.role === "assistant") {
+      if (!assistant || assistant.status === "complete" || assistant.status === "error") {
+        assistant = { id: entry.uuid || `${entry.session_id || "claude"}:${index}:assistant`, role: "assistant", parts: [], status: "incomplete", agentId };
+        result.push(assistant);
+      }
+      blocks.forEach((block: any, blockIndex: number) => {
+        if (block.type === "text" && block.text) assistant!.parts.push({ type: "text", text: block.text, status: { type: "complete" } });
+        else if (block.type === "thinking") assistant!.parts.push({ type: "reasoning", text: block.thinking || "", status: { type: "complete" } });
+        else if (block.type === "tool_use") assistant!.parts.push(toolPart(String(block.id || `${entry.uuid || index}:${blockIndex}`), String(block.name || "Tool"), block.input || {}));
+      });
+      const stopReason = message.stop_reason || message.stopReason;
+      if (stopReason && stopReason !== "tool_use") assistant.status = historyStatus(stopReason);
+      continue;
+    }
+    if (entry.type === "result" && assistant) {
+      const failed = entry.subtype !== "success" || entry.is_error;
+      assistant.status = failed ? "error" : "complete";
+      if (failed) assistant.error = Array.isArray(entry.errors) ? entry.errors.join("\n") : entry.result || "Claude Code 执行失败";
+    }
+  }
+  return result.filter((message) => message.role === "user" || message.parts.length || message.status !== "complete");
 }
 
 function piMessages(entries: any[], agentId: string): RuxMessage[] {
-  return entries.flatMap((entry, index) => {
+  const byId = new Map(entries.filter((entry) => entry?.id).map((entry) => [String(entry.id), entry]));
+  const leaf = [...entries].reverse().find((entry) => entry?.id);
+  const activeEntries: any[] = [];
+  const visited = new Set<string>();
+  let cursor = leaf;
+  while (cursor?.id && !visited.has(String(cursor.id))) {
+    visited.add(String(cursor.id)); activeEntries.unshift(cursor);
+    cursor = cursor.parentId ? byId.get(String(cursor.parentId)) : null;
+  }
+  const source = activeEntries.length ? activeEntries : entries;
+  const result: RuxMessage[] = [];
+  let assistant: RuxMessage | null = null;
+  for (const [index, entry] of source.entries()) {
     const message = entry.message || entry;
-    const role = message.role === "user" || message.role === "assistant" ? message.role : null;
-    if (!role) return [];
-    const text = contentText(message.content ?? message.text);
-    if (!text) return [];
-    return [{ id: String(message.id || entry.id || `pi:${index}`), role, text, parts: [{ type: "text", text }], ...(role === "assistant" ? { status: "complete" } : {}), agentId } as RuxMessage];
-  });
+    if (message.role === "user") {
+      const text = contentText(message.content ?? message.text);
+      if (text) result.push({ id: String(entry.id || message.id || `pi:${index}`), role: "user", text, parts: [{ type: "text", text }], attachments: contentAttachments(message.content), agentId });
+      assistant = null;
+      continue;
+    }
+    if (message.role === "assistant") {
+      if (!assistant || assistant.status === "complete" || assistant.status === "error") {
+        assistant = { id: String(entry.id || message.id || `pi:${index}:assistant`), role: "assistant", parts: [], status: "incomplete", agentId };
+        result.push(assistant);
+      }
+      const blocks = Array.isArray(message.content) ? message.content : [{ type: "text", text: contentText(message.content ?? message.text) }];
+      blocks.forEach((block: any, blockIndex: number) => {
+        if (block.type === "text" && block.text) assistant!.parts.push({ type: "text", text: block.text, status: { type: "complete" } });
+        else if (block.type === "thinking") assistant!.parts.push({ type: "reasoning", text: block.thinking || "", status: { type: "complete" } });
+        else if (block.type === "toolCall") assistant!.parts.push(toolPart(String(block.id || `${entry.id || index}:${blockIndex}`), String(block.name || "Tool"), block.arguments || {}));
+      });
+      assistant.status = historyStatus(message.stopReason);
+      if (message.errorMessage) { assistant.status = "error"; assistant.error = message.errorMessage; }
+      continue;
+    }
+    if (message.role === "toolResult") {
+      attachToolResult(assistant, String(message.toolCallId || ""), contentText(message.content), Boolean(message.isError));
+      continue;
+    }
+    if (message.role === "bashExecution") {
+      if (!assistant) { assistant = { id: String(entry.id || `pi:${index}:bash`), role: "assistant", parts: [], status: "incomplete", agentId }; result.push(assistant); }
+      const id = String(entry.id || `pi:${index}:bash`); const part = toolPart(id, "bash", { command: message.command }); part.result = { output: message.output || "", exitCode: message.exitCode, status: message.cancelled ? "failed" : "completed" }; part.isError = Boolean(message.cancelled || (typeof message.exitCode === "number" && message.exitCode !== 0)); assistant.parts.push(part);
+    }
+  }
+  return result.filter((message) => message.role === "user" || message.parts.length || message.status !== "complete");
 }
 
 export class NativeHistoryService {

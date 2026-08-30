@@ -97,6 +97,8 @@ export const approvalSchema = z.object({
 
 export const projectFileSchema = z.object({ projectId: projectIdSchema, path: relativeProjectPathSchema });
 export const gitSwitchSchema = z.object({ projectId: projectIdSchema, branch: z.string().trim().min(1).max(500) });
+export const gitCompareSchema = z.object({ projectId: projectIdSchema, baseBranch: z.string().trim().min(1).max(500) });
+export const gitCompareFileSchema = gitCompareSchema.extend({ path: relativeProjectPathSchema });
 export const gitStageSchema = z.object({ projectId: projectIdSchema, paths: z.array(relativeProjectPathSchema).min(1).max(1000) });
 export const gitCommitSchema = z.object({ projectId: projectIdSchema, message: z.string().max(20_000), push: z.boolean(), rulesAcknowledged: z.boolean().optional() });
 export const terminalWriteSchema = z.string().max(100_000);

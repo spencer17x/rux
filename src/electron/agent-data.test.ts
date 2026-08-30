@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { agentDataPaths, prepareAgentData } from "./agent-data";
+import { agentDataPaths, prepareAgentData, removeAgentConversation } from "./agent-data";
 
 const roots: string[] = [];
 const originalCodexHome = process.env.CODEX_HOME;
@@ -38,5 +38,24 @@ describe("prepareAgentData", () => {
     expect(await readFile(join(paths.codexHome, "sessions", "2026", "08", "28", "rollout-native-codex.jsonl"), "utf8")).toBe("codex");
     expect(await readFile(join(paths.claudeHome, "projects", "project", "native-claude.jsonl"), "utf8")).toBe("claude");
     expect(await readFile(join(legacyCodex, "sessions", "2026", "08", "28", "rollout-unrelated.jsonl"), "utf8")).toBe("other");
+  });
+
+  it("removes only the deleted conversation's managed transcript", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rux-agent-cleanup-")); roots.push(root);
+    const paths = agentDataPaths(join(root, "RUX"));
+    const codexFile = join(paths.codexHome, "sessions", "rollout-codex-id.jsonl");
+    const otherFile = join(paths.codexHome, "sessions", "rollout-other.jsonl");
+    const claudeFile = join(paths.claudeHome, "projects", "project", "claude-id.jsonl");
+    const piFile = join(paths.piHome, "sessions", "pi-id.jsonl");
+    await Promise.all([mkdir(join(paths.codexHome, "sessions"), { recursive: true }), mkdir(join(paths.claudeHome, "projects", "project"), { recursive: true }), mkdir(join(paths.piHome, "sessions"), { recursive: true })]);
+    await Promise.all([writeFile(codexFile, "codex"), writeFile(otherFile, "other"), writeFile(claudeFile, "claude"), writeFile(piFile, "pi")]);
+
+    expect(await removeAgentConversation(paths, { id: "one", title: "Codex", agentId: "codex", nativeSessionId: "codex-id" })).toEqual([codexFile]);
+    expect(await removeAgentConversation(paths, { id: "two", title: "Claude", agentId: "claude-code", nativeSessionId: "claude-id" })).toEqual([claudeFile]);
+    expect(await removeAgentConversation(paths, { id: "three", title: "Pi", agentId: "pi", nativeSessionId: piFile })).toEqual([piFile]);
+    await expect(readFile(codexFile)).rejects.toThrow();
+    await expect(readFile(claudeFile)).rejects.toThrow();
+    await expect(readFile(piFile)).rejects.toThrow();
+    expect(await readFile(otherFile, "utf8")).toBe("other");
   });
 });

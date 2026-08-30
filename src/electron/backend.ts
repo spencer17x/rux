@@ -1,7 +1,7 @@
 import { app, type BrowserWindow, ipcMain as electronIpcMain } from "electron";
 import { join } from "node:path";
 import { AgentSendService } from "./agent-send-service";
-import { agentDataPaths, prepareAgentData } from "./agent-data";
+import { agentDataPaths, prepareAgentData, removeAgentConversation } from "./agent-data";
 import { registerAgentRuntimeIpc } from "./agent-runtime-ipc";
 import { ClaudeCodeClient } from "./agents/claude-code";
 import { CodexAppServerClient } from "./agents/codex-app-server";
@@ -89,6 +89,7 @@ export async function registerBackend(getWindow: () => BrowserWindow | null): Pr
     saveWorkspace: (workspace) => workspaceStore.save(workspace),
     stateDatabase: () => stateDatabase!,
     nativeHistory,
+    removeNativeData: (thread) => removeAgentConversation(dataPaths, thread),
     runProcess,
     gitExecutable: () => executable("git"),
   });

@@ -13,6 +13,7 @@ type Input = {
   preference: { model: string; reasoning: Reasoning }; settings: ComposerSettings; attachments: string[]; webSearch: boolean; agents: AgentDefinition[];
   setMessages: Dispatch<SetStateAction<MessageStore>>; setAttachments: Dispatch<SetStateAction<string[]>>; setComposerValue: Dispatch<SetStateAction<string>>;
   setActiveThread: Dispatch<SetStateAction<ActiveThread | null>>; reloadWorkspace: () => Promise<WorkspaceState>; refreshGit: (projectId?: string) => Promise<void>; notify: (message: string) => void;
+  onDraftPersisted?: (draftId: string) => void;
 };
 
 export function useAgentRuns(input: Input) {
@@ -41,12 +42,14 @@ export function useAgentRuns(input: Input) {
     const agent = input.agents.find((item) => item.id === input.selectedAgent); if (!agent?.integrated) { input.notify(`${agent?.name || input.selectedAgent} 适配器尚未启用`); return; }
     let targetThread = input.activeThread;
     if (targetThread.draft) {
+      const draftId = targetThread.id;
       try {
         const persisted = targetThread.type === "project"
           ? targetThread.projectId ? await input.api.projects.addThread({ projectId: targetThread.projectId, title: targetThread.title }) as ThreadRecord : null
           : await input.api.projects.addStandalone({ title: targetThread.title }) as ThreadRecord;
         if (!persisted) return;
         targetThread = { ...targetThread, ...persisted, draft: false };
+        input.onDraftPersisted?.(draftId);
         await input.reloadWorkspace();
         input.setActiveThread(targetThread);
       } catch (error) {
@@ -63,7 +66,7 @@ export function useAgentRuns(input: Input) {
     try { const result = await input.api.agent.start({ runId, agentId: input.selectedAgent, projectId: targetThread.projectId, prompt, model: input.preference.model, reasoning: input.preference.reasoning, sandboxMode: input.settings.sandboxMode, images: input.attachments, webSearch: input.webSearch, ...(nativeSessionId ? { threadId: nativeSessionId, nativeSessionId } : {}), mode: input.agentMode }) as Record<string, string>; context.threadId = result.threadId || result.sessionId || context.threadId; context.turnId = result.turnId || context.turnId; input.setAttachments([]); }
     catch (error) { contexts.current.delete(runId); input.setMessages((current) => ({ ...current, [targetThread.id]: (current[targetThread.id] || []).map((message) => message.id === assistantMessage.id ? reduceStreamEvent(message, { type: "error", error: userFacingError(error) }) : message) })); setRunningThreadIds((current) => { const next = new Set(current); next.delete(targetThread.id); return next; }); }
   }, [input, sending]);
-  const cancelCurrentRun = useCallback(async () => { const context = [...contexts.current.values()].find((item) => item.localThreadId === input.activeThread?.id); if (!context) return; if (!context.threadId || !context.turnId) { input.notify("Agent 正在初始化，请稍后再停止"); return; } try { await input.api.agent.interrupt({ agentId: context.agentId, runId: context.runId, threadId: context.threadId, turnId: context.turnId }); } catch (error) { input.notify(error instanceof Error ? error.message : String(error)); } }, [input]);
+  const cancelCurrentRun = useCallback(async () => { const context = [...contexts.current.values()].find((item) => item.localThreadId === input.activeThread?.id); if (!context) return; const canInterruptByRunId = context.agentId !== "codex" || input.settings.provider === "custom"; if ((!context.threadId || !context.turnId) && !canInterruptByRunId) { input.notify("Agent 正在初始化，请稍后再停止"); return; } try { await input.api.agent.interrupt({ agentId: context.agentId, runId: context.runId, threadId: context.threadId || context.runId, turnId: context.turnId || context.runId }); } catch (error) { input.notify(error instanceof Error ? error.message : String(error)); } }, [input]);
   const respondToApproval = useCallback(async ({ approvalId, approved, optionId }: { approvalId: string; approved: boolean; optionId?: string }) => { const decision = approved ? optionId === "allow-session" ? "acceptForSession" : "accept" : "decline"; await input.api.agent.respondToApproval({ approvalId, decision }); input.setMessages((current) => Object.fromEntries(Object.entries(current).map(([threadId, messages]) => [threadId, messages.map((message) => ({ ...message, parts: message.parts?.map((part) => part.approval?.id === approvalId ? { ...part, approval: { ...part.approval, approved, optionId } } : part) }))]))); }, [input]);
   return { sending, sendMessage, cancelCurrentRun, respondToApproval, isThreadRunning: (threadId: string) => [...contexts.current.values()].some((context) => context.localThreadId === threadId), isProjectRunning: (projectId: string) => [...contexts.current.values()].some((context) => context.projectId === projectId) };
 }

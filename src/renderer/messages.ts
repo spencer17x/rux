@@ -40,7 +40,7 @@ export function completedStickyTurns(messages: RuxMessage[]): Array<{ id: string
   for (let index = 0; index < messages.length - 1; index += 1) {
     const user = messages[index];
     const assistant = messages[index + 1];
-    if (user.role !== "user" || assistant.role !== "assistant" || assistant.status === "running" || assistant.status === "error") continue;
+    if (user.role !== "user" || assistant.role !== "assistant" || assistant.status === "running" || assistant.status === "error" || assistant.status === "incomplete") continue;
     const text = messageExportText(user).trim();
     if (text) turns.push({ id: user.id, text });
   }
@@ -109,7 +109,8 @@ export function reduceStreamEvent(message: RuxMessage, event: AgentEvent): RuxMe
         : "dynamicToolCall";
     updatePart({ type: "tool-call", toolCallId: event.itemId, toolName, args: { tool: event.approval.toolName, ...event.approval }, argsText: JSON.stringify(event.approval), _itemId: event.itemId }, (part) => ({ ...part, approval: { id: event.approval.id, options: [{ id: "allow-once", kind: "allow-once", label: "允许一次" }, { id: "allow-session", kind: "allow-always", label: "本次会话允许" }, { id: "reject-once", kind: "reject-once", label: "拒绝" }] } }));
   } else if (event.type === "turn-completed") {
-    return { ...message, parts: parts.map((part) => part.status?.type === "running" ? { ...part, status: { type: "complete" } } : part), status: event.status === "completed" ? "complete" : "error", error: event.error ? userFacingError(event.error) : undefined };
+    const interrupted = ["interrupted", "cancelled", "canceled", "aborted"].includes(String(event.status || "").toLowerCase());
+    return { ...message, parts: parts.map((part) => part.status?.type === "running" ? { ...part, status: { type: interrupted ? "incomplete" : "complete" } } : part), status: event.status === "completed" ? "complete" : interrupted ? "incomplete" : "error", error: event.error ? userFacingError(event.error) : undefined };
   } else if (event.type === "error") {
     const error = userFacingError(event.error || "Agent 执行失败");
     parts.push({ type: "text", text: error, status: { type: "incomplete", reason: "error" }, _itemId: `error-${Date.now()}` });

@@ -443,3 +443,69 @@ final result: passed
 - [P3] Source thumbnails use file-type icons rather than image previews because the sandboxed renderer does not receive arbitrary local-file bytes.
 
 final result: passed
+
+---
+
+# Permission Interaction QA — 2026-08-30
+
+## Comparison target
+
+- Permission-menu sources:
+  - `/var/folders/hl/d5hg44c53b958y88jbqlwdw00000gn/T/codex-clipboard-3a4d2cd1-3947-49c0-9695-b7448fa5c851.png`
+  - `/var/folders/hl/d5hg44c53b958y88jbqlwdw00000gn/T/codex-clipboard-7da6eaf0-2ee7-4f2b-81ab-42d8c898c4e6.png`
+  - `/var/folders/hl/d5hg44c53b958y88jbqlwdw00000gn/T/codex-clipboard-5907dea8-a9bf-4bc6-8dc9-b67418d33349.png`
+- Full-access modal source: `/var/folders/hl/d5hg44c53b958y88jbqlwdw00000gn/T/codex-clipboard-cefabe86-c389-4c48-95a3-906c6cbd8172.png`.
+- Enabled-state source: `/var/folders/hl/d5hg44c53b958y88jbqlwdw00000gn/T/codex-clipboard-b6e9fd18-1dd0-4397-a526-bcbb14a11ee5.png`.
+- Packaged implementation: `/Users/17a/projects/rux/qa/product-design-permissions/implementation-full-access-modal-final.jpeg`.
+- Side-by-side evidence: `/Users/17a/projects/rux/qa/product-design-permissions/comparison-full-access-modal-final.png`.
+- State: permission menu opened from the composer, full-access option selected, confirmation modal visible.
+
+## Normalization
+
+- Source modal was normalized to the packaged app's `1364 × 768` capture.
+- Implementation capture is `1364 × 768` at application scale 1.
+- Full-view side-by-side evidence is `2728 × 768`; both modal states use the same light theme and centered overlay state.
+
+## Full-view and focused evidence
+
+- Full-view comparison confirms the same warning hierarchy, explanatory copy, three capability rows, risk statement, learn-more action, cancel action, and red confirmation affordance.
+- The capability card is clearly readable in the full modal comparison, so a separate focused crop was not needed.
+- Icons use the installed Phosphor set; no screenshots or custom SVGs are used inside the product UI.
+
+## Findings and comparison history
+
+### Iteration 1
+
+- [P1] Selecting full access previously used a native `window.confirm` without capability detail.
+  - Fix: added a focus-trapped `alertdialog` with explicit file, terminal, and network/app capabilities; settings change occurs only after confirmation.
+- [P1] Full access had no persistent reminder after activation.
+  - Fix: added a composer-level enabled-state banner with an immediate `关闭` action.
+- [P2] The generic modal rule overrode the specialized full-access width and padding.
+  - Fix: raised selector specificity with `.modal.full-access-modal`; post-fix evidence is `comparison-full-access-modal-final.png`.
+- [P2] The existing scroll-to-bottom control overlapped the enabled-state banner.
+  - Fix: added the `has-full-access-banner` layout state and moved the scroll control above the warning banner.
+- [P2] Permission menu selected/danger styling did not match the supplied references.
+  - Fix: neutral gray selection for regular modes, persistent orange semantics for full access, and a neutral composer chip unless full access is active.
+
+## Final pass
+
+- Fonts and typography: passed. Title, body, capability labels, secondary descriptions, risk copy, and button labels match the reference hierarchy.
+- Spacing and layout rhythm: passed. Centered modal, grouped 72 px capability rows, rounded surface, footer divider, and pill confirmation action align with the supplied design.
+- Colors and visual tokens: passed. Neutral overlay/card treatment, blue file/network icons, dark terminal icon, and red confirmation semantics match the target.
+- Image quality and asset fidelity: passed. All visual assets are native Phosphor icons; no handcrafted SVG/CSS artwork or placeholders were introduced.
+- Copy and content: passed. Rux-specific copy accurately describes the real danger-full-access mapping and does not claim capabilities unavailable to the runtime.
+- Interaction and accessibility: passed. Cancel and Escape preserve the prior mode; confirmation persists full access; the enabled banner remains visible and can disable full access; focus is trapped/restored; the modal uses `alertdialog` and the menu uses pressed-state semantics.
+
+## Primary interactions tested
+
+1. Switch among request approval and assisted approval — healthy.
+2. Select full access and cancel — prior permission remains unchanged.
+3. Select full access and confirm — danger-full-access is persisted.
+4. Read the enabled-state banner and disable full access — healthy.
+5. Verify scroll-to-bottom remains clickable with the banner present — healthy.
+
+## Follow-up polish
+
+- [P3] Settings-page full-access changes still use the settings save action; the high-risk modal is intentionally attached to the primary composer workflow shown in the references.
+
+final result: passed

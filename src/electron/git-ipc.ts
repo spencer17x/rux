@@ -1,5 +1,5 @@
 import { shell } from "electron";
-import { gitCommitSchema, gitStageSchema, gitSwitchSchema, parseInput, projectFileSchema, projectIdSchema } from "../shared/ipc";
+import { gitCommitSchema, gitCompareFileSchema, gitCompareSchema, gitStageSchema, gitSwitchSchema, parseInput, projectFileSchema, projectIdSchema } from "../shared/ipc";
 import { GitService } from "./git-service";
 import type { IpcRegistrar } from "./ipc-types";
 
@@ -10,6 +10,8 @@ export function registerGitIpc(ipc: IpcRegistrar, service: GitService): void {
   ipc.handle("files:open", async (_event, value) => { const input = parseInput(projectFileSchema, value); const error = await shell.openPath(await service.canonicalFile(input.projectId, input.path)); if (error) throw new Error(error); return { opened: true }; });
   ipc.handle("git:branches", async (_event, value) => await service.branches(parseInput(projectIdSchema, value)));
   ipc.handle("git:switch", async (_event, value) => { const input = parseInput(gitSwitchSchema, value); return await service.switchBranch(input.projectId, input.branch); });
+  ipc.handle("git:compare", async (_event, value) => { const input = parseInput(gitCompareSchema, value); return await service.compareBranch(input.projectId, input.baseBranch); });
+  ipc.handle("git:compare-diff", async (_event, value) => { const input = parseInput(gitCompareFileSchema, value); return await service.compareBranchDiff(input.projectId, input.baseBranch, input.path); });
   ipc.handle("git:remote", async (_event, value) => await service.remote(parseInput(projectIdSchema, value)));
   ipc.handle("git:instructions", async (_event, value) => await service.instructions(parseInput(projectIdSchema, value)));
   ipc.handle("git:commit-push", async (_event, value) => { const input = parseInput(gitCommitSchema, value); return await service.commitPush(input.projectId, input.message.trim(), input.push, input.rulesAcknowledged === true); });

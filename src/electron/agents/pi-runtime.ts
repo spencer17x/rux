@@ -4,6 +4,8 @@ import { StringDecoder } from "node:string_decoder";
 import { randomUUID } from "node:crypto";
 import type { CodexStreamEvent } from "./codex-app-server";
 import type { RuntimeCommand } from "../runtime-manager";
+import type { CodexSandboxMode } from "./codex-permissions";
+import { piPermissionArgs } from "./pi-permissions";
 
 type PiRun = {
   runId: string;
@@ -26,6 +28,8 @@ export type PiRuntimeInput = {
   model?: string;
   reasoning?: string;
   mode?: string;
+  sandboxMode: CodexSandboxMode;
+  images?: string[];
   runtime?: { agentDir: string; env: Record<string, string>; providerId: string } | null;
 };
 
@@ -52,7 +56,7 @@ export class PiRuntimeClient {
   }
 
   async startTurn(input: PiRuntimeInput): Promise<{ runId: string; sessionId: string; turnId: string }> {
-    const run = this.spawnRun(input.runId, input.cwd, false, input.runtime);
+    const run = this.spawnRun(input.runId, input.cwd, false, input.runtime, input.sandboxMode);
     if (input.sessionFile) await this.request(run, { type: "switch_session", sessionPath: input.sessionFile });
     if (input.model && input.model !== "default") {
       const separator = input.model.indexOf("/");
@@ -63,7 +67,18 @@ export class PiRuntimeClient {
     const state = await this.request(run, { type: "get_state" });
     run.sessionFile = state?.sessionFile || input.sessionFile;
     if (run.sessionFile) this.emit({ runId: input.runId, type: "thread-started", threadId: run.sessionFile, turnId: input.runId });
-    await this.request(run, { type: "prompt", message: input.prompt });
+    const imagePayloads: Array<{ type: "image"; data: string; mimeType: string }> = [];
+    const contextFiles: string[] = [];
+    for (const path of (input.images || []).slice(0, 8)) {
+      if (!/\.(png|jpe?g|gif|webp)$/i.test(path)) { contextFiles.push(path); continue; }
+      try {
+        const data = await readFile(path); if (data.length > 20 * 1024 * 1024) { contextFiles.push(path); continue; }
+        const extension = path.split(".").pop()?.toLowerCase(); const mimeType = extension === "png" ? "image/png" : extension === "gif" ? "image/gif" : extension === "webp" ? "image/webp" : "image/jpeg";
+        imagePayloads.push({ type: "image", data: data.toString("base64"), mimeType });
+      } catch { contextFiles.push(path); }
+    }
+    const prompt = contextFiles.length ? `${input.prompt}\n\n用户明确选择了以下上下文文件，请按当前权限读取并使用：\n${contextFiles.map((path) => `- ${path}`).join("\n")}` : input.prompt;
+    await this.request(run, { type: "prompt", message: prompt, ...(imagePayloads.length ? { images: imagePayloads } : {}) });
     return { runId: input.runId, sessionId: run.sessionFile || "", turnId: input.runId };
   }
 
@@ -71,14 +86,15 @@ export class PiRuntimeClient {
     const run = this.runs.get(runId);
     if (!run) return;
     try { await this.request(run, { type: "clear_queue" }); await this.request(run, { type: "abort" }); }
-    finally { this.stopRun(runId); }
+    finally { this.emit({ runId, type: "turn-completed", threadId: run.sessionFile, turnId: runId, status: "interrupted" }); this.stopRun(runId); }
   }
 
   stop(): void { for (const id of [...this.runs.keys()]) this.stopRun(id); }
 
-  private spawnRun(runId: string, cwd: string, noSession: boolean, runtime?: PiRuntimeInput["runtime"]): PiRun {
+  private spawnRun(runId: string, cwd: string, noSession: boolean, runtime?: PiRuntimeInput["runtime"], sandboxMode?: CodexSandboxMode): PiRun {
     const command = this.command();
-    const child = spawn(command.command, [...command.argsPrefix, "--mode", "rpc", ...(noSession ? ["--no-session"] : [])], {
+    const permissionArgs = sandboxMode ? piPermissionArgs(sandboxMode) : [];
+    const child = spawn(command.command, [...command.argsPrefix, "--mode", "rpc", ...permissionArgs, ...(noSession ? ["--no-session"] : [])], {
       cwd,
       env: { ...process.env, ...command.env, ...runtime?.env, ...(runtime?.agentDir ? { PI_CODING_AGENT_DIR: runtime.agentDir } : {}), NO_COLOR: "1" },
       stdio: ["pipe", "pipe", "pipe"],

@@ -49,4 +49,14 @@ describe("GitService", () => {
     await service.commitPush("project", "feat: add feature", false, true);
     expect((await execute("git", ["log", "-1", "--pretty=%s"], { cwd: root, encoding: "utf8" })).stdout.trim()).toBe("feat: add feature");
   });
+
+  it("compares the current branch against a validated local base branch", async () => {
+    const base = (await execute("git", ["branch", "--show-current"], { cwd: root, encoding: "utf8" })).stdout.trim();
+    await execute("git", ["switch", "-c", "feature"], { cwd: root, encoding: "utf8" });
+    writeFileSync(join(root, "file.txt"), "first\nfeature\n"); await execute("git", ["add", "file.txt"], { cwd: root, encoding: "utf8" }); await execute("git", ["commit", "-m", "feature"], { cwd: root, encoding: "utf8" });
+    const comparison = await service.compareBranch("project", base);
+    expect(comparison.branch).toBe(`${base}…feature`);
+    expect(comparison.files).toEqual([expect.objectContaining({ path: "file.txt", plus: 1, minus: 0 })]);
+    expect(await service.compareBranchDiff("project", base, "file.txt")).toContain("+feature");
+  });
 });

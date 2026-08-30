@@ -42,6 +42,15 @@ export class GitService {
   async canonicalFile(projectId: string, filePath: string): Promise<string> { const project = await this.resolveProject(projectId); const canonical = await realpath(this.resolveFile(project.path, filePath)); this.resolveFile(project.path, relative(project.path, canonical)); return canonical; }
   async branches(projectId: string): Promise<string[]> { const project = await this.resolveProject(projectId); try { return (await this.runGit(project.path, ["branch", "--format=%(refname:short)"])).split(/\r?\n/).filter(Boolean); } catch { return []; } }
   async switchBranch(projectId: string, branch: string): Promise<GitState> { const project = await this.resolveProject(projectId); const branches = await this.branches(projectId); if (!branches.includes(branch)) throw new Error("分支不存在"); await this.runGit(project.path, ["switch", branch]); return await this.status(projectId); }
+  async compareBranch(projectId: string, baseBranch: string): Promise<GitState> {
+    const project = await this.resolveProject(projectId); const branches = await this.branches(projectId); if (!branches.includes(baseBranch)) throw new Error("比较分支不存在");
+    const head = (await this.runGit(project.path, ["branch", "--show-current"])).trim() || "HEAD"; if (baseBranch === head) throw new Error("请选择不同于当前分支的比较基准");
+    const counts = parseNumstatZ(await this.runGit(project.path, ["diff", "--numstat", "-z", `${baseBranch}...HEAD`]));
+    const fields = (await this.runGit(project.path, ["diff", "--name-status", "-z", `${baseBranch}...HEAD`])).split("\0").filter(Boolean); const files: GitFile[] = [];
+    for (let index = 0; index < fields.length;) { const status = fields[index++]; const renamed = /^[RC]/.test(status); if (renamed) index += 1; const path = fields[index++]; if (!path) continue; files.push({ path, status, untracked: false, staged: false, unstaged: false, ...(counts.get(path) || { plus: 0, minus: 0 }) }); }
+    return { branch: `${baseBranch}…${head}`, files };
+  }
+  async compareBranchDiff(projectId: string, baseBranch: string, filePath: string): Promise<string> { const project = await this.resolveProject(projectId); this.resolveFile(project.path, filePath); const comparison = await this.compareBranch(projectId, baseBranch); if (!comparison.files.some((file) => file.path === filePath)) throw new Error("文件不在当前分支比较中"); return await this.runGit(project.path, ["diff", `${baseBranch}...HEAD`, "--", filePath]); }
   async remote(projectId: string): Promise<string> { const project = await this.resolveProject(projectId); try { return (await this.runGit(project.path, ["remote", "get-url", "origin"])).trim(); } catch { return ""; } }
   async instructions(projectId: string): Promise<{ files: ProjectInstruction[]; stagedPaths: string[] }> {
     const project = await this.resolveProject(projectId);

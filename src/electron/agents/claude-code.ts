@@ -10,6 +10,7 @@ export type ClaudeStreamInput = {
   model?: string;
   reasoning?: string;
   mode?: string;
+  images?: string[];
 };
 
 type ApprovalResolver = {
@@ -71,9 +72,10 @@ export class ClaudeCodeClient {
 
   startTurn(input: ClaudeStreamInput): { runId: string; sessionId: string; turnId: string } {
     if (!input.prompt.trim()) throw new Error("消息不能为空");
+    const prompt = input.images?.length ? `${input.prompt.trim()}\n\n用户明确选择了以下上下文文件，请按当前权限读取并使用：\n${input.images.slice(0, 8).map((path) => `- ${path}`).join("\n")}` : input.prompt;
     const abortController = new AbortController();
     const instance = query({
-      prompt: input.prompt,
+      prompt,
       options: {
         cwd: input.cwd,
         pathToClaudeCodeExecutable: this.executable(),
@@ -142,6 +144,8 @@ export class ClaudeCodeClient {
     if (!run) return;
     run.abortController.abort();
     run.query.close();
+    this.runs.delete(runId);
+    this.emit({ runId, type: "turn-completed", threadId: run.sessionId, turnId: runId, status: "interrupted" });
   }
 
   respondToApproval(approvalId: string, decision: "accept" | "acceptForSession" | "decline"): void {
