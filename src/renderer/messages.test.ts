@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { messageExportText, normalizedMessages, persistentMessages, reduceStreamEvent, type RuxMessage } from "./messages";
+import { completedStickyTurns, messageExportText, normalizedMessages, persistentMessages, reduceStreamEvent, type RuxMessage } from "./messages";
 
 const runningMessage = (): RuxMessage => ({ id: "assistant-1", role: "assistant", parts: [], status: "running" });
 
@@ -18,6 +18,10 @@ describe("canonical message reducer", () => {
 });
 
 describe("message persistence", () => {
+  it("finds completed user turns for conversation sticky", () => {
+    const messages = [{ id: "u1", role: "user", text: "First question" }, { id: "a1", role: "assistant", status: "complete", text: "Done" }, { id: "u2", role: "user", text: "Current question" }, { id: "a2", role: "assistant", status: "running", text: "" }] as RuxMessage[];
+    expect(completedStickyTurns(messages)).toEqual([{ id: "u1", text: "First question" }]);
+  });
   it("exports streamed assistant text", () => {
     expect(messageExportText({ id: "a", role: "assistant", parts: [{ type: "text", text: "answer" }] })).toBe("answer");
   });

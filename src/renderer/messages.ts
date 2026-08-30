@@ -35,6 +35,18 @@ export function messageExportText(message: RuxMessage): string {
   return (message.parts || []).filter((part) => part.type === "text").map((part) => part.text || "").filter(Boolean).join("\n\n");
 }
 
+export function completedStickyTurns(messages: RuxMessage[]): Array<{ id: string; text: string }> {
+  const turns: Array<{ id: string; text: string }> = [];
+  for (let index = 0; index < messages.length - 1; index += 1) {
+    const user = messages[index];
+    const assistant = messages[index + 1];
+    if (user.role !== "user" || assistant.role !== "assistant" || assistant.status === "running" || assistant.status === "error") continue;
+    const text = messageExportText(user).trim();
+    if (text) turns.push({ id: user.id, text });
+  }
+  return turns;
+}
+
 function itemToMessagePart(item: Record<string, any>, startedAt = Date.now()): MessagePart | null {
   if (!item?.id) return null;
   if (item.type === "agentMessage") return { type: "text", text: item.text || "", status: { type: "running" }, _itemId: item.id };

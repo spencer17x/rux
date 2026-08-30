@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useRef, type ComponentPropsWithoutRef, type ReactNode, type RefObject } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ComponentPropsWithoutRef, type ReactNode, type RefObject } from "react";
 import {
   AuiIf,
   AssistantRuntimeProvider,
@@ -14,6 +14,7 @@ import {
   ArrowUp,
   CaretDown,
   Check,
+  CheckCircle,
   CircleNotch,
   Code,
   FileText,
@@ -30,6 +31,7 @@ import {
   X,
 } from "@phosphor-icons/react";
 import type { RuxMessage } from "../renderer/messages";
+import { completedStickyTurns } from "../renderer/messages";
 import { messageTargetFromHref } from "../renderer/message-targets";
 import type { AgentId } from "../renderer/types";
 
@@ -39,6 +41,7 @@ type ApprovalResponse = { approvalId: string; approved: boolean; optionId?: stri
 type OverlayId = "agents" | "agent-mode" | "models" | "reasoning" | "sandbox";
 type Props = {
   messages: RuxMessage[]; running: boolean; emptyTitle: string; projectId?: string; onNewMessage: (text: string) => Promise<unknown>; onCancel: () => Promise<unknown>; onApproval: (response: ApprovalResponse) => Promise<unknown>;
+  conversationSticky: boolean;
   agents: AgentDefinition[]; runtimeProgress: RuntimeProgress; selectedAgent: AgentId; onSelectAgent: (agentId: AgentId) => void; agentMode: string; onAgentMode: (mode: string) => void;
   modelLabel: string; reasoningLabel: string; permissionLabel: string; showPermission?: boolean; modelOpen: "models" | "reasoning" | null; sandboxOpen: boolean;
   modelPopover: ReactNode; permissionPopover: ReactNode; onToggleModel: (mode: "models" | "reasoning") => void; onToggleSandbox: () => void;
@@ -164,10 +167,48 @@ function AssistantMessage() {
           <div className="agent-response-loading" role="status" aria-live="polite"><CircleNotch size={15} className="spin" /><span>Rux 正在准备回复</span><i aria-hidden="true"><b /><b /><b /></i></div>
         </AuiIf>
         <MessagePrimitive.Parts components={{ Text: AssistantText, Reasoning: ReasoningPart, tools: { Fallback: ToolPart } }} />
+        <AuiIf condition={(state) => state.message.status?.type === "running" && state.message.parts.length > 0}>
+          <div className="agent-turn-status is-running" role="status" aria-live="polite"><CircleNotch size={15} className="spin" /><strong>进行中</strong><span>Rux 正在继续处理</span><i aria-hidden="true"><b /><b /><b /></i></div>
+        </AuiIf>
+        <AuiIf condition={(state) => state.message.status?.type === "complete"}>
+          <div className="agent-turn-status is-complete" aria-label="本轮状态：已完成"><CheckCircle size={15} weight="fill" /><span>已完成</span></div>
+        </AuiIf>
+        <AuiIf condition={(state) => state.message.status?.type === "incomplete"}>
+          <div className="agent-turn-status is-incomplete" aria-label="本轮状态：未完成"><WarningCircle size={15} weight="fill" /><span>未完成</span></div>
+        </AuiIf>
         <MessagePrimitive.Error><span className="aui-message-error">消息执行失败</span></MessagePrimitive.Error>
       </div>
     </MessagePrimitive.Root>
   );
+}
+
+function ConversationSticky({ enabled, messages, viewportRef }: { enabled: boolean; messages: RuxMessage[]; viewportRef: RefObject<HTMLDivElement | null> }) {
+  const turns = useMemo(() => completedStickyTurns(messages), [messages]);
+  const [active, setActive] = useState<{ id: string; text: string } | null>(null);
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!enabled || !viewport || !turns.length) { setActive(null); return undefined; }
+    let frame = 0;
+    const update = () => {
+      frame = 0;
+      const viewportTop = viewport.getBoundingClientRect().top + 12;
+      const elements = new Map(Array.from(viewport.querySelectorAll<HTMLElement>("[data-message-id]")).map((element) => [element.dataset.messageId || "", element]));
+      let candidate: { id: string; text: string } | null = null;
+      for (const turn of turns) {
+        const element = elements.get(turn.id);
+        if (element && element.getBoundingClientRect().top <= viewportTop) candidate = turn;
+      }
+      setActive((current) => current?.id === candidate?.id ? current : candidate);
+    };
+    const schedule = () => { if (!frame) frame = requestAnimationFrame(update); };
+    viewport.addEventListener("scroll", schedule, { passive: true });
+    const observer = new ResizeObserver(schedule);
+    observer.observe(viewport);
+    schedule();
+    return () => { viewport.removeEventListener("scroll", schedule); observer.disconnect(); if (frame) cancelAnimationFrame(frame); };
+  }, [enabled, turns, viewportRef]);
+  if (!enabled || !active) return null;
+  return <div className="conversation-sticky"><button type="button" aria-label={`返回上一轮问题：${active.text}`} onClick={() => { const viewport = viewportRef.current; const target = viewport?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(active.id)}"]`); target?.scrollIntoView({ behavior: "smooth", block: "start" }); }}><span>上一轮</span><strong>{active.text}</strong><ArrowUp size={15} /></button></div>;
 }
 
 function AgentSelector({ agents, selectedAgent, onSelectAgent, runtimeProgress, open, onToggle, onClose, buttonRef }: { agents: AgentDefinition[]; selectedAgent: AgentId; onSelectAgent: (agentId: AgentId) => void; runtimeProgress: RuntimeProgress; open: boolean; onToggle: () => void; onClose: () => void; buttonRef: RefObject<HTMLButtonElement | null> }) {
@@ -217,6 +258,7 @@ export default function RuxAssistantThread({
   onNewMessage,
   onCancel,
   onApproval,
+  conversationSticky,
   agents,
   runtimeProgress,
   selectedAgent,
@@ -258,6 +300,7 @@ export default function RuxAssistantThread({
     onRespondToToolApproval: async ({ approvalId, approved, optionId }) => { await onApproval({ approvalId, approved, optionId }); },
   });
   const selectedDefinition = useMemo(() => agents.find((agent) => agent.id === selectedAgent), [agents, selectedAgent]);
+  const viewportRef = useRef<HTMLDivElement>(null);
   const agentTrigger = useRef<HTMLButtonElement>(null);
   const modeTrigger = useRef<HTMLButtonElement>(null);
   const modelTrigger = useRef<HTMLButtonElement>(null);
@@ -285,7 +328,8 @@ export default function RuxAssistantThread({
     <AssistantRuntimeProvider runtime={runtime}>
       <MessageProjectContext.Provider value={projectId}>
       <ThreadPrimitive.Root className="aui-thread-root">
-        <ThreadPrimitive.Viewport className="aui-thread-viewport">
+        <ConversationSticky enabled={conversationSticky} messages={messages} viewportRef={viewportRef} />
+        <ThreadPrimitive.Viewport ref={viewportRef} className="aui-thread-viewport">
           <ThreadPrimitive.Empty>
             <div className="conversation-empty"><Robot size={30} /><h2>{emptyTitle}</h2><p>输入任务后，Rux 将显示 Agent 的流式文本、思考与工具执行过程。</p></div>
           </ThreadPrimitive.Empty>

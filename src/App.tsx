@@ -165,6 +165,7 @@ function App() {
     onNewMessage: sendMessage,
     onCancel: cancelCurrentRun,
     onApproval: respondToApproval,
+    conversationSticky: settings.conversationSticky,
     agents,
     runtimeProgress,
     selectedAgent,

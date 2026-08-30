@@ -36,7 +36,12 @@ test("creates the initial standalone conversation and opens typed settings", asy
   await expect(page.getByText("独立会话", { exact: true }).first()).toBeVisible();
   await page.getByRole("textbox", { name: "消息" }).fill("Create standalone draft");
   await page.getByRole("button", { name: "发送" }).click();
+  await expect(page.getByText("进行中", { exact: true })).toBeVisible();
+  await expect(page.getByText("Rux 正在继续处理", { exact: true })).toBeVisible();
   await expect(page.getByText("RUX_E2E_AGENT_OK", { exact: true }).last()).toBeVisible();
+  await expect(page.getByText("进行中", { exact: true })).toBeHidden();
+  await expect(page.getByText("Rux 正在继续处理", { exact: true })).toBeHidden();
+  await expect(page.getByText("已完成", { exact: true }).last()).toBeVisible();
   await page.getByRole("button", { name: "复制会话内容" }).click();
   await expect(page.getByRole("status")).toContainText("会话内容已复制");
   await page.getByRole("button", { name: /会话操作 未命名会话/ }).click();
@@ -58,6 +63,12 @@ test("creates the initial standalone conversation and opens typed settings", asy
   await expect(page.getByRole("heading", { name: "模型与连接" })).toBeVisible();
   await page.getByRole("button", { name: "常规" }).click();
   await expect(page.getByRole("heading", { name: "账户" })).toBeVisible();
+  const stickySwitch = page.getByRole("switch", { name: "对话 Sticky" });
+  await expect(stickySwitch).toHaveAttribute("aria-checked", "true");
+  await stickySwitch.click();
+  await expect(stickySwitch).toHaveAttribute("aria-checked", "false");
+  await page.getByRole("button", { name: "保存对话设置" }).click();
+  await expect(page.locator(".settings-status")).toContainText("已保存");
   await page.getByRole("button", { name: "返回 Rux" }).click();
   await page.getByRole("button", { name: "选择 Agent 模式" }).click();
   await expect(page.getByRole("menu")).toBeVisible();

@@ -36,6 +36,7 @@ export const settingsInputSchema = z.object({
   sandboxMode: sandboxModeSchema.optional(),
   uiFontSize: z.number().min(8).max(32).optional(),
   allowConversationOverride: z.boolean().optional(),
+  conversationSticky: z.boolean().optional(),
 });
 
 export const providerSaveSchema = z.object({
