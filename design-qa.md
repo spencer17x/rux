@@ -93,6 +93,68 @@ final result: passed
 
 ---
 
+# Permission Icon and Enabled-State QA — 2026-08-31
+
+## Comparison target
+
+- Icon-consistency source: `/var/folders/hl/d5hg44c53b958y88jbqlwdw00000gn/T/codex-clipboard-92c214ba-3142-4d21-bfa4-01e1ed044b82.png`.
+- Banner-removal source: `/var/folders/hl/d5hg44c53b958y88jbqlwdw00000gn/T/codex-clipboard-28f45df2-3be6-4fd0-8905-fe6d3bf935bd.png`.
+- Browser-rendered implementation: `/Users/17a/projects/rux/qa/product-design-permissions/permission-icon-consistency-2026-08-31.png`.
+- Focused comparison: `/Users/17a/projects/rux/qa/product-design-permissions/permission-popover-focused-comparison-2026-08-31.png`.
+- Full-access state without banner: `/Users/17a/projects/rux/qa/product-design-permissions/full-access-without-banner-2026-08-31.png`.
+- State: light theme, independent conversation, permission popover open with `请求批准` selected; second capture has confirmed full access with the popover closed.
+
+## Normalization
+
+- Source icon screenshot: `1130 × 674` px at inferred 2× application density.
+- Browser implementation: `1130 × 674` CSS px at device scale factor 1.
+- Source popover crop: `698 × 498` px, normalized to `350 × 248` px.
+- Implementation popover crop: `350 × 248` px.
+- Focused comparison: `700 × 248` px with reference on the left and implementation on the right.
+
+## Full-view and focused evidence
+
+- The focused popover comparison confirms matching HandPalm, ShieldCheck, WarningCircle, and Check icons, selected-row fill, typography, copy, spacing, and semantic orange danger treatment.
+- Runtime DOM verification confirms the composer button SVG path equals the selected option SVG path for both `read-only` and `danger-full-access`.
+- Full-access capture confirms the composer remains in its normal compact position and `.full-access-banner` has zero rendered instances.
+- A fresh browser tab rendered the preview without console errors. The permission menu, mode switching, full-access confirmation, and absence of the persistent banner were exercised.
+
+## Findings and comparison history
+
+### Iteration 1
+
+- [P1] The composer always rendered ShieldCheck even when the selected permission option used HandPalm or WarningCircle.
+  - Fix: the composer now selects HandPalm for `read-only`, ShieldCheck for `workspace-write`, and WarningCircle for `danger-full-access` from the same Phosphor icon set used by the menu.
+  - Post-fix evidence: `permission-popover-focused-comparison-2026-08-31.png`; runtime SVG-path equality is true.
+- [P2] The persistent full-access banner repeated information already visible in the orange permission control and consumed vertical composer space.
+  - Fix: removed the banner, its close action, special thread layout class, and scroll-button offset. The earlier 2026-08-30 banner recommendation is superseded by this user-selected direction.
+  - Post-fix evidence: `full-access-without-banner-2026-08-31.png`; banner count is zero.
+
+## Final pass
+
+- Fonts and typography: passed. Labels, secondary copy, weights, line height, and underlined learn-more action match the reference.
+- Spacing and layout rhythm: passed. The normalized `350 × 248` popover, row spacing, radii, and composer control density align with the source.
+- Colors and visual tokens: passed. Neutral selected surface and orange danger semantics use the existing Rux tokens consistently.
+- Image quality and asset fidelity: passed. All icons are native Phosphor vectors; no raster substitutes, handcrafted SVGs, or CSS drawings were introduced.
+- Copy and content: passed. The three permission labels and descriptions remain unchanged; the redundant enabled-state copy is removed as requested.
+- Interaction and accessibility: passed. The trigger retains its accessible name, exposes the active mode through `data-permission-mode`, and icon state follows selection without changing menu behavior.
+
+## Primary interactions tested
+
+1. Open permission menu in read-only mode — HandPalm matches the selected row.
+2. Select and confirm full access — WarningCircle and `完全访问` are shown in the composer.
+3. Confirm no persistent full-access banner is rendered — passed.
+4. Switch back to assisted approval — ShieldCheck and `帮我批准` are restored.
+5. Fresh preview load and console-error check — passed.
+
+## Follow-up polish
+
+- No actionable P0/P1/P2 differences remain for the requested states.
+
+final result: passed
+
+---
+
 # Project Tree Interaction Design QA — 2026-08-29
 
 ## Comparison target
@@ -507,5 +569,62 @@ final result: passed
 ## Follow-up polish
 
 - [P3] Settings-page full-access changes still use the settings save action; the high-risk modal is intentionally attached to the primary composer workflow shown in the references.
+
+final result: passed
+
+---
+
+# Permission Icon Source-Match QA — 2026-08-31
+
+## Comparison target
+
+- Source visual truth: `/var/folders/hl/d5hg44c53b958y88jbqlwdw00000gn/T/codex-clipboard-f6f022b5-b3d0-4dee-93e8-3c215c21ee49.png`.
+- Browser-rendered implementation: `/Users/17a/projects/rux/qa/product-design-permissions/permission-icons-final-2026-08-31.png`.
+- Focused three-state comparison: `/Users/17a/projects/rux/qa/product-design-permissions/permission-icons-three-state-comparison-2026-08-31.png`.
+- State: light theme, permission menu open, `帮我批准` selected; composer trigger and selected row show the same icon asset.
+
+## Normalization
+
+- Source screenshot: `732 × 432` px.
+- Browser implementation: `1130 × 674` CSS px at device scale factor 1.
+- Each source icon was cropped at `34 × 34` px and each implementation icon at `28 × 28` px, then normalized to `64 × 64` px.
+- Focused comparison: `128 × 192` px; each row places the source icon on the left and implementation icon on the right.
+
+## Full-view and focused evidence
+
+- The full browser capture confirms the three icons remain aligned in the existing permission-menu grid and the selected icon is repeated in the composer control.
+- The focused comparison confirms matching HandPalm for request approval, terminal-prompt approval shield for assisted approval, and exclamation approval shield for full access.
+- Runtime verification confirms the composer and selected row reference the same assisted-approval asset; the active mode is `workspace-write`.
+- Browser console error check: no errors.
+
+## Findings and comparison history
+
+### Iteration 1
+
+- [P1] `ShieldChevron` preserved a shield silhouette but its internal chevron and pointed lower section did not match the screenshot's terminal-prompt approval shield.
+  - Fix: extracted the supplied terminal-prompt approval shield as a transparent 2× raster asset and reused it in both menu and composer states.
+- [P2] The standard `ShieldWarning` had a sharper lower point than the rounded full-access shield shown in the source.
+  - Fix: extracted the supplied full-access warning shield as a transparent 2× raster asset.
+- Request approval already used the matching Phosphor HandPalm and required no replacement.
+
+## Final pass
+
+- Fonts and typography: passed; no typography was changed by this scoped icon correction.
+- Spacing and layout rhythm: passed; icon slots remain `20 px` in menu rows and `16 px` in the composer.
+- Colors and visual tokens: passed; the assisted icon follows neutral opacity in the composer, while the full-access asset retains the source orange warning color.
+- Image quality and asset fidelity: passed; the two source-specific icons use user-supplied artwork at 2× density with alpha transparency, while HandPalm remains a native Phosphor vector.
+- Copy and content: passed; labels and descriptions are unchanged.
+- Interaction and accessibility: passed; decorative raster icons use empty alt text and `aria-hidden`, while the permission button retains its accessible label and mode attribute.
+
+## Primary interactions tested
+
+1. Open permission menu — healthy.
+2. Select `帮我批准` — source-matched shield appears in selected row and composer.
+3. Verify identical trigger/selected asset URLs — passed.
+4. Confirm all three mode icons render and the browser console remains error-free — passed.
+
+## Follow-up polish
+
+- No actionable P0/P1/P2 differences remain for the requested icon states.
 
 final result: passed

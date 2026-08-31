@@ -24,7 +24,6 @@ import {
   Paperclip,
   Plus,
   Robot,
-  ShieldCheck,
   Stop,
   TerminalWindow,
   WarningCircle,
@@ -34,6 +33,7 @@ import type { RuxMessage } from "../renderer/messages";
 import { completedStickyTurns } from "../renderer/messages";
 import { messageTargetFromHref } from "../renderer/message-targets";
 import type { AgentId } from "../renderer/types";
+import PermissionModeIcon from "../components/PermissionModeIcon";
 
 type AgentDefinition = { id: AgentId; name: string; installed: boolean; integrated: boolean; version: string; modes?: Array<{ id: string; label: string }> };
 type RuntimeProgress = Record<string, { state: string; percent?: number; message?: string }>;
@@ -43,8 +43,8 @@ type Props = {
   messages: RuxMessage[]; running: boolean; emptyTitle: string; projectId?: string; onNewMessage: (text: string) => Promise<unknown>; onCancel: () => Promise<unknown>; onApproval: (response: ApprovalResponse) => Promise<unknown>;
   conversationSticky: boolean;
   agents: AgentDefinition[]; runtimeProgress: RuntimeProgress; selectedAgent: AgentId; onSelectAgent: (agentId: AgentId) => void; agentMode: string; onAgentMode: (mode: string) => void;
-  modelLabel: string; reasoningLabel: string; permissionLabel: string; showPermission?: boolean; modelOpen: "models" | "reasoning" | null; sandboxOpen: boolean;
-  permissionDanger?: boolean; fullAccessEnabled?: boolean; onDisableFullAccess: () => void;
+  modelLabel: string; reasoningLabel: string; permissionLabel: string; permissionMode: "read-only" | "workspace-write" | "danger-full-access"; showPermission?: boolean; modelOpen: "models" | "reasoning" | null; sandboxOpen: boolean;
+  permissionDanger?: boolean;
   modelPopover: ReactNode; permissionPopover: ReactNode; onToggleModel: (mode: "models" | "reasoning") => void; onToggleSandbox: () => void;
   activeOverlay: OverlayId | null; onOverlayChange: (overlay: OverlayId | null) => void;
   attachments: string[]; showAttachments?: boolean; webSearch?: boolean; showWebSearch?: boolean; onToggleWebSearch: () => void;
@@ -270,9 +270,8 @@ export default function RuxAssistantThread({
   modelLabel,
   reasoningLabel,
   permissionLabel,
+  permissionMode,
   permissionDanger = false,
-  fullAccessEnabled = false,
-  onDisableFullAccess,
   showPermission = true,
   modelOpen,
   sandboxOpen,
@@ -337,7 +336,7 @@ export default function RuxAssistantThread({
   return (
     <AssistantRuntimeProvider runtime={runtime}>
       <MessageProjectContext.Provider value={projectId}>
-      <ThreadPrimitive.Root className={`aui-thread-root ${fullAccessEnabled ? "has-full-access-banner" : ""}`}>
+      <ThreadPrimitive.Root className="aui-thread-root">
         <ConversationSticky enabled={conversationSticky} messages={messages} viewportRef={viewportRef} />
         <ThreadPrimitive.Viewport ref={viewportRef} className="aui-thread-viewport">
           <ThreadPrimitive.Empty>
@@ -347,7 +346,6 @@ export default function RuxAssistantThread({
         </ThreadPrimitive.Viewport>
         <ThreadPrimitive.ScrollToBottom className="aui-scroll-bottom" aria-label="滚动到底部"><ArrowDown size={16} /></ThreadPrimitive.ScrollToBottom>
         <ComposerPrimitive.Root className="composer-wrap aui-composer-wrap">
-          {fullAccessEnabled && <div className="full-access-banner" role="status"><WarningCircle size={19} /><span><strong>完整访问权限已开启</strong><small>Rux 可访问任意文件、运行命令并使用互联网</small></span><button type="button" onClick={onDisableFullAccess}>关闭</button></div>}
           {modelOpen && <div data-overlay-scope>{modelPopover}</div>}
           <div className="composer">
             {runtimeProgress?.[selectedAgent] && !["ready", "error"].includes(runtimeProgress[selectedAgent].state) && <div className="runtime-inline-progress"><CircleNotch size={13} className="spin" /><span>{runtimeProgress[selectedAgent].state === "downloading" ? `正在下载 ${agents.find((agent) => agent.id === selectedAgent)?.name || selectedAgent} 运行时` : "正在验证并安装运行时"}</span><em>{runtimeProgress[selectedAgent].percent || 0}%</em><i><i style={{ width: `${runtimeProgress[selectedAgent].percent || 4}%` }} /></i></div>}
@@ -358,7 +356,7 @@ export default function RuxAssistantThread({
               <div className="composer-left">
                 {showAttachments && <button type="button" className="icon-button" aria-label="添加文件" onClick={onAddFiles}><Plus size={19} /></button>}
                 {showWebSearch && <button type="button" className={`icon-button ${webSearch ? "is-active" : ""}`} aria-label={webSearch ? "关闭网页搜索" : "启用网页搜索"} title={webSearch ? "网页搜索已启用" : "启用网页搜索"} onClick={onToggleWebSearch}><Globe size={18} /></button>}
-                {showPermission && <span className="scope-menu-wrap" data-overlay-scope><button ref={sandboxTrigger} type="button" className={`scope-button ${permissionDanger ? "" : "neutral"}`} aria-label="操作批准方式" onClick={onToggleSandbox} aria-expanded={sandboxOpen} aria-haspopup="menu"><ShieldCheck size={16} />{permissionLabel}<CaretDown size={12} /></button>{sandboxOpen && permissionPopover}</span>}
+                {showPermission && <span className="scope-menu-wrap" data-overlay-scope><button ref={sandboxTrigger} type="button" className={`scope-button ${permissionDanger ? "" : "neutral"}`} data-permission-mode={permissionMode} aria-label="操作批准方式" onClick={onToggleSandbox} aria-expanded={sandboxOpen} aria-haspopup="menu"><PermissionModeIcon mode={permissionMode} size={16} />{permissionLabel}<CaretDown size={12} /></button>{sandboxOpen && permissionPopover}</span>}
               </div>
               <div className="composer-right">
                 <AgentSelector agents={agents} selectedAgent={selectedAgent} onSelectAgent={onSelectAgent} runtimeProgress={runtimeProgress} open={activeOverlay === "agents"} onToggle={() => onOverlayChange(activeOverlay === "agents" ? null : "agents")} onClose={() => onOverlayChange(null)} buttonRef={agentTrigger} />

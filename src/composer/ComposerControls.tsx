@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, CircleNotch, FolderOpen, Globe, HandPalm, ShieldCheck, TerminalWindow, WarningCircle } from "@phosphor-icons/react";
+import { Check, CircleNotch, FolderOpen, Globe, TerminalWindow, WarningCircle } from "@phosphor-icons/react";
 import type { AuthState } from "../renderer/types";
 import { userFacingError } from "../renderer/errors";
+import PermissionModeIcon, { type PermissionMode } from "../components/PermissionModeIcon";
 
 export type Reasoning = "none" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
 export type SandboxMode = "read-only" | "workspace-write" | "danger-full-access";
@@ -10,9 +11,9 @@ export type ModelInfo = { id: string; model: string; displayName: string; descri
 
 export const reasoningLabels: Record<string, string> = { none: "无", off: "关闭", minimal: "最小", low: "低", medium: "中", high: "高", xhigh: "极高", max: "最大", ultra: "Ultra" };
 const permissionOptions = [
-  { value: "read-only" as const, shortLabel: "请求批准", title: "请求批准", description: "编辑外部文件和使用互联网时始终询问", Icon: HandPalm },
-  { value: "workspace-write" as const, shortLabel: "帮我批准", title: "帮我批准", description: "仅对检测到的风险操作请求批准", Icon: ShieldCheck },
-  { value: "danger-full-access" as const, shortLabel: "完全访问", title: "完全访问权限", description: "可不受限制地访问互联网和你电脑上的任何文件", Icon: WarningCircle },
+  { value: "read-only" as const, shortLabel: "请求批准", title: "请求批准", description: "编辑外部文件和使用互联网时始终询问" },
+  { value: "workspace-write" as const, shortLabel: "帮我批准", title: "帮我批准", description: "仅对检测到的风险操作请求批准" },
+  { value: "danger-full-access" as const, shortLabel: "完全访问", title: "完全访问权限", description: "可不受限制地访问互联网和你电脑上的任何文件" },
 ];
 export const sandboxLabels = Object.fromEntries(permissionOptions.map((option) => [option.value, option.shortLabel])) as Record<SandboxMode, string>;
 
@@ -42,9 +43,9 @@ export function PermissionPopover({ selectedValue, onSelect, onLearnMore, agentI
     : option.value === "workspace-write"
       ? { ...option, description: "Pi RPC 暂不支持逐次审批，请使用只读或完整访问" }
       : option) : permissionOptions;
-  return <span className="scope-popover permission-popover" role="dialog" aria-label="操作批准方式"><span className="permission-popover-heading"><strong>应如何批准 Rux 操作？</strong><button type="button" onClick={onLearnMore}>了解更多</button></span>{options.map(({ value, title, description, Icon }) => {
+  return <span className="scope-popover permission-popover" role="dialog" aria-label="操作批准方式"><span className="permission-popover-heading"><strong>应如何批准 Rux 操作？</strong><button type="button" onClick={onLearnMore}>了解更多</button></span>{options.map(({ value, title, description }) => {
     const disabled = agentId === "pi" && value === "workspace-write";
-    return <button type="button" key={value} disabled={disabled} aria-disabled={disabled} aria-pressed={selectedValue === value} className={`permission-option ${value === "danger-full-access" ? "is-danger" : ""} ${selectedValue === value ? "is-selected" : ""}`} onClick={() => onSelect(value)}><Icon size={20} /><span><strong>{title}</strong><small>{description}</small></span>{selectedValue === value && <Check size={18} weight="bold" />}</button>;
+    return <button type="button" key={value} disabled={disabled} aria-disabled={disabled} aria-pressed={selectedValue === value} className={`permission-option ${value === "danger-full-access" ? "is-danger" : ""} ${selectedValue === value ? "is-selected" : ""}`} onClick={() => onSelect(value)}><PermissionModeIcon mode={value as PermissionMode} size={20} /><span><strong>{title}</strong><small>{description}</small></span>{selectedValue === value && <Check size={18} weight="bold" />}</button>;
   })}</span>;
 }
 

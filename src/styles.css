@@ -987,27 +987,10 @@ textarea:focus-visible {
 .permission-option.is-danger.is-selected small { color: var(--orange); }
 .permission-option:disabled { color: var(--muted); cursor: not-allowed; opacity: 1; }
 .permission-option:disabled small { color: var(--subtle); }
+.permission-mode-icon { display: block; flex: 0 0 auto; object-fit: contain; }
+.scope-button.neutral .permission-mode-icon { opacity: 0.58; }
+.permission-option:disabled .permission-mode-icon { opacity: 0.35; }
 .voice-listening { color: var(--red) !important; animation: voice-pulse 1.2s ease-in-out infinite; }
-
-.full-access-banner {
-  display: grid;
-  min-height: 62px;
-  grid-template-columns: 26px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 8px;
-  padding: 9px 12px;
-  border: 1px solid #f0d3cb;
-  border-radius: 13px;
-  color: #4f4f4b;
-  background: #fff8f5;
-}
-
-.full-access-banner > svg { color: var(--orange); }
-.full-access-banner > span { display: flex; min-width: 0; flex-direction: column; gap: 3px; }
-.full-access-banner strong { font-size: 13px; }
-.full-access-banner small { overflow: hidden; color: #7f746f; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-.full-access-banner button { min-height: 30px; padding: 0 10px; border: 0; border-radius: 8px; color: var(--orange); background: #ffffff; }
 
 .modal.full-access-modal {
   width: min(680px, calc(100vw - 54px));
@@ -1489,7 +1472,6 @@ textarea:focus-visible {
 
 .aui-message-error { display: block; margin-top: 8px; color: var(--red); font-size: 12px; }
 .aui-scroll-bottom { position: absolute; right: 10px; bottom: 118px; z-index: 8; display: grid; width: 30px; height: 30px; place-items: center; border: 1px solid var(--border); border-radius: 50%; background: white; box-shadow: 0 3px 10px rgba(0,0,0,.08); }
-.aui-thread-root.has-full-access-banner .aui-scroll-bottom { bottom: 188px; }
 
 .aui-composer-input {
   display: block;
