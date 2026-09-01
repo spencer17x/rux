@@ -72,6 +72,7 @@ export const agentStartSchema = z.object({
   prompt: z.string().trim().min(1).max(1_000_000),
   model: z.string().trim().max(200).optional(),
   reasoning: reasoningSchema.optional(),
+  serviceTier: z.string().trim().min(1).max(80).nullable().optional(),
   sandboxMode: sandboxModeSchema.optional(),
   images: z.array(z.string().min(1).max(4096)).max(8).optional(),
   webSearch: z.boolean().optional(),

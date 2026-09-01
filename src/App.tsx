@@ -30,7 +30,7 @@ const TypedSettingsScreen = lazy(() => import("./settings/SettingsScreen"));
 const TypedWorkspaceDock = lazy(() => import("./workspace/WorkspaceDock"));
 
 const api = window.rux;
-type OverlayId = "agents" | "agent-mode" | "models" | "reasoning" | "sandbox";
+type OverlayId = "agents" | "agent-mode" | "run-settings" | "sandbox";
 type ComposerDraft = { text: string; attachments: string[]; webSearch: boolean };
 
 function loadComposerDrafts(): Record<string, ComposerDraft> {
@@ -51,7 +51,7 @@ function App() {
   const [messages, setMessages] = usePersistentMessages(api, workspaceReady, notify);
   const [activeOverlay, setActiveOverlay] = useState<OverlayId | null>(null);
   const addProjectTrigger = useRef<HTMLButtonElement | null>(null);
-  const modelOpen = activeOverlay === "models" || activeOverlay === "reasoning" ? activeOverlay : null;
+  const modelOpen = activeOverlay === "run-settings";
   const sandboxOpen = activeOverlay === "sandbox";
   const [composerDrafts, setComposerDrafts] = useState<Record<string, ComposerDraft>>(loadComposerDrafts);
   const [listening, setListening] = useState(false);
@@ -88,8 +88,8 @@ function App() {
   const customModels: ModelInfo[] = settings.provider === "custom" && settings.model ? [{ id: `custom:${settings.model}`, model: settings.model, displayName: settings.model, description: settings.serviceName, isDefault: true, defaultReasoningEffort: settings.reasoning, supportedReasoningEfforts: [{ reasoningEffort: settings.reasoning, description: `${settings.serviceName} · ${settings.reasoning}` }] }] : [];
   const activeModels = selectedAgent === "codex" ? settings.provider === "custom" ? customModels : models : modelsByAgent[selectedAgent] || [];
   const activePreference = selectedAgent === "codex"
-    ? { model: settings.model, reasoning: settings.reasoning }
-    : agentPreferences[selectedAgent] || { model: "default", reasoning: "high" };
+    ? { model: settings.model, reasoning: settings.reasoning, serviceTier: agentPreferences.codex.serviceTier }
+    : agentPreferences[selectedAgent] || { model: "default", reasoning: "high", serviceTier: null };
   const activeSandboxMode: SandboxMode = selectedAgent === "pi" && settings.sandboxMode === "workspace-write" ? "read-only" : settings.sandboxMode;
   const supportsSandbox = selectedAgent === "pi" || (selectedAgent === "codex" && settings.provider === "codex");
   const activeRunSettings: AppSettings = { ...settings, sandboxMode: activeSandboxMode };
@@ -160,11 +160,12 @@ function App() {
     try {
       const supported = model.supportedReasoningEfforts.map((effort) => effort.reasoningEffort);
       const reasoning = supported.includes(activePreference.reasoning) ? activePreference.reasoning : model.defaultReasoningEffort;
+      const serviceTier = model.serviceTiers?.some((tier) => tier.id === activePreference.serviceTier) ? activePreference.serviceTier : model.defaultServiceTier || null;
       if (selectedAgent === "codex") {
         await saveSettings({ model: model.model, reasoning });
-        setAgentPreferences((current) => ({ ...current, codex: { model: model.model, reasoning } }));
+        setAgentPreferences((current) => ({ ...current, codex: { model: model.model, reasoning, serviceTier } }));
       } else {
-        setAgentPreferences((current) => ({ ...current, [selectedAgent]: { model: model.model, reasoning } }));
+        setAgentPreferences((current) => ({ ...current, [selectedAgent]: { model: model.model, reasoning, serviceTier } }));
       }
       setActiveOverlay(null);
       notify(`已切换到 ${model.displayName}`);
@@ -182,6 +183,12 @@ function App() {
       setActiveOverlay(null);
       notify(`思考程度已切换为${reasoningLabels[reasoning] || reasoning}`);
     } catch (error) { notify(errorMessage(error)); }
+  }
+
+  function selectServiceTier(serviceTier: string | null) {
+    setAgentPreferences((current) => ({ ...current, [selectedAgent]: { ...current[selectedAgent], serviceTier } }));
+    setActiveOverlay(null);
+    notify(serviceTier === "priority" ? "速度已切换为快速" : "速度已切换为标准");
   }
 
   if (fatalError) return <div className="fatal-screen"><WarningCircle size={32} /><h1>Rux 无法启动</h1><p>{fatalError}</p></div>;
@@ -236,9 +243,9 @@ function App() {
     sandboxOpen,
     activeOverlay,
     onOverlayChange: setActiveOverlay,
-    modelPopover: modelOpen ? <ModelPopover mode={modelOpen} settings={activeComposerSettings} auth={auth} models={activeModels} loading={settings.provider === "custom" && selectedAgent === "codex" ? false : modelsLoading} error={settings.provider === "custom" && selectedAgent === "codex" ? "" : modelsError} onSelectModel={selectModel} onSelectReasoning={selectReasoning} connectionLabel={selectedAgent === "claude-code" ? `${modelDisplayName(activeComposerSettings, activeModels)} · Claude Code` : settings.provider === "custom" && selectedAgent === "codex" ? `${settings.serviceName} · 文本 Provider` : undefined} /> : null,
+    modelPopover: modelOpen ? <ModelPopover settings={activeComposerSettings} auth={auth} models={activeModels} loading={settings.provider === "custom" && selectedAgent === "codex" ? false : modelsLoading} error={settings.provider === "custom" && selectedAgent === "codex" ? "" : modelsError} serviceTier={activePreference.serviceTier} onSelectModel={selectModel} onSelectReasoning={selectReasoning} onSelectServiceTier={selectServiceTier} /> : null,
     permissionPopover: <PermissionPopover agentId={selectedAgent === "pi" ? "pi" : "codex"} selectedValue={activeSandboxMode} onSelect={selectSandbox} onLearnMore={() => notify(selectedAgent === "pi" ? "Pi RPC 不提供逐次审批，因此 Rux 仅开放可真实执行的只读或完整访问模式" : "可在设置 > 权限中修改默认批准方式")} />,
-    onToggleModel: (menu: "models" | "reasoning") => toggleOverlay(menu),
+    onToggleModel: () => toggleOverlay("run-settings"),
     onToggleSandbox: () => toggleOverlay("sandbox"),
     attachments,
     showAttachments: true,

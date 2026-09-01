@@ -4,6 +4,8 @@ import { agentStartSchema, externalUrlSchema, projectFileSchema } from "./ipc";
 describe("IPC schemas", () => {
   it("accepts a bounded agent request", () => {
     expect(agentStartSchema.parse({ runId: "run-1", prompt: "hello", agentId: "codex" }).prompt).toBe("hello");
+    expect(agentStartSchema.parse({ runId: "run-2", prompt: "fast", agentId: "codex", serviceTier: "priority" }).serviceTier).toBe("priority");
+    expect(agentStartSchema.parse({ runId: "run-3", prompt: "standard", agentId: "codex", serviceTier: null }).serviceTier).toBeNull();
   });
 
   it("rejects unknown agents and invalid file paths", () => {

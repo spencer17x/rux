@@ -10,6 +10,7 @@ export type CodexStreamInput = {
   prompt: string;
   model?: string;
   reasoning?: string;
+  serviceTier?: string | null;
   mode?: "default" | "plan";
   sandboxMode: CodexSandboxMode;
   images?: string[];
@@ -112,6 +113,7 @@ export class CodexAppServerClient {
       input: userInput,
       cwd: input.cwd,
       model: input.model || null,
+      serviceTier: input.serviceTier || null,
       effort: input.reasoning || null,
       approvalPolicy: codexApprovalPolicy(input.sandboxMode),
       sandboxPolicy: codexSandboxPolicy(input),
@@ -159,6 +161,7 @@ export class CodexAppServerClient {
     return {
       cwd: input.cwd,
       model: input.model || null,
+      serviceTier: input.serviceTier || null,
       approvalPolicy: codexApprovalPolicy(input.sandboxMode),
       sandbox: input.sandboxMode,
       serviceName: "rux",

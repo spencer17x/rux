@@ -10,7 +10,7 @@ type SideApproval = { id: string; label: string };
 type SideRun = { runId: string; assistantId: string; agentId: AgentId; threadId: string; turnId: string; deltaItems: Set<string> };
 const projectOnlyTools = new Set<WorkspaceToolId>(["review", "terminal", "browser", "files"]);
 
-export function useWorkspaceTools(api: RuxApi, projectId: string | undefined, selectedAgent: AgentId, agentMode: string, preference: { model: string; reasoning: AppSettings["reasoning"] }, settings: AppSettings, refreshGit: (projectId?: string) => Promise<void>, notify: (message: string) => void) {
+export function useWorkspaceTools(api: RuxApi, projectId: string | undefined, selectedAgent: AgentId, agentMode: string, preference: { model: string; reasoning: AppSettings["reasoning"]; serviceTier: string | null }, settings: AppSettings, refreshGit: (projectId?: string) => Promise<void>, notify: (message: string) => void) {
   const [bottomPanelOpen, setBottomPanelOpen] = useState(false); const [rightPanelOpen, setRightPanelOpen] = useState(false); const [activeTool, setActiveTool] = useState<WorkspaceToolId>("terminal");
   const [projectFiles, setProjectFiles] = useState<string[]>([]); const [remoteUrl, setRemoteUrl] = useState(""); const [sideMessages, setSideMessages] = useState<SideMessage[]>([]); const [sideValue, setSideValue] = useState(""); const [sideSending, setSideSending] = useState(false); const [sideThreadId, setSideThreadId] = useState(""); const [sideApproval, setSideApproval] = useState<SideApproval | null>(null);
   const sideRun = useRef<SideRun | null>(null);
@@ -37,12 +37,12 @@ export function useWorkspaceTools(api: RuxApi, projectId: string | undefined, se
     sideRun.current = { runId, assistantId, agentId: selectedAgent, threadId: sideThreadId, turnId: "", deltaItems: new Set() };
     setSideMessages((current) => [...current, user, { id: assistantId, role: "assistant", text: "" }]); setSideValue(""); setSideSending(true); setSideApproval(null);
     try {
-      const result = await api.agent.start({ runId, agentId: selectedAgent, projectId, prompt, model: preference.model, reasoning: preference.reasoning, sandboxMode: settings.sandboxMode, ...(sideThreadId ? { threadId: sideThreadId, nativeSessionId: sideThreadId } : {}), mode: agentMode }) as Record<string, string>;
+      const result = await api.agent.start({ runId, agentId: selectedAgent, projectId, prompt, model: preference.model, reasoning: preference.reasoning, serviceTier: preference.serviceTier, sandboxMode: settings.sandboxMode, ...(sideThreadId ? { threadId: sideThreadId, nativeSessionId: sideThreadId } : {}), mode: agentMode }) as Record<string, string>;
       if (sideRun.current?.runId === runId) { sideRun.current.threadId = result.threadId || result.sessionId || sideRun.current.threadId; sideRun.current.turnId = result.turnId || sideRun.current.turnId; if (sideRun.current.threadId) setSideThreadId(sideRun.current.threadId); }
     } catch (error) {
       const message = userFacingError(error); setSideMessages((current) => current.map((item) => item.id === assistantId ? { ...item, text: message } : item)); setSideSending(false); sideRun.current = null;
     }
-  }, [agentMode, api, preference.model, preference.reasoning, projectId, selectedAgent, settings.sandboxMode, sideSending, sideThreadId, sideValue]);
+  }, [agentMode, api, preference.model, preference.reasoning, preference.serviceTier, projectId, selectedAgent, settings.sandboxMode, sideSending, sideThreadId, sideValue]);
   const respondToSideApproval = useCallback(async (decision: "accept" | "acceptForSession" | "decline") => { if (!sideApproval) return; try { await api.agent.respondToApproval({ approvalId: sideApproval.id, decision }); setSideApproval(null); } catch (error) { notify(userFacingError(error)); } }, [api, notify, sideApproval]);
   const cancelSideChat = useCallback(async () => { const run = sideRun.current; if (!run) return; try { await api.agent.interrupt({ agentId: run.agentId, runId: run.runId, threadId: run.threadId || run.runId, turnId: run.turnId || run.runId }); } catch (error) { notify(userFacingError(error)); } }, [api, notify]);
   return { bottomPanelOpen, setBottomPanelOpen, rightPanelOpen, setRightPanelOpen, activeTool, projectFiles, remoteUrl, sideMessages, sideValue, setSideValue, sideSending, sideApproval, sideAgentLabel: selectedAgent === "claude-code" ? "Claude Code" : selectedAgent === "pi" ? "Pi" : settings.provider === "custom" ? settings.serviceName : "Codex", closeBottomPanel, toggleBottomPanel, selectWorkspaceTool, openRemote, sendSideChat, respondToSideApproval, cancelSideChat, ...terminal };

@@ -1140,6 +1140,21 @@ textarea:focus-visible {
   max-width: 175px;
 }
 
+.run-settings-trigger {
+  min-width: 126px;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 11px;
+  border-radius: 999px;
+  background: #f2f2f0;
+}
+
+.run-settings-trigger strong { color: #242422; font-size: 13px; font-weight: 500; }
+.run-settings-trigger span { color: #888884; }
+.run-settings-trigger > svg { margin-left: 2px; color: #858581; }
+.run-settings-trigger:hover { background: #ececea; }
+.run-settings-trigger.is-active { background: #e7e7e5; }
+
 .send-button {
   display: inline-grid;
   width: 36px;
@@ -1158,18 +1173,98 @@ textarea:focus-visible {
 
 .model-popover {
   position: absolute;
-  right: 56px;
+  right: 62px;
   bottom: calc(100% + 9px);
   z-index: 20;
-  width: 360px;
-  max-height: min(480px, calc(100vh - 190px));
-  overflow: auto;
-  padding: 9px;
+  width: 224px;
+  overflow: visible;
+  padding: 8px;
   border: 1px solid var(--border-strong);
-  border-radius: 13px;
+  border-radius: 14px;
   background: #ffffff;
-  box-shadow: 0 16px 42px rgba(0, 0, 0, 0.16);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.14);
   animation: pop-in 140ms ease-out;
+}
+
+.run-settings-main { display: grid; gap: 2px; }
+.run-settings-main > button {
+  display: grid;
+  width: 100%;
+  min-height: 38px;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 10px;
+  color: #242422;
+  background: transparent;
+  text-align: left;
+}
+.run-settings-main > button:hover,
+.run-settings-main > button:focus-visible,
+.run-settings-main > button.is-selected { background: #f1f1ef; }
+.run-settings-main > button strong { font-size: 13px; font-weight: 500; }
+.run-settings-main > button span { overflow: hidden; color: #92928e; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.run-settings-main > button > svg { color: #888884; }
+.run-settings-main > .run-settings-advanced {
+  min-height: 37px;
+  grid-template-columns: auto auto;
+  justify-content: start;
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border);
+  border-radius: 0 0 9px 9px;
+  color: #92928e;
+}
+.run-settings-main > .run-settings-advanced strong { color: inherit; }
+
+.run-settings-submenu {
+  position: absolute;
+  left: calc(100% + 8px);
+  bottom: -1px;
+  z-index: 1;
+  display: grid;
+  width: 286px;
+  max-height: min(430px, calc(100vh - 180px));
+  overflow: auto;
+  gap: 2px;
+  padding: 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 14px;
+  background: #ffffff;
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.14);
+  animation: pop-in 120ms ease-out;
+}
+.run-settings-heading { padding: 4px 8px 6px; color: #969692; font-size: 12px; }
+.run-settings-option {
+  display: flex;
+  width: 100%;
+  min-height: 38px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 9px;
+  color: #242422;
+  background: transparent;
+  text-align: left;
+}
+.run-settings-option:hover,
+.run-settings-option:focus-visible { background: #f2f2f0; }
+.run-settings-option > span { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 1px; }
+.run-settings-option strong { font-size: 13px; font-weight: 500; }
+.run-settings-option small { color: #969692; font-size: 11px; line-height: 1.25; }
+.run-settings-option > svg { flex: 0 0 auto; color: #5c5c58; }
+
+@media (max-width: 1100px) {
+  .run-settings-submenu { right: calc(100% + 8px); left: auto; }
+}
+
+@media (max-width: 720px) {
+  .model-popover { right: 22px; }
+  .run-settings-submenu { right: 0; bottom: calc(100% + 8px); }
 }
 
 /* assistant-ui conversation runtime */

@@ -857,3 +857,72 @@ final result: passed
 - [P3] During pointer hover, the existing conversation action button temporarily overlays the spinner so the row menu remains reachable; the spinner returns immediately when hover leaves.
 
 final result: passed
+
+---
+
+# Combined Model, Reasoning, and Speed Menu QA — 2026-09-01
+
+## Comparison target
+
+- Source visual truth:
+  - `/var/folders/hl/d5hg44c53b958y88jbqlwdw00000gn/T/codex-clipboard-2674eed4-7ee3-43d0-a8e7-c3c2bf428466.png`
+  - `/var/folders/hl/d5hg44c53b958y88jbqlwdw00000gn/T/codex-clipboard-1afdf76e-85ee-4184-b8b3-83d8338cd3f4.png`
+  - `/var/folders/hl/d5hg44c53b958y88jbqlwdw00000gn/T/codex-clipboard-b07ea734-6491-449b-a6d2-bc8a4994bc8e.png`
+- Browser-rendered implementation:
+  - `/Users/17a/projects/rux/qa/run-settings-menu/model-menu.jpg`
+  - `/Users/17a/projects/rux/qa/run-settings-menu/reasoning-menu.jpg`
+  - `/Users/17a/projects/rux/qa/run-settings-menu/speed-menu.jpg`
+- Combined side-by-side evidence: `/Users/17a/projects/rux/qa/run-settings-menu/comparison.png`.
+- State: light theme, existing project conversation, combined run-settings trigger open with model, reasoning, and standard-speed submenus captured separately.
+
+## Normalization
+
+- Desktop browser CSS viewport: `1440 × 900`; in-app browser screenshots were normalized to `1280 × 720` px.
+- Source captures: `1098 × 456`, `1034 × 578`, and `1046 × 442` px.
+- Each source and implementation state was normalized into a `600 × 420` comparison cell; implementation crops use the live composer/menu region rather than surrounding conversation content.
+- Responsive bounds were also measured at `1000 × 700` and `680 × 700` CSS px.
+
+## Full-view and focused evidence
+
+- Complete implementation screenshots verify that the combined trigger remains in the existing Rux composer alongside Agent, Agent mode, voice, and send controls.
+- Focused comparisons verify the same two-level structure as the sources: compact left overview, selected gray row, right-side list, trailing chevrons, current-value checkmark, advanced disclosure, and the combined `model + reasoning` trigger label.
+- The model submenu uses the live Codex catalog. The speed row appears only when the current model advertises service tiers, preventing unsupported controls for custom, Claude Code, or Pi models.
+- Standard and priority speed are real run parameters. `priority` is passed through validated IPC to Codex `thread/start`, `thread/resume`, and `turn/start` as `serviceTier`.
+
+## Findings and comparison history
+
+- [P1] Model and reasoning were previously separate composer buttons and did not match the supplied combined interaction.
+  - Fix: replaced them with one rounded trigger and a left overview/right submenu interaction while preserving the separate Agent and Agent-mode controls.
+  - Post-fix evidence: all three browser screenshots and `qa/run-settings-menu/comparison.png`.
+- [P1] Speed had no end-to-end run parameter and could not be presented honestly.
+  - Fix: added model service-tier metadata, per-Agent preference persistence, validated IPC, and Codex app-server `serviceTier` propagation. The menu is conditional on actual catalog support.
+- [P2] The first responsive pass placed the right submenu beyond the viewport at widths `1000` and `680`.
+  - Fix: the submenu flips to the left below `1100` px and stacks above the root menu below `720` px. Post-fix runtime measurements report `overflow: false` at both breakpoints.
+- [P2] The first speed comparison captured `快速` while the source showed `标准`.
+  - Fix: restored standard speed, waited for the transient toast to clear, recaptured, and regenerated the final combined comparison.
+
+## Required fidelity surfaces
+
+- Fonts and typography: passed; existing SF/PingFang stack, compact 13 px menu labels, muted values, hierarchy, and single-line truncation match the source language.
+- Spacing and layout rhythm: passed; rounded trigger, 38 px rows, 8 px panel padding, 14 px radii, hairline borders, submenu gap, and aligned checkmarks closely match the supplied states.
+- Colors and visual tokens: passed; white surfaces, neutral gray hover selection, muted secondary copy, and restrained shadows use existing Rux tokens.
+- Image quality and asset fidelity: passed; all chevrons and checkmarks use Phosphor vectors, with no raster substitutes, handcrafted SVGs, CSS drawings, or placeholder assets.
+- Copy and content: passed; model names are compacted to the supplied `5.6 Sol` form, reasoning labels use `轻度 / 中 / 高 / 极高 / 最高 / Ultra`, and speed copy matches `标准 / 快速` semantics.
+- Interaction and accessibility: passed; menus expose dialog/menu/menuitem/menuitemradio semantics, checked states, Escape/outside close behavior, focus restoration, and an expandable advanced group.
+
+## Primary interactions tested
+
+1. Open the combined run-settings trigger and inspect the default model submenu — passed.
+2. Switch to reasoning, select `极高`, and verify the composer trigger updates — passed.
+3. Switch to speed, select `快速`, reopen, and verify `aria-checked=true` — passed.
+4. Restore `标准` speed and verify the reference-aligned selected state — passed.
+5. Collapse and expand the advanced settings group — covered by component behavior.
+6. Verify no submenu overflow at `1000 × 700` and `680 × 700` — passed.
+7. Browser console warning/error check — no entries.
+8. Full unit suite (`21` files, `75` tests), typecheck, web build, and Electron build — passed.
+
+## Follow-up polish
+
+- [P3] The implementation panels are slightly denser than the Retina source after normalization because Rux retains its existing 13 px composer scale and smaller app-level control density.
+
+final result: passed

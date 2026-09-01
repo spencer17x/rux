@@ -4,7 +4,7 @@ import type { RunProcess } from "./ipc-types";
 import type { RuntimeManager } from "./runtime-manager";
 import type { ReasoningEffort } from "./settings-store";
 
-type CodexModel = { id: string; model: string; displayName: string; description: string; hidden: boolean; isDefault: boolean; defaultReasoningEffort: ReasoningEffort; supportedReasoningEfforts: Array<{ reasoningEffort: ReasoningEffort; description: string }> };
+type CodexModel = { id: string; model: string; displayName: string; description: string; hidden: boolean; isDefault: boolean; defaultReasoningEffort: ReasoningEffort; supportedReasoningEfforts: Array<{ reasoningEffort: ReasoningEffort; description: string }>; serviceTiers?: Array<{ id: string; name: string; description: string }>; defaultServiceTier?: string | null };
 type CodexAccount = { type: string; email?: string | null; planType?: string };
 
 export class CodexCatalogClient {

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, CircleNotch, FolderOpen, Globe, TerminalWindow, WarningCircle } from "@phosphor-icons/react";
+import { CaretDown, CaretRight, CaretUp, Check, CircleNotch, FolderOpen, Globe, TerminalWindow, WarningCircle } from "@phosphor-icons/react";
 import type { AuthState } from "../renderer/types";
 import { userFacingError } from "../renderer/errors";
 import PermissionModeIcon, { type PermissionMode } from "../components/PermissionModeIcon";
@@ -7,9 +7,9 @@ import PermissionModeIcon, { type PermissionMode } from "../components/Permissio
 export type Reasoning = "none" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
 export type SandboxMode = "read-only" | "workspace-write" | "danger-full-access";
 export type ComposerSettings = { provider: "codex" | "custom"; serviceName: string; model: string; reasoning: Reasoning; sandboxMode: SandboxMode };
-export type ModelInfo = { id: string; model: string; displayName: string; description?: string; isDefault?: boolean; defaultReasoningEffort: Reasoning; supportedReasoningEfforts: Array<{ reasoningEffort: Reasoning; description?: string }> };
+export type ModelInfo = { id: string; model: string; displayName: string; description?: string; isDefault?: boolean; defaultReasoningEffort: Reasoning; supportedReasoningEfforts: Array<{ reasoningEffort: Reasoning; description?: string }>; serviceTiers?: Array<{ id: string; name: string; description: string }>; defaultServiceTier?: string | null };
 
-export const reasoningLabels: Record<string, string> = { none: "无", off: "关闭", minimal: "最小", low: "低", medium: "中", high: "高", xhigh: "极高", max: "最大", ultra: "Ultra" };
+export const reasoningLabels: Record<string, string> = { none: "无", off: "关闭", minimal: "最小", low: "轻度", medium: "中", high: "高", xhigh: "极高", max: "最高", ultra: "Ultra" };
 const permissionOptions = [
   { value: "read-only" as const, shortLabel: "请求批准", title: "请求批准", description: "编辑外部文件和使用互联网时始终询问" },
   { value: "workspace-write" as const, shortLabel: "帮我批准", title: "帮我批准", description: "仅对检测到的风险操作请求批准" },
@@ -25,15 +25,39 @@ export function modelDisplayName(settings: Pick<ComposerSettings, "model">, mode
   return selectedModel(settings, models)?.displayName || settings.model || "默认模型";
 }
 
-export function ModelPopover({ mode, settings, auth, models, loading, error, onSelectModel, onSelectReasoning, connectionLabel }: { mode: "models" | "reasoning"; settings: ComposerSettings; auth: AuthState; models: ModelInfo[]; loading: boolean; error: string; onSelectModel: (model: ModelInfo) => void; onSelectReasoning: (reasoning: Reasoning) => void; connectionLabel?: string }) {
+export function compactModelName(value: string): string {
+  return value.replace(/^GPT[- ]?/i, "").replace(/^([\d.]+)-([A-Za-z])/, "$1 $2");
+}
+
+type RunSettingsSection = "models" | "reasoning" | "speed";
+
+export function ModelPopover({ settings, models, loading, error, serviceTier, onSelectModel, onSelectReasoning, onSelectServiceTier }: { settings: ComposerSettings; auth: AuthState; models: ModelInfo[]; loading: boolean; error: string; serviceTier: string | null; onSelectModel: (model: ModelInfo) => void; onSelectReasoning: (reasoning: Reasoning) => void; onSelectServiceTier: (serviceTier: string | null) => void }) {
+  const [section, setSection] = useState<RunSettingsSection>("models");
+  const [advanced, setAdvanced] = useState(true);
   const current = selectedModel(settings, models);
   const efforts = current?.supportedReasoningEfforts || Object.keys(reasoningLabels).map((reasoningEffort) => ({ reasoningEffort: reasoningEffort as Reasoning, description: "" }));
-  return <div className={`model-popover ${mode === "models" ? "model-picker-popover" : "reasoning-picker-popover"}`} role="dialog" aria-label={mode === "models" ? "选择模型" : "选择思考程度"}>
-    <div className="popover-heading"><strong>{mode === "models" ? "选择模型" : "思考程度"}</strong><span className={auth.connected ? "status-dot" : "status-dot offline"} /></div>
-    {loading && <div className="picker-state" role="status"><CircleNotch size={16} className="spin" />正在读取 Agent 模型…</div>}{error && <div className="picker-state error-text" role="alert">{userFacingError(error)}</div>}
-    {!loading && mode === "models" && models.map((model) => <button type="button" aria-pressed={current?.model === model.model} className={`picker-option ${current?.model === model.model ? "is-selected" : ""}`} key={model.id} onClick={() => onSelectModel(model)}><span><strong>{model.displayName}</strong><small>{model.description}</small></span>{model.isDefault && <em>默认</em>}{current?.model === model.model && <Check size={17} weight="bold" />}</button>)}
-    {!loading && mode === "reasoning" && efforts.map((effort) => <button type="button" aria-pressed={settings.reasoning === effort.reasoningEffort} className={`picker-option ${settings.reasoning === effort.reasoningEffort ? "is-selected" : ""}`} key={effort.reasoningEffort} onClick={() => onSelectReasoning(effort.reasoningEffort)}><span><strong>{reasoningLabels[effort.reasoningEffort] || effort.reasoningEffort}</strong><small>{effort.description}</small></span>{settings.reasoning === effort.reasoningEffort && <Check size={17} weight="bold" />}</button>)}
-    <div className="popover-footer">{connectionLabel || (settings.provider === "codex" ? `${modelDisplayName(settings, models)} · GPT OAuth` : settings.serviceName)}</div>
+  const tiers = current?.serviceTiers || [];
+  const selectedTier = tiers.find((tier) => tier.id === serviceTier);
+  const speedLabel = selectedTier?.id === "priority" ? "快速" : selectedTier?.name || "标准";
+  const sectionLabel = section === "models" ? "模型" : section === "reasoning" ? "推理强度" : "速度";
+  return <div className="model-popover run-settings-popover" role="dialog" aria-label="切换模型、推理强度和速度">
+    <div className="run-settings-main" role="menu" aria-label="运行设置">
+      {advanced && <>
+        <button type="button" role="menuitem" aria-haspopup="menu" className={section === "models" ? "is-selected" : ""} onMouseEnter={() => setSection("models")} onClick={() => setSection("models")}><strong>模型</strong><span>{compactModelName(modelDisplayName(settings, models))}</span><CaretRight size={17} /></button>
+        <button type="button" role="menuitem" aria-haspopup="menu" className={section === "reasoning" ? "is-selected" : ""} onMouseEnter={() => setSection("reasoning")} onClick={() => setSection("reasoning")}><strong>推理强度</strong><span>{reasoningLabels[settings.reasoning] || settings.reasoning}</span><CaretRight size={17} /></button>
+        {tiers.length > 0 && <button type="button" role="menuitem" aria-haspopup="menu" className={section === "speed" ? "is-selected" : ""} onMouseEnter={() => setSection("speed")} onClick={() => setSection("speed")}><strong>速度</strong><span>{speedLabel}</span><CaretRight size={17} /></button>}
+      </>}
+      <button type="button" role="menuitem" className="run-settings-advanced" aria-expanded={advanced} onClick={() => setAdvanced((value) => !value)}><strong>高级</strong>{advanced ? <CaretUp size={15} /> : <CaretDown size={15} />}</button>
+    </div>
+    {advanced && <div className="run-settings-submenu" role="menu" aria-label={sectionLabel}>
+      {section !== "models" && <div className="run-settings-heading">{sectionLabel}</div>}
+      {section === "models" && loading && <div className="picker-state" role="status"><CircleNotch size={16} className="spin" />正在读取 Agent 模型…</div>}
+      {section === "models" && error && <div className="picker-state error-text" role="alert">{userFacingError(error)}</div>}
+      {section === "models" && !loading && models.map((model) => <button type="button" role="menuitemradio" aria-checked={current?.model === model.model} className="run-settings-option" key={model.id} onClick={() => onSelectModel(model)}><span><strong>{compactModelName(model.displayName)}</strong></span>{current?.model === model.model && <Check size={17} />}</button>)}
+      {section === "reasoning" && efforts.map((effort) => <button type="button" role="menuitemradio" aria-checked={settings.reasoning === effort.reasoningEffort} className="run-settings-option" key={effort.reasoningEffort} onClick={() => onSelectReasoning(effort.reasoningEffort)}><span><strong>{reasoningLabels[effort.reasoningEffort] || effort.reasoningEffort}</strong>{effort.reasoningEffort === "ultra" && <small>更快消耗使用额度</small>}</span>{settings.reasoning === effort.reasoningEffort && <Check size={17} />}</button>)}
+      {section === "speed" && <button type="button" role="menuitemradio" aria-checked={!serviceTier} className="run-settings-option" onClick={() => onSelectServiceTier(null)}><span><strong>标准</strong><small>默认速度</small></span>{!serviceTier && <Check size={17} />}</button>}
+      {section === "speed" && tiers.map((tier) => <button type="button" role="menuitemradio" aria-checked={serviceTier === tier.id} className="run-settings-option" key={tier.id} onClick={() => onSelectServiceTier(tier.id)}><span><strong>{tier.id === "priority" ? "快速" : tier.name}</strong><small>{tier.id === "priority" ? "1.5 倍速度，用量更多" : tier.description}</small></span>{serviceTier === tier.id && <Check size={17} />}</button>)}
+    </div>}
   </div>;
 }
 

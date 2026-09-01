@@ -34,18 +34,19 @@ import { adjacentStickyTurn, completedStickyTurns } from "../renderer/messages";
 import { messageTargetFromHref } from "../renderer/message-targets";
 import type { AgentId } from "../renderer/types";
 import PermissionModeIcon from "../components/PermissionModeIcon";
+import { compactModelName } from "../composer/ComposerControls";
 
 type AgentDefinition = { id: AgentId; name: string; installed: boolean; integrated: boolean; version: string; modes?: Array<{ id: string; label: string }> };
 type RuntimeProgress = Record<string, { state: string; percent?: number; message?: string }>;
 type ApprovalResponse = { approvalId: string; approved: boolean; optionId?: string };
-type OverlayId = "agents" | "agent-mode" | "models" | "reasoning" | "sandbox";
+type OverlayId = "agents" | "agent-mode" | "run-settings" | "sandbox";
 type Props = {
   messages: RuxMessage[]; running: boolean; emptyTitle: string; projectId?: string; onNewMessage: (text: string) => Promise<unknown>; onCancel: () => Promise<unknown>; onApproval: (response: ApprovalResponse) => Promise<unknown>;
   conversationSticky: boolean;
   agents: AgentDefinition[]; runtimeProgress: RuntimeProgress; selectedAgent: AgentId; onSelectAgent: (agentId: AgentId) => void; agentMode: string; onAgentMode: (mode: string) => void;
-  modelLabel: string; reasoningLabel: string; permissionLabel: string; permissionMode: "read-only" | "workspace-write" | "danger-full-access"; showPermission?: boolean; modelOpen: "models" | "reasoning" | null; sandboxOpen: boolean;
+  modelLabel: string; reasoningLabel: string; permissionLabel: string; permissionMode: "read-only" | "workspace-write" | "danger-full-access"; showPermission?: boolean; modelOpen: boolean; sandboxOpen: boolean;
   permissionDanger?: boolean;
-  modelPopover: ReactNode; permissionPopover: ReactNode; onToggleModel: (mode: "models" | "reasoning") => void; onToggleSandbox: () => void;
+  modelPopover: ReactNode; permissionPopover: ReactNode; onToggleModel: () => void; onToggleSandbox: () => void;
   activeOverlay: OverlayId | null; onOverlayChange: (overlay: OverlayId | null) => void;
   attachments: string[]; showAttachments?: boolean; webSearch?: boolean; showWebSearch?: boolean; onToggleWebSearch: () => void;
   draftKey: string; draftText: string; onDraftTextChange: (text: string) => void;
@@ -316,7 +317,6 @@ export default function RuxAssistantThread({
   const agentTrigger = useRef<HTMLButtonElement>(null);
   const modeTrigger = useRef<HTMLButtonElement>(null);
   const modelTrigger = useRef<HTMLButtonElement>(null);
-  const reasoningTrigger = useRef<HTMLButtonElement>(null);
   const sandboxTrigger = useRef<HTMLButtonElement>(null);
   const previousOverlay = useRef<OverlayId | null>(null);
   const composerDraftRef = useRef({ key: "", text: "" });
@@ -327,7 +327,7 @@ export default function RuxAssistantThread({
   }, [draftKey, draftText, runtime]);
   useEffect(() => {
     const previous = previousOverlay.current;
-    if (previous && !activeOverlay) ({ agents: agentTrigger, "agent-mode": modeTrigger, models: modelTrigger, reasoning: reasoningTrigger, sandbox: sandboxTrigger }[previous]).current?.focus();
+    if (previous && !activeOverlay) ({ agents: agentTrigger, "agent-mode": modeTrigger, "run-settings": modelTrigger, sandbox: sandboxTrigger }[previous]).current?.focus();
     previousOverlay.current = activeOverlay;
   }, [activeOverlay]);
   useEffect(() => {
@@ -367,8 +367,7 @@ export default function RuxAssistantThread({
               <div className="composer-right">
                 <AgentSelector agents={agents} selectedAgent={selectedAgent} onSelectAgent={onSelectAgent} runtimeProgress={runtimeProgress} open={activeOverlay === "agents"} onToggle={() => onOverlayChange(activeOverlay === "agents" ? null : "agents")} onClose={() => onOverlayChange(null)} buttonRef={agentTrigger} />
                 <AgentModeSelector agent={selectedDefinition} mode={agentMode} onMode={onAgentMode} open={activeOverlay === "agent-mode"} onToggle={() => onOverlayChange(activeOverlay === "agent-mode" ? null : "agent-mode")} onClose={() => onOverlayChange(null)} buttonRef={modeTrigger} />
-                <button ref={modelTrigger} type="button" aria-label="选择模型" className={`composer-menu ${modelOpen === "models" ? "is-active" : ""}`} onClick={() => onToggleModel("models")} aria-expanded={modelOpen === "models"} aria-haspopup="dialog">{modelLabel}<CaretDown size={12} /></button>
-                <button ref={reasoningTrigger} type="button" aria-label="选择思考程度" className={`composer-menu ${modelOpen === "reasoning" ? "is-active" : ""}`} onClick={() => onToggleModel("reasoning")} aria-expanded={modelOpen === "reasoning"} aria-haspopup="dialog">{reasoningLabel}<CaretDown size={12} /></button>
+                <button ref={modelTrigger} type="button" aria-label="切换模型、推理强度和速度" className={`composer-menu run-settings-trigger ${modelOpen ? "is-active" : ""}`} onClick={onToggleModel} aria-expanded={modelOpen} aria-haspopup="dialog"><strong>{compactModelName(modelLabel)}</strong><span>{reasoningLabel}</span><CaretDown size={13} /></button>
                 <button type="button" className={`icon-button ${listening ? "is-active" : ""}`} aria-label="语音输入" onClick={onVoice}><Microphone size={18} /></button>
                 <ThreadPrimitive.If running>
                   <ComposerPrimitive.Cancel className="send-button stop-button" aria-label="停止"><Stop size={15} weight="fill" /></ComposerPrimitive.Cancel>
