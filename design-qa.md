@@ -628,3 +628,232 @@ final result: passed
 - No actionable P0/P1/P2 differences remain for the requested icon states.
 
 final result: passed
+
+---
+
+# Project Menu Single-Line QA — 2026-08-31
+
+## Comparison target
+
+- Source visual truth: `/var/folders/hl/d5hg44c53b958y88jbqlwdw00000gn/T/codex-clipboard-1d3333a2-4047-4d93-96e3-06b4f5d43dc7.png`.
+- Browser-rendered implementation: `/Users/17a/projects/rux/qa/project-menu/project-menu-single-line-2026-08-31.png`.
+- Focused before/after comparison: `/Users/17a/projects/rux/qa/project-menu/project-menu-wrap-comparison-2026-08-31.png`.
+- State: light theme, left sidebar expanded, `rux-demo` project action menu open.
+
+## Normalization
+
+- Source screenshot: `444 × 444` px at inferred 2× application density.
+- Browser implementation: `1130 × 674` CSS px at device scale factor 1.
+- Source menu crop: `362 × 344` px, normalized to `181 × 172` px.
+- Implementation menu crop: `204 × 172` px.
+- Focused comparison places the wrapping source menu on the left and the corrected single-line menu on the right.
+
+## Full-view and focused evidence
+
+- The full browser capture confirms the wider menu remains anchored to the project overflow button and does not collide with the sidebar edge or main content controls.
+- Focused comparison confirms `在文件管理器中打开` now remains on one line while icon, separators, row heights, and danger action alignment stay consistent.
+- Runtime measurements: menu width `204 px`; item width `190 px`; target row height `34 px`; computed `white-space: nowrap`; `scrollWidth` equals `clientWidth`.
+- Browser console error check: no errors.
+
+## Findings and comparison history
+
+### Iteration 1
+
+- [P2] The `182 px` menu left exactly the minimum theoretical text width, allowing the system Chinese font to wrap `在文件管理器中打开` onto two lines.
+  - Fix: increased the menu to `204 px`, applied `white-space: nowrap`, set a compact `1.25` line height, and prevented the 17 px row icons from shrinking.
+  - Post-fix evidence: `project-menu-wrap-comparison-2026-08-31.png` and measured row height `34 px`.
+
+## Final pass
+
+- Fonts and typography: passed; all menu labels remain 14 px and the long label is a single readable line.
+- Spacing and layout rhythm: passed; row height, 9 px icon gap, padding, separators, radius, and shadow remain aligned.
+- Colors and visual tokens: passed; neutral menu surface and red destructive action are unchanged.
+- Image quality and asset fidelity: passed; the existing Phosphor icon system is preserved with no new image assets.
+- Copy and content: passed; no label was shortened or rewritten.
+- Interaction and accessibility: passed; menu semantics and keyboard Escape behavior are unchanged, with no overflow or clipping.
+
+## Primary interactions tested
+
+1. Open project action menu — healthy.
+2. Verify `在文件管理器中打开` is visible at one line and exactly `34 px` high — passed.
+3. Verify no horizontal content overflow — passed.
+4. Close the menu with Escape — covered by Electron E2E.
+
+## Follow-up polish
+
+- No actionable P0/P1/P2 differences remain for this menu state.
+
+final result: passed
+
+---
+
+# Conversation Sticky Turn Navigation QA — 2026-08-31
+
+## Comparison target
+
+- Source visual truth: `/var/folders/hl/d5hg44c53b958y88jbqlwdw00000gn/T/codex-clipboard-c70ca1bd-9a80-46ce-858c-209c6eb6ca0c.png`.
+- Browser-rendered implementation: `/Users/17a/projects/rux/qa/conversation-sticky/sticky-turn-navigation-final-2026-08-31.png`.
+- Focused comparison: `/Users/17a/projects/rux/qa/conversation-sticky/sticky-turn-navigation-comparison-2026-08-31.png`.
+- State: light theme, project conversation with five completed turns, Sticky showing turn 3 with previous and next navigation enabled.
+
+## Normalization
+
+- Source screenshot: `1434 × 164` px at inferred 2× application density.
+- Browser implementation: `1440 × 900` CSS px at device scale factor 1.
+- Source Sticky crop: `1360 × 76` px, normalized to `680 × 38` px.
+- Implementation Sticky crop: `680 × 38` px.
+- Focused comparison: `1360 × 38` px with the source on the left and implementation on the right.
+
+## Full-view and focused evidence
+
+- The full browser capture confirms the Sticky remains aligned with the conversation column and does not overlap messages or the composer.
+- Focused comparison confirms the original 38 px bar height, label/title hierarchy, border, radius, and shadow are preserved while adding a compact separated navigation group.
+- Runtime navigation verified `3 → 2 → 3`, rapid continuous navigation `3 → 1 → 5`, and disabled boundary states at the first and last completed turns.
+- Browser console error check: no errors.
+
+## Findings and comparison history
+
+### Iteration 1
+
+- [P1] The existing Sticky exposed only one current-position action and had no way to traverse completed turns.
+  - Fix: added accessible previous/next buttons using the existing Phosphor ArrowUp and ArrowDown icons, with automatic disabled states at either end.
+- [P1] Initial navigation testing jumped from turn 3 to turn 1 because the active-turn threshold used a 12 px offset while user messages reserve 62 px for Sticky positioning.
+  - Fix: aligned the detection threshold to 64 px and temporarily locks the selected navigation target during the smooth-scroll animation, preventing skipped turns during rapid clicks.
+
+## Final pass
+
+- Fonts and typography: passed; the existing 11 px label and 13 px truncated title remain unchanged.
+- Spacing and layout rhythm: passed; the bar remains `680 × 38` px and the new navigation group uses two 25 px controls with a subtle divider.
+- Colors and visual tokens: passed; neutral text, border, hover, focus, and disabled opacity use existing Rux tokens.
+- Image quality and asset fidelity: passed; ArrowUp and ArrowDown are native Phosphor vectors with no new raster assets.
+- Copy and content: passed; the current Sticky question remains visible, with native tooltips `上一轮` and `下一轮`.
+- Interaction and accessibility: passed; navigation is a labeled group, each direction has an explicit accessible name, disabled states are semantic, and the current-question body remains independently clickable.
+
+## Primary interactions tested
+
+1. Navigate from turn 3 to turn 2 — passed.
+2. Navigate forward from turn 2 to turn 3 — passed.
+3. Rapidly navigate to the first and last completed turns without skipping — passed.
+4. Verify previous is disabled at turn 1 and next is disabled at turn 5 — passed.
+5. Click the Sticky title to return to its current question — preserved.
+
+## Follow-up polish
+
+- No actionable P0/P1/P2 differences remain for the Sticky navigation state.
+
+final result: passed
+
+---
+
+# Conversation Output Prototype QA — 2026-09-01
+
+## Comparison target
+
+- Selected concept: option 2, “Inline Footnotes”.
+- Source visual truth: `/Users/17a/.codex/generated_images/01a04711-8a0b-7460-bfc3-ced4efe0142d/exec-24180e0e-e6d3-4552-b954-a8ce03692c0a.png`.
+- Browser-rendered implementation:
+  - `/Users/17a/projects/rux/qa/conversation-output-prototype/implementation-collapsed.png`
+  - `/Users/17a/projects/rux/qa/conversation-output-prototype/implementation-expanded.png`
+- Side-by-side evidence: `/Users/17a/projects/rux/qa/conversation-output-prototype/comparison-option-2.png`.
+- Interaction review video: `/Users/17a/projects/rux/qa/conversation-output-prototype/conversation-output-option-2-review.mp4`.
+- Scope: independent development-only review prototype opened with `?prototype=conversation-output`; production Rux conversation rendering is intentionally unchanged pending approval.
+
+## Normalization
+
+- Browser viewport and captures: `1440 × 1024` CSS px.
+- Source image: `1487 × 1058` px, normalized proportionally into a `720 × 512` comparison cell.
+- Implementation capture: `1440 × 1024` px, normalized proportionally into a `720 × 512` comparison cell.
+- Video: `1440 × 1024`, 10 fps, 7.4 seconds, H.264.
+
+## Full-view and focused evidence
+
+- The implementation preserves the selected concept’s broad white reading canvas, compact top bar, black right-aligned user bubble, centered date, processing-time divider, direct assistant prose, and low-noise bottom composer.
+- Tool activity is presented as quiet inline footnotes. File reads, commands, and failures remain one-line summaries until clicked; expanded command output uses a subtle left rule and neutral surface instead of a persistent card.
+- Failure handling exposes a real retry state and transitions from failure to retrying to recovered, including an explicit “已从失败处继续” confirmation.
+- The review video demonstrates streaming text, pause, continue, command expansion/collapse, error expansion, retry, and recovery rather than static mock-only states.
+
+## Findings and fixes
+
+- [P1] Tool evidence could dominate the conversation when rendered as permanent cards.
+  - Fix: all tool details are collapsed by default and opened only from their summary row.
+- [P1] A failed tool call did not communicate whether work could continue.
+  - Fix: added an actionable retry control with retrying, success, and resumed states.
+- [P2] Conversation progress was ambiguous during generation.
+  - Fix: added streamed text with a caret plus explicit pause/continue controls.
+- [P2] Expanded tool details initially used a decorative gradient.
+  - Fix: replaced it with a solid neutral `#fafafa` surface to match the restrained Codex-style visual language.
+
+## Primary interactions tested
+
+1. Load prototype with all tool details collapsed — passed.
+2. Expand and collapse `运行 pnpm test`; verify command, working directory, and output are revealed only while expanded — passed.
+3. Expand the failure row, invoke retry, and verify recovered and resumed states — passed.
+4. Pause streaming and verify the control changes to `继续`; resume streaming — passed.
+5. Replay the prototype and verify initial collapsed/error state is restored — passed.
+6. Browser console warning/error check — no entries.
+7. `pnpm typecheck` and `pnpm build:web` — passed.
+
+## Follow-up
+
+- Formal integration into the production conversation renderer should begin only after visual and motion approval of this review prototype.
+
+final result: passed
+
+---
+
+# Project Conversation Running Indicator QA — 2026-09-01
+
+## Comparison target
+
+- Source visual truth: `/var/folders/hl/d5hg44c53b958y88jbqlwdw00000gn/T/codex-clipboard-92812105-211b-475e-97b1-1157d78e0fc3.png`.
+- Browser-rendered implementation:
+  - `/Users/17a/projects/rux/qa/project-thread-running/full-running.jpg`
+  - `/Users/17a/projects/rux/qa/project-thread-running/sidebar-running.jpg`
+- Focused side-by-side evidence: `/Users/17a/projects/rux/qa/project-thread-running/loading-comparison.png`.
+- State: light theme, expanded project, selected project conversation with an active Agent run.
+
+## Normalization
+
+- Browser viewport: `1440 × 900` CSS px with device scale factor `2`.
+- Source screenshot: `484 × 792` px; the focused selected-row crop uses `464 × 64` px.
+- Browser implementation capture: `1440 × 900` px; the sidebar-focused capture is `300 × 900` px.
+- The implementation row crop was normalized to the same `464 × 64` output size before side-by-side inspection.
+
+## Evidence
+
+- The supplied source is itself a sidebar crop, so the complete browser capture is used to verify placement in the live Rux shell while the focused comparison verifies the selected project-conversation row.
+- Both source and implementation show a neutral 16 px outline spinner at the trailing edge of the running project conversation, including on the selected gray row.
+- The implementation uses the existing Phosphor `CircleNotch` icon and shared `.spin` animation; no custom SVG, CSS drawing, raster substitute, or new visual asset was introduced.
+- Browser DOM inspection exposes the running marker as a live status named `{会话标题} 正在响应`.
+
+## Findings and comparison history
+
+- [P1] Project conversations previously had no sidebar-level indication while another thread was running.
+  - Fix: exposed `runningThreadIds` from the real Agent-run controller and passed it to the project tree.
+  - Post-fix evidence: `qa/project-thread-running/full-running.jpg` and `qa/project-thread-running/loading-comparison.png`.
+- [P2] A generic activity marker could incorrectly imply an independent conversation was part of a project run.
+  - Fix: the visual marker is intentionally applied only to project child rows; the component test verifies that an independent conversation ID in the same running set is not marked.
+
+## Required fidelity surfaces
+
+- Fonts and typography: passed; existing project-thread typography, truncation, and weight are unchanged.
+- Spacing and layout rhythm: passed; the spinner occupies the existing trailing action area without changing the 31 px child-row height or title inset.
+- Colors and visual tokens: passed; neutral gray matches the supplied source and existing sidebar icon language.
+- Image quality and asset fidelity: passed; the native Phosphor vector remains sharp and animates through the shared spinner keyframes.
+- Copy and content: passed; no visible thread labels were changed and the accessibility-only status names the actual thread.
+- Interaction and accessibility: passed; the status is tied to live run state, is exposed with `role=status`, and disappears when the run state is cleared.
+
+## Primary interactions tested
+
+1. Start an Agent turn in a project conversation and verify the corresponding project child exposes a running status — passed.
+2. Verify the selected row retains its fill and shows the trailing spinner — passed.
+3. Verify independent conversations do not render the project-specific indicator — passed by component test.
+4. Verify the idle/reset state contains no running marker — passed.
+5. Browser console warning/error check — no entries.
+6. Full unit suite (`21` files, `75` tests), typecheck, web build, and Electron build — passed.
+
+## Follow-up polish
+
+- [P3] During pointer hover, the existing conversation action button temporarily overlays the spinner so the row menu remains reachable; the spinner returns immediately when hover leaves.
+
+final result: passed

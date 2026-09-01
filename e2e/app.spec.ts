@@ -165,6 +165,23 @@ test("keeps unsent standalone drafts isolated and restores them after restart", 
   await expect(page.getByRole("textbox", { name: "消息" })).toHaveValue("Unsent per-thread draft");
 });
 
+test("navigates between completed turns from the conversation sticky", async () => {
+  await page.evaluate(async () => {
+    const thread = await (window as any).rux.projects.addStandalone({ title: "Sticky navigation" });
+    const messages = Array.from({ length: 5 }, (_, index) => [{ id: `sticky-user-${index}`, role: "user", text: `Sticky question ${index + 1}`, parts: [{ type: "text", text: `Sticky question ${index + 1}` }] }, { id: `sticky-assistant-${index}`, role: "assistant", status: "complete", parts: [{ type: "text", text: `Completed turn ${index + 1}.\n\n${"Long response content. ".repeat(18)}` }] }]).flat();
+    await (window as any).rux.messages.save({ [thread.id]: messages });
+  });
+  await application.close(); await launchApplication();
+  const currentTurn = page.getByRole("button", { name: /返回当前轮问题/ }); const previous = page.getByRole("button", { name: "切换到上一轮" }); const next = page.getByRole("button", { name: "切换到下一轮" });
+  await expect(currentTurn).toBeVisible(); const initialLabel = await currentTurn.getAttribute("aria-label");
+  await previous.click(); await page.waitForTimeout(800); expect(await currentTurn.getAttribute("aria-label")).not.toBe(initialLabel);
+  await next.click(); await page.waitForTimeout(800); expect(await currentTurn.getAttribute("aria-label")).toBe(initialLabel);
+  for (let index = 0; index < 5 && await previous.isEnabled(); index += 1) { await previous.click(); await page.waitForTimeout(300); }
+  await expect(previous).toBeDisabled(); await expect(next).toBeEnabled();
+  for (let index = 0; index < 5 && await next.isEnabled(); index += 1) { await next.click(); await page.waitForTimeout(300); }
+  await expect(next).toBeDisabled(); await expect(previous).toBeEnabled();
+});
+
 test("restores a SQLite project and executes a command through the PTY terminal", async () => {
   test.slow();
   const projectPath = join(testRoot, "project");
@@ -199,6 +216,10 @@ test("restores a SQLite project and executes a command through the PTY terminal"
   const projectMenuTrigger = page.getByRole("button", { name: "项目操作 project" });
   await projectMenuTrigger.click();
   await expect(page.getByRole("menu")).toBeVisible();
+  const openInFileManager = page.getByRole("button", { name: "在文件管理器中打开", exact: true });
+  await expect(openInFileManager).toBeVisible();
+  const openItemMetrics = await openInFileManager.evaluate((element) => ({ whiteSpace: getComputedStyle(element).whiteSpace, height: element.getBoundingClientRect().height, clientWidth: element.clientWidth, scrollWidth: element.scrollWidth }));
+  expect(openItemMetrics.whiteSpace).toBe("nowrap"); expect(openItemMetrics.height).toBeGreaterThanOrEqual(33); expect(openItemMetrics.height).toBeLessThanOrEqual(35); expect(openItemMetrics.scrollWidth).toBe(openItemMetrics.clientWidth);
   await page.keyboard.press("Escape");
   await expect(page.getByRole("menu")).toBeHidden();
   await expect(projectMenuTrigger).toBeFocused();

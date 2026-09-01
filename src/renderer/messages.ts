@@ -47,6 +47,11 @@ export function completedStickyTurns(messages: RuxMessage[]): Array<{ id: string
   return turns;
 }
 
+export function adjacentStickyTurn(turns: Array<{ id: string; text: string }>, activeId: string, direction: -1 | 1): { id: string; text: string } | null {
+  const index = turns.findIndex((turn) => turn.id === activeId); if (index < 0) return null;
+  return turns[index + direction] || null;
+}
+
 function itemToMessagePart(item: Record<string, any>, startedAt = Date.now()): MessagePart | null {
   if (!item?.id) return null;
   if (item.type === "agentMessage") return { type: "text", text: item.text || "", status: { type: "running" }, _itemId: item.id };

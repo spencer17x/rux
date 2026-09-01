@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { completedStickyTurns, messageExportText, normalizedMessages, persistentMessages, reduceStreamEvent, type RuxMessage } from "./messages";
+import { adjacentStickyTurn, completedStickyTurns, messageExportText, normalizedMessages, persistentMessages, reduceStreamEvent, type RuxMessage } from "./messages";
 
 const runningMessage = (): RuxMessage => ({ id: "assistant-1", role: "assistant", parts: [], status: "running" });
 
@@ -30,6 +30,10 @@ describe("message persistence", () => {
   it("does not treat an incomplete historical turn as sticky-complete", () => {
     const messages = [{ id: "u1", role: "user", text: "Interrupted" }, { id: "a1", role: "assistant", status: "incomplete", text: "Partial" }] as RuxMessage[];
     expect(completedStickyTurns(messages)).toEqual([]);
+  });
+  it("moves between adjacent completed sticky turns without crossing either end", () => {
+    const turns = [{ id: "one", text: "One" }, { id: "two", text: "Two" }, { id: "three", text: "Three" }];
+    expect(adjacentStickyTurn(turns, "two", -1)).toEqual(turns[0]); expect(adjacentStickyTurn(turns, "two", 1)).toEqual(turns[2]); expect(adjacentStickyTurn(turns, "one", -1)).toBeNull(); expect(adjacentStickyTurn(turns, "three", 1)).toBeNull();
   });
   it("exports streamed assistant text", () => {
     expect(messageExportText({ id: "a", role: "assistant", parts: [{ type: "text", text: "answer" }] })).toBe("answer");

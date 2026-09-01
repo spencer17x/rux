@@ -446,7 +446,7 @@ textarea:focus-visible {
 .project-action-popover {
   position: fixed;
   z-index: 45;
-  width: 182px;
+  width: 204px;
   padding: 6px;
   border: 1px solid rgba(0, 0, 0, 0.18);
   border-radius: 14px;
@@ -456,7 +456,8 @@ textarea:focus-visible {
   animation: pop-in 140ms ease-out;
 }
 
-.project-action-popover > button { display: flex; width: 100%; min-height: 34px; align-items: center; gap: 9px; padding: 0 9px; border: 0; border-radius: 8px; background: transparent; font-size: 14px; text-align: left; }
+.project-action-popover > button { display: flex; width: 100%; min-height: 34px; align-items: center; gap: 9px; padding: 0 9px; border: 0; border-radius: 8px; background: transparent; font-size: 14px; line-height: 1.25; text-align: left; white-space: nowrap; }
+.project-action-popover > button > svg { flex: 0 0 17px; }
 .project-action-popover > button:hover,
 .project-action-popover > button:focus-visible { background: rgba(0, 0, 0, 0.055); }
 .project-menu-separator { height: 1px; margin: 5px 9px; background: rgba(0, 0, 0, 0.11); }
@@ -491,6 +492,24 @@ textarea:focus-visible {
 .thread-row-wrap.is-child .thread-action-button {
   top: 1px;
   right: 7px;
+}
+
+.thread-running-indicator {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  align-items: center;
+  justify-content: center;
+  color: #777a7d;
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.thread-row-wrap.is-running .thread-action-button {
+  background: var(--surface-selected);
 }
 
 .thread-row-wrap.is-child .sidebar-row.is-selected {
@@ -1191,30 +1210,51 @@ textarea:focus-visible {
   to { opacity: 1; transform: translate(-50%, 0); }
 }
 
-.conversation-sticky button {
+.conversation-sticky-card {
   display: grid;
   width: 100%;
   min-width: 0;
   height: 38px;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 10px;
-  padding: 0 11px;
   border: 1px solid var(--border-strong);
   border-radius: 11px;
   color: #4a4a46;
   background: #ffffff;
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.055);
   pointer-events: auto;
-  text-align: left;
   transition: background 130ms ease, box-shadow 130ms ease;
 }
 
-.conversation-sticky button:hover,
-.conversation-sticky button:focus-visible {
-  background: #ffffff;
+.conversation-sticky-card:hover,
+.conversation-sticky-card:focus-within {
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.08);
 }
+
+.conversation-sticky-current {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 10px 0 0 10px;
+  color: inherit;
+  background: transparent;
+  text-align: left;
+}
+
+.conversation-sticky-current:hover,
+.conversation-sticky-current:focus-visible { background: var(--surface-muted); }
+
+.conversation-sticky-nav { display: flex; height: 26px; align-items: center; gap: 1px; padding: 0 5px; border-left: 1px solid var(--border); }
+.conversation-sticky-nav button { display: grid; width: 25px; height: 25px; place-items: center; padding: 0; border: 0; border-radius: 7px; color: var(--muted); background: transparent; }
+.conversation-sticky-nav button:hover:not(:disabled),
+.conversation-sticky-nav button:focus-visible:not(:disabled) { color: var(--text); background: var(--surface-muted); }
+.conversation-sticky-nav button:disabled { cursor: default; opacity: 0.28; }
 
 .conversation-sticky span {
   color: var(--muted);

@@ -30,7 +30,7 @@ import {
   X,
 } from "@phosphor-icons/react";
 import type { RuxMessage } from "../renderer/messages";
-import { completedStickyTurns } from "../renderer/messages";
+import { adjacentStickyTurn, completedStickyTurns } from "../renderer/messages";
 import { messageTargetFromHref } from "../renderer/message-targets";
 import type { AgentId } from "../renderer/types";
 import PermissionModeIcon from "../components/PermissionModeIcon";
@@ -187,14 +187,18 @@ function AssistantMessage() {
 function ConversationSticky({ enabled, messages, viewportRef }: { enabled: boolean; messages: RuxMessage[]; viewportRef: RefObject<HTMLDivElement | null> }) {
   const turns = useMemo(() => completedStickyTurns(messages), [messages]);
   const [active, setActive] = useState<{ id: string; text: string } | null>(null);
+  const navigationTarget = useRef<{ id: string; until: number } | null>(null);
   useEffect(() => {
     const viewport = viewportRef.current;
     if (!enabled || !viewport || !turns.length) { setActive(null); return undefined; }
     let frame = 0;
     const update = () => {
       frame = 0;
-      const viewportTop = viewport.getBoundingClientRect().top + 12;
+      const viewportTop = viewport.getBoundingClientRect().top + 64;
       const elements = new Map(Array.from(viewport.querySelectorAll<HTMLElement>("[data-message-id]")).map((element) => [element.dataset.messageId || "", element]));
+      const navigating = navigationTarget.current;
+      if (navigating && performance.now() < navigating.until) { const targetTurn = turns.find((turn) => turn.id === navigating.id); if (targetTurn) setActive((current) => current?.id === targetTurn.id ? current : targetTurn); return; }
+      navigationTarget.current = null;
       let candidate: { id: string; text: string } | null = null;
       for (const turn of turns) {
         const element = elements.get(turn.id);
@@ -210,7 +214,9 @@ function ConversationSticky({ enabled, messages, viewportRef }: { enabled: boole
     return () => { viewport.removeEventListener("scroll", schedule); observer.disconnect(); if (frame) cancelAnimationFrame(frame); };
   }, [enabled, turns, viewportRef]);
   if (!enabled || !active) return null;
-  return <div className="conversation-sticky"><button type="button" aria-label={`返回上一轮问题：${active.text}`} onClick={() => { const viewport = viewportRef.current; const target = viewport?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(active.id)}"]`); target?.scrollIntoView({ behavior: "smooth", block: "start" }); }}><span>上一轮</span><strong>{active.text}</strong><ArrowUp size={15} /></button></div>;
+  const previous = adjacentStickyTurn(turns, active.id, -1); const next = adjacentStickyTurn(turns, active.id, 1);
+  const scrollTo = (turn: { id: string; text: string }) => { navigationTarget.current = { id: turn.id, until: performance.now() + 750 }; setActive(turn); const viewport = viewportRef.current; const target = viewport?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(turn.id)}"]`); target?.scrollIntoView({ behavior: "smooth", block: "start" }); };
+  return <div className="conversation-sticky"><div className="conversation-sticky-card"><button type="button" className="conversation-sticky-current" aria-label={`返回当前轮问题：${active.text}`} onClick={() => scrollTo(active)}><span>上一轮</span><strong>{active.text}</strong></button><div className="conversation-sticky-nav" role="group" aria-label="切换对话轮次"><button type="button" aria-label="切换到上一轮" title="上一轮" disabled={!previous} onClick={() => previous && scrollTo(previous)}><ArrowUp size={15} /></button><button type="button" aria-label="切换到下一轮" title="下一轮" disabled={!next} onClick={() => next && scrollTo(next)}><ArrowDown size={15} /></button></div></div></div>;
 }
 
 function AgentSelector({ agents, selectedAgent, onSelectAgent, runtimeProgress, open, onToggle, onClose, buttonRef }: { agents: AgentDefinition[]; selectedAgent: AgentId; onSelectAgent: (agentId: AgentId) => void; runtimeProgress: RuntimeProgress; open: boolean; onToggle: () => void; onClose: () => void; buttonRef: RefObject<HTMLButtonElement | null> }) {

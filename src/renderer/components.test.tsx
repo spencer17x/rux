@@ -18,10 +18,12 @@ describe("typed renderer components", () => {
   });
 
   it("exposes conversation action menus for standalone and project conversations", () => {
-    const html = renderToStaticMarkup(<Sidebar workspace={{ standaloneThreads: [{ id: "standalone", title: "独立任务" }], projects: [{ id: "project", name: "Demo", path: "/tmp/demo", threads: [{ id: "project-thread", title: "项目任务" }] }] }} auth={{ connected: true }} expandedProjects={["project"]} activeThread={{ id: "project-thread", title: "项目任务", type: "project", projectId: "project" }} onToggleProject={() => {}} onSelectProjectThread={() => {}} onSelectStandalone={() => {}} onAddProject={() => {}} onRemoveProject={() => {}} onOpenProjectPath={() => {}} onCopyProjectPath={() => {}} onNewProjectThread={() => {}} onNewStandalone={() => {}} onRenameThread={() => {}} onDeleteThread={() => {}} onOpenSettings={() => {}} />);
+    const html = renderToStaticMarkup(<Sidebar workspace={{ standaloneThreads: [{ id: "standalone", title: "独立任务" }], projects: [{ id: "project", name: "Demo", path: "/tmp/demo", threads: [{ id: "project-thread", title: "项目任务" }] }] }} auth={{ connected: true }} expandedProjects={["project"]} activeThread={{ id: "project-thread", title: "项目任务", type: "project", projectId: "project" }} runningThreadIds={new Set(["standalone", "project-thread"])} onToggleProject={() => {}} onSelectProjectThread={() => {}} onSelectStandalone={() => {}} onAddProject={() => {}} onRemoveProject={() => {}} onOpenProjectPath={() => {}} onCopyProjectPath={() => {}} onNewProjectThread={() => {}} onNewStandalone={() => {}} onRenameThread={() => {}} onDeleteThread={() => {}} onOpenSettings={() => {}} />);
     expect(html).toContain("新建项目会话");
     expect(html).toContain('aria-label="会话操作 独立任务"');
     expect(html).toContain('aria-label="会话操作 项目任务"');
+    expect(html).toContain('aria-label="项目任务 正在响应"');
+    expect(html).not.toContain('aria-label="独立任务 正在响应"');
   });
 
   it("keeps project-only tools disabled without a project", () => {
