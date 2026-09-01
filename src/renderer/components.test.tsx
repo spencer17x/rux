@@ -62,7 +62,7 @@ describe("typed renderer components", () => {
     const settings = { provider: "codex" as const, serviceName: "Codex", model: "model-1", reasoning: "medium" as const, sandboxMode: "workspace-write" as const };
     const modelHtml = renderToStaticMarkup(<ModelPopover settings={settings} auth={{ connected: true }} models={[{ id: "model-1", model: "model-1", displayName: "GPT-5.6 Sol", isDefault: true, defaultReasoningEffort: "medium", supportedReasoningEfforts: [{ reasoningEffort: "medium" }], serviceTiers: [{ id: "priority", name: "Fast", description: "1.5x speed" }] }]} loading={false} error="" serviceTier={null} onSelectModel={() => {}} onSelectReasoning={() => {}} onSelectServiceTier={() => {}} />);
     const permissionHtml = renderToStaticMarkup(<PermissionPopover selectedValue="workspace-write" onSelect={() => {}} onLearnMore={() => {}} />);
-    expect(modelHtml).toContain("5.6 Sol"); expect(modelHtml).toContain("推理强度"); expect(modelHtml).toContain("速度"); expect(permissionHtml).toContain("完全访问权限");
+    expect(modelHtml).toContain("5.6 Sol"); expect(modelHtml).toContain("推理强度"); expect(modelHtml).toContain("速度"); expect(modelHtml).not.toContain('role="menuitemradio"'); expect(permissionHtml).toContain("完全访问权限");
   });
 
   it("does not present Pi approval mode as an available capability", () => {

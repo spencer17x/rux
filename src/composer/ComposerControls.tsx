@@ -32,24 +32,25 @@ export function compactModelName(value: string): string {
 type RunSettingsSection = "models" | "reasoning" | "speed";
 
 export function ModelPopover({ settings, models, loading, error, serviceTier, onSelectModel, onSelectReasoning, onSelectServiceTier }: { settings: ComposerSettings; auth: AuthState; models: ModelInfo[]; loading: boolean; error: string; serviceTier: string | null; onSelectModel: (model: ModelInfo) => void; onSelectReasoning: (reasoning: Reasoning) => void; onSelectServiceTier: (serviceTier: string | null) => void }) {
-  const [section, setSection] = useState<RunSettingsSection>("models");
+  const [section, setSection] = useState<RunSettingsSection | null>(null);
   const [advanced, setAdvanced] = useState(true);
   const current = selectedModel(settings, models);
   const efforts = current?.supportedReasoningEfforts || Object.keys(reasoningLabels).map((reasoningEffort) => ({ reasoningEffort: reasoningEffort as Reasoning, description: "" }));
   const tiers = current?.serviceTiers || [];
   const selectedTier = tiers.find((tier) => tier.id === serviceTier);
   const speedLabel = selectedTier?.id === "priority" ? "快速" : selectedTier?.name || "标准";
-  const sectionLabel = section === "models" ? "模型" : section === "reasoning" ? "推理强度" : "速度";
-  return <div className="model-popover run-settings-popover" role="dialog" aria-label="切换模型、推理强度和速度">
+  const sectionLabel = section === "models" ? "模型" : section === "reasoning" ? "推理强度" : section === "speed" ? "速度" : "";
+  const activateSection = (next: RunSettingsSection) => setSection(next);
+  return <div className="model-popover run-settings-popover" role="dialog" aria-label="切换模型、推理强度和速度" onMouseLeave={() => setSection(null)}>
     <div className="run-settings-main" role="menu" aria-label="运行设置">
       {advanced && <>
-        <button type="button" role="menuitem" aria-haspopup="menu" className={section === "models" ? "is-selected" : ""} onMouseEnter={() => setSection("models")} onClick={() => setSection("models")}><strong>模型</strong><span>{compactModelName(modelDisplayName(settings, models))}</span><CaretRight size={17} /></button>
-        <button type="button" role="menuitem" aria-haspopup="menu" className={section === "reasoning" ? "is-selected" : ""} onMouseEnter={() => setSection("reasoning")} onClick={() => setSection("reasoning")}><strong>推理强度</strong><span>{reasoningLabels[settings.reasoning] || settings.reasoning}</span><CaretRight size={17} /></button>
-        {tiers.length > 0 && <button type="button" role="menuitem" aria-haspopup="menu" className={section === "speed" ? "is-selected" : ""} onMouseEnter={() => setSection("speed")} onClick={() => setSection("speed")}><strong>速度</strong><span>{speedLabel}</span><CaretRight size={17} /></button>}
+        <button type="button" role="menuitem" aria-haspopup="menu" aria-expanded={section === "models"} className={section === "models" ? "is-selected" : ""} onMouseEnter={() => setSection("models")} onFocus={() => setSection("models")} onClick={() => activateSection("models")}><strong>模型</strong><span>{compactModelName(modelDisplayName(settings, models))}</span><CaretRight size={17} /></button>
+        <button type="button" role="menuitem" aria-haspopup="menu" aria-expanded={section === "reasoning"} className={section === "reasoning" ? "is-selected" : ""} onMouseEnter={() => setSection("reasoning")} onFocus={() => setSection("reasoning")} onClick={() => activateSection("reasoning")}><strong>推理强度</strong><span>{reasoningLabels[settings.reasoning] || settings.reasoning}</span><CaretRight size={17} /></button>
+        {tiers.length > 0 && <button type="button" role="menuitem" aria-haspopup="menu" aria-expanded={section === "speed"} className={section === "speed" ? "is-selected" : ""} onMouseEnter={() => setSection("speed")} onFocus={() => setSection("speed")} onClick={() => activateSection("speed")}><strong>速度</strong><span>{speedLabel}</span><CaretRight size={17} /></button>}
       </>}
-      <button type="button" role="menuitem" className="run-settings-advanced" aria-expanded={advanced} onClick={() => setAdvanced((value) => !value)}><strong>高级</strong>{advanced ? <CaretUp size={15} /> : <CaretDown size={15} />}</button>
+      <button type="button" role="menuitem" className="run-settings-advanced" aria-expanded={advanced} onClick={() => { setAdvanced((value) => !value); setSection(null); }}><strong>高级</strong>{advanced ? <CaretUp size={15} /> : <CaretDown size={15} />}</button>
     </div>
-    {advanced && <div className="run-settings-submenu" role="menu" aria-label={sectionLabel}>
+    {advanced && section && <div className={`run-settings-submenu is-${section}`} role="menu" aria-label={sectionLabel}>
       {section !== "models" && <div className="run-settings-heading">{sectionLabel}</div>}
       {section === "models" && loading && <div className="picker-state" role="status"><CircleNotch size={16} className="spin" />正在读取 Agent 模型…</div>}
       {section === "models" && error && <div className="picker-state error-text" role="alert">{userFacingError(error)}</div>}

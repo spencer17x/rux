@@ -926,3 +926,77 @@ final result: passed
 - [P3] The implementation panels are slightly denser than the Retina source after normalization because Rux retains its existing 13 px composer scale and smaller app-level control density.
 
 final result: passed
+
+---
+
+# Combined Run Settings Fidelity Correction — 2026-09-01
+
+This section supersedes the preceding combined-menu visual pass. User review correctly identified that the prior implementation reproduced the general two-panel idea but did not preserve the supplied UI geometry or interaction model closely enough.
+
+## Comparison target
+
+- Source visual truth:
+  - `/var/folders/hl/d5hg44c53b958y88jbqlwdw00000gn/T/codex-clipboard-2674eed4-7ee3-43d0-a8e7-c3c2bf428466.png`
+  - `/var/folders/hl/d5hg44c53b958y88jbqlwdw00000gn/T/codex-clipboard-1afdf76e-85ee-4184-b8b3-83d8338cd3f4.png`
+  - `/var/folders/hl/d5hg44c53b958y88jbqlwdw00000gn/T/codex-clipboard-b07ea734-6491-449b-a6d2-bc8a4994bc8e.png`
+- Corrected browser implementation:
+  - `/Users/17a/projects/rux/qa/run-settings-menu-v2/root-menu.jpg`
+  - `/Users/17a/projects/rux/qa/run-settings-menu-v2/model-menu.jpg`
+  - `/Users/17a/projects/rux/qa/run-settings-menu-v2/reasoning-menu.jpg`
+  - `/Users/17a/projects/rux/qa/run-settings-menu-v2/speed-menu.jpg`
+- Corrected side-by-side evidence: `/Users/17a/projects/rux/qa/run-settings-menu-v2/comparison.png`.
+
+## Normalization and measured geometry
+
+- Browser implementation captures: `1280 × 720` px at the in-app browser's default desktop viewport.
+- Source captures: `1098 × 456`, `1034 × 578`, and `1046 × 442` px at Retina density.
+- Source and implementation menu regions were normalized into equal `600 × 300` comparison cells.
+- Main trigger: `224 × 28` CSS px.
+- Main menu: `224 × 137` CSS px, aligned exactly to the trigger's left and right edges.
+- Main-menu-to-trigger gap: `9` CSS px.
+- Model submenu: `280 × 212` CSS px, `0` px horizontal gap, `-20` px vertical offset from the main panel.
+- Reasoning submenu: `280 × 221.4` CSS px, `0` px horizontal gap, `-31` px vertical offset.
+- Speed submenu: `280 × 120.3` CSS px, `0` px horizontal gap, and `+59` px vertical offset.
+
+## Findings and correction history
+
+- [P1] The menu was anchored to the whole composer instead of its trigger.
+  - Earlier evidence: the main panel sat roughly `65` px above the trigger and was horizontally offset.
+  - Fix: moved the popover into a trigger-owned positioned wrapper. The corrected panel is exactly aligned to the `224` px trigger and keeps a `9` px gap, matching the reference geometry.
+- [P1] Opening the trigger immediately displayed the model submenu.
+  - Earlier evidence: the first click produced both panels even before the user chose or hovered a category.
+  - Fix: the first click now shows only the left overview. Model, reasoning, and speed submenus open on pointer hover, keyboard focus, or click; leaving the combined menu closes only the submenu while the overview remains open.
+- [P2] Menu rows and panels were too tall and visually dense in the wrong way.
+  - Fix: reduced overview rows to `28` px, the advanced row to `32` px, model rows to `28` px, and speed rows to `35` px; corrected padding, radius, border, and shadow tokens against the reference.
+- [P2] All submenus used one fixed bottom alignment.
+  - Fix: category-specific vertical offsets now reproduce the supplied model, reasoning, and speed states rather than forcing one generic placement.
+- [P2] The previous browser mock defaulted to medium reasoning while all three references showed `极高`.
+  - Fix: corrected the deterministic visual-preview state to `xhigh` so the trigger, overview value, and checked reasoning item match the supplied design.
+- [P2] At `680` px width, specificity between category offsets and the compact stacking rule compressed the speed submenu.
+  - Fix: applied equal-specificity compact overrides. Runtime measurement now shows the complete `280 × 120.3` submenu above the root panel with `overflow: false`.
+
+## Required fidelity surfaces
+
+- Fonts and typography: passed; reference-aligned 14 px primary labels, muted 14 px overview values, 12 px descriptions, compact line height, and single-line model names are preserved.
+- Spacing and layout rhythm: passed; trigger alignment, 9 px trigger gap, zero-gap nested panels, category-specific offsets, compact rows, panel sizes, 12 px radii, and restrained elevation match the supplied states.
+- Colors and visual tokens: passed; white panels, neutral selected rows, muted secondary values, hairline borders, and gray chevrons/checkmarks align with the source.
+- Image quality and asset fidelity: passed; Phosphor Caret and Check vectors remain code-native and sharp. No custom SVG, CSS illustration, gradient, or placeholder asset was added.
+- Copy and content: passed; model names, `轻度 / 中 / 高 / 极高 / 最高 / Ultra`, `标准 / 快速`, and the speed descriptions match the reference wording.
+- Interaction and accessibility: passed; first-open overview, hover/focus/click expansion, pointer-leave collapse, checked radio semantics, advanced disclosure, Escape/outside closing, and focus restoration are implemented.
+
+## Primary interactions tested
+
+1. Open the trigger and verify the overview appears without a submenu — passed.
+2. Hover the model row and verify its submenu opens — passed.
+3. Move outside the combined menu and verify the submenu closes while the overview remains — passed.
+4. Open model, reasoning, and speed submenus through category rows — passed.
+5. Verify panel geometry against measured reference offsets — passed.
+6. Verify no overflow at `1000 × 700` and a complete stacked submenu at `680 × 700` — passed.
+7. Browser console warning/error check — no entries.
+8. Full unit suite (`21` files, `75` tests), typecheck, web build, and Electron build — passed.
+
+## Follow-up polish
+
+- No actionable P0/P1/P2 visual or interaction differences remain in the supplied states. Minor text antialiasing variance is expected between live browser rendering and Retina screenshots.
+
+final result: passed

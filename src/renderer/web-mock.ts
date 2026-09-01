@@ -3,7 +3,7 @@ import type { RuxApi } from "../electron/preload";
 const thread = { id: "web-preview", title: "权限交互预览", agentId: "codex" as const, agentMode: "default" };
 const projectThread = { id: "web-project-preview", title: "项目菜单预览", agentId: "codex" as const, agentMode: "default" };
 const project = { id: "web-project", name: "rux-demo", path: "/Users/preview/rux-demo", threads: [projectThread] };
-let settings = { provider: "codex" as const, serviceName: "OpenAI Compatible", baseUrl: "https://api.openai.com/v1", hasApiKey: false, model: "gpt-5.6-sol", reasoning: "medium" as const, sandboxMode: "read-only" as "read-only" | "workspace-write" | "danger-full-access", uiFontSize: 14, allowConversationOverride: true, conversationSticky: true };
+let settings = { provider: "codex" as const, serviceName: "OpenAI Compatible", baseUrl: "https://api.openai.com/v1", hasApiKey: false, model: "gpt-5.6-sol", reasoning: "xhigh" as const, sandboxMode: "read-only" as "read-only" | "workspace-write" | "danger-full-access", uiFontSize: 14, allowConversationOverride: true, conversationSticky: true };
 let storedMessages: Record<string, unknown[]> = {
   [projectThread.id]: Array.from({ length: 5 }, (_, index) => [{ id: `preview-user-${index}`, role: "user", text: `第 ${index + 1} 轮：优化项目交互细节`, parts: [{ type: "text", text: `第 ${index + 1} 轮：优化项目交互细节` }] }, { id: `preview-assistant-${index}`, role: "assistant", status: "complete", parts: [{ type: "text", text: `第 ${index + 1} 轮已经完成。\n\n这里展示用于视觉预览的说明内容，确保对话区域具有足够高度来验证 Sticky 的上一轮和下一轮切换。\n\n- 保持界面层级清楚\n- 保持控件状态明确\n- 保持滚动定位稳定` }] }]).flat(),
 };

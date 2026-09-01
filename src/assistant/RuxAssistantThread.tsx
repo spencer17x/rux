@@ -352,7 +352,6 @@ export default function RuxAssistantThread({
         </ThreadPrimitive.Viewport>
         <ThreadPrimitive.ScrollToBottom className="aui-scroll-bottom" aria-label="滚动到底部"><ArrowDown size={16} /></ThreadPrimitive.ScrollToBottom>
         <ComposerPrimitive.Root className="composer-wrap aui-composer-wrap">
-          {modelOpen && <div data-overlay-scope>{modelPopover}</div>}
           <div className="composer">
             {runtimeProgress?.[selectedAgent] && !["ready", "error"].includes(runtimeProgress[selectedAgent].state) && <div className="runtime-inline-progress"><CircleNotch size={13} className="spin" /><span>{runtimeProgress[selectedAgent].state === "downloading" ? `正在下载 ${agents.find((agent) => agent.id === selectedAgent)?.name || selectedAgent} 运行时` : "正在验证并安装运行时"}</span><em>{runtimeProgress[selectedAgent].percent || 0}%</em><i><i style={{ width: `${runtimeProgress[selectedAgent].percent || 4}%` }} /></i></div>}
             {runtimeProgress?.[selectedAgent]?.state === "error" && <div className="runtime-inline-progress is-error"><WarningCircle size={13} /><span>{runtimeProgress[selectedAgent].message || "运行时下载失败"}</span></div>}
@@ -367,7 +366,7 @@ export default function RuxAssistantThread({
               <div className="composer-right">
                 <AgentSelector agents={agents} selectedAgent={selectedAgent} onSelectAgent={onSelectAgent} runtimeProgress={runtimeProgress} open={activeOverlay === "agents"} onToggle={() => onOverlayChange(activeOverlay === "agents" ? null : "agents")} onClose={() => onOverlayChange(null)} buttonRef={agentTrigger} />
                 <AgentModeSelector agent={selectedDefinition} mode={agentMode} onMode={onAgentMode} open={activeOverlay === "agent-mode"} onToggle={() => onOverlayChange(activeOverlay === "agent-mode" ? null : "agent-mode")} onClose={() => onOverlayChange(null)} buttonRef={modeTrigger} />
-                <button ref={modelTrigger} type="button" aria-label="切换模型、推理强度和速度" className={`composer-menu run-settings-trigger ${modelOpen ? "is-active" : ""}`} onClick={onToggleModel} aria-expanded={modelOpen} aria-haspopup="dialog"><strong>{compactModelName(modelLabel)}</strong><span>{reasoningLabel}</span><CaretDown size={13} /></button>
+                <span className="run-settings-wrap" data-overlay-scope><button ref={modelTrigger} type="button" aria-label="切换模型、推理强度和速度" className={`composer-menu run-settings-trigger ${modelOpen ? "is-active" : ""}`} onClick={onToggleModel} aria-expanded={modelOpen} aria-haspopup="dialog"><strong>{compactModelName(modelLabel)}</strong><span>{reasoningLabel}</span><CaretDown size={13} /></button>{modelOpen && modelPopover}</span>
                 <button type="button" className={`icon-button ${listening ? "is-active" : ""}`} aria-label="语音输入" onClick={onVoice}><Microphone size={18} /></button>
                 <ThreadPrimitive.If running>
                   <ComposerPrimitive.Cancel className="send-button stop-button" aria-label="停止"><Stop size={15} weight="fill" /></ComposerPrimitive.Cancel>
