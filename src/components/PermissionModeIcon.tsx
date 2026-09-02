@@ -1,6 +1,6 @@
 import { HandPalm } from "@phosphor-icons/react";
-import assistedApprovalShield from "../assets/assisted-approval-shield.png";
-import fullAccessWarningShield from "../assets/full-access-warning-shield.png";
+import assistedApprovalShield from "../assets/assisted-approval-shield.png?no-inline";
+import fullAccessWarningShield from "../assets/full-access-warning-shield.png?no-inline";
 
 export type PermissionMode = "read-only" | "workspace-write" | "danger-full-access";
 
