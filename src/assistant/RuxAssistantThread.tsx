@@ -1,27 +1,32 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ComponentPropsWithoutRef, type ReactNode, type RefObject } from "react";
 import {
   AuiIf,
+  ActionBarPrimitive,
   AssistantRuntimeProvider,
   ComposerPrimitive,
   MessagePartPrimitive,
   MessagePrimitive,
   ThreadPrimitive,
+  useAuiState,
   useExternalStoreRuntime,
+  useMessageTiming,
 } from "@assistant-ui/react";
 import { MarkdownTextPrimitive } from "@assistant-ui/react-markdown";
 import {
   ArrowDown,
   ArrowUp,
   CaretDown,
+  CaretRight,
   Check,
-  CheckCircle,
   CircleNotch,
   Code,
+  Copy,
   FileText,
   Globe,
   MagnifyingGlass,
   Microphone,
   Paperclip,
+  PencilSimple,
   Plus,
   Robot,
   Stop,
@@ -51,6 +56,7 @@ type Props = {
   attachments: string[]; showAttachments?: boolean; webSearch?: boolean; showWebSearch?: boolean; onToggleWebSearch: () => void;
   draftKey: string; draftText: string; onDraftTextChange: (text: string) => void;
   onAddFiles: () => void; onRemoveAttachment: (path: string) => void; listening: boolean; onVoice: () => void;
+  workspaceSummary?: ReactNode;
 };
 
 const toolPresentation = {
@@ -64,6 +70,7 @@ const toolPresentation = {
 };
 
 const MessageProjectContext = createContext<string | undefined>(undefined);
+const MessageEditContext = createContext<(text: string) => void>(() => {});
 
 function MessageLink({ href, onClick, onContextMenu, ...props }: ComponentPropsWithoutRef<"a">) {
   const projectId = useContext(MessageProjectContext);
@@ -103,8 +110,37 @@ function normalizeMessage(message: RuxMessage): any {
           ? { type: "incomplete", reason: "error", error: message.error || message.text }
           : { type: "complete" },
     } : {}),
-    metadata: { custom: { agentId: message.agentId || "codex" } },
+    metadata: { custom: { agentId: message.agentId || "codex" }, ...(message.role === "assistant" ? { timing: { streamStartTime: new Date(message.createdAt || Date.now()).getTime(), ...(message.completedAt ? { totalStreamTime: Math.max(0, new Date(message.completedAt).getTime() - new Date(message.createdAt || message.completedAt).getTime()) } : {}), totalChunks: message.parts?.length || 0, toolCallCount: message.parts?.filter((part) => part.type === "tool-call").length || 0 } } : {}) },
   };
+}
+
+function formatClock(value: Date): string {
+  return new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false }).format(value);
+}
+
+function formatDuration(milliseconds: number): string {
+  const seconds = Math.max(0, Math.round(milliseconds / 1000));
+  if (seconds < 60) return `${seconds}秒`;
+  return `${Math.floor(seconds / 60)}分钟 ${seconds % 60}秒`;
+}
+
+function MessageTimestamp() {
+  const createdAt = useAuiState((state) => state.message.createdAt);
+  return <time dateTime={createdAt.toISOString()}>{formatClock(createdAt)}</time>;
+}
+
+function AssistantTurnMeta() {
+  const createdAt = useAuiState((state) => state.message.createdAt);
+  const running = useAuiState((state) => state.message.status?.type === "running");
+  const timing = useMessageTiming();
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!running) return undefined;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [running]);
+  const elapsed = timing?.totalStreamTime ?? Math.max(0, now - createdAt.getTime());
+  return <div className="assistant-turn-meta"><span>{running ? "已处理" : "用时"} {formatDuration(elapsed)}</span><CaretRight size={16} /></div>;
 }
 
 function UserText() {
@@ -153,10 +189,11 @@ function ToolPart({ toolName, args, result, isError, approval, respondToApproval
 }
 
 function UserMessage() {
+  const editMessage = useContext(MessageEditContext);
+  const messageText = useAuiState((state) => state.message.content.filter((part) => part.type === "text").map((part) => part.text).join("\n"));
   return (
     <MessagePrimitive.Root className="aui-message aui-user-message">
-      <div className="aui-user-bubble"><MessagePrimitive.Parts components={{ Text: UserText }} /></div>
-      <span className="avatar">S</span>
+      <div className="aui-user-stack"><div className="aui-user-bubble"><MessagePrimitive.Parts components={{ Text: UserText }} /></div><div className="aui-user-meta"><MessageTimestamp /><ActionBarPrimitive.Root className="aui-user-actions"><ActionBarPrimitive.Copy aria-label="复制用户消息"><Copy size={16} /></ActionBarPrimitive.Copy><button type="button" aria-label="编辑用户消息" title="编辑并重新发送" onClick={() => editMessage(messageText)}><PencilSimple size={16} /></button></ActionBarPrimitive.Root></div></div>
     </MessagePrimitive.Root>
   );
 }
@@ -164,8 +201,7 @@ function UserMessage() {
 function AssistantMessage() {
   return (
     <MessagePrimitive.Root className="aui-message aui-agent-message">
-      <span className="avatar avatar-dark">R</span>
-      <div className="aui-agent-content">
+      <div className="aui-agent-content"><AssistantTurnMeta /><div className="aui-agent-body">
         <AuiIf condition={(state) => state.message.status?.type === "running" && state.message.parts.length === 0}>
           <div className="agent-response-loading" role="status" aria-live="polite"><CircleNotch size={15} className="spin" /><span>Rux 正在准备回复</span><i aria-hidden="true"><b /><b /><b /></i></div>
         </AuiIf>
@@ -173,14 +209,11 @@ function AssistantMessage() {
         <AuiIf condition={(state) => state.message.status?.type === "running" && state.message.parts.length > 0}>
           <div className="agent-turn-status is-running" role="status" aria-live="polite"><CircleNotch size={15} className="spin" /><strong>进行中</strong><span>Rux 正在继续处理</span><i aria-hidden="true"><b /><b /><b /></i></div>
         </AuiIf>
-        <AuiIf condition={(state) => state.message.status?.type === "complete"}>
-          <div className="agent-turn-status is-complete" aria-label="本轮状态：已完成"><CheckCircle size={15} weight="fill" /><span>已完成</span></div>
-        </AuiIf>
         <AuiIf condition={(state) => state.message.status?.type === "incomplete"}>
           <div className="agent-turn-status is-incomplete" aria-label="本轮状态：未完成"><WarningCircle size={15} weight="fill" /><span>未完成</span></div>
         </AuiIf>
         <MessagePrimitive.Error><span className="aui-message-error">消息执行失败</span></MessagePrimitive.Error>
-      </div>
+      </div></div>
     </MessagePrimitive.Root>
   );
 }
@@ -300,6 +333,7 @@ export default function RuxAssistantThread({
   onRemoveAttachment,
   listening,
   onVoice,
+  workspaceSummary,
 }: Props) {
   const runtime = useExternalStoreRuntime({
     messages,
@@ -338,10 +372,12 @@ export default function RuxAssistantThread({
     document.addEventListener("keydown", closeOnEscape);
     return () => { document.removeEventListener("pointerdown", closeOnOutside); document.removeEventListener("keydown", closeOnEscape); };
   }, [activeOverlay, onOverlayChange]);
+  const editMessage = (text: string) => { composerDraftRef.current = { key: draftKey, text }; onDraftTextChange(text); runtime.thread.composer.setText(text); requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>(".aui-composer-input")?.focus()); };
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
       <MessageProjectContext.Provider value={projectId}>
+      <MessageEditContext.Provider value={editMessage}>
       <ThreadPrimitive.Root className="aui-thread-root">
         <ConversationSticky enabled={conversationSticky} messages={messages} viewportRef={viewportRef} />
         <ThreadPrimitive.Viewport ref={viewportRef} className="aui-thread-viewport">
@@ -349,6 +385,7 @@ export default function RuxAssistantThread({
             <div className="conversation-empty"><Robot size={30} /><h2>{emptyTitle}</h2><p>输入任务后，Rux 将显示 Agent 的流式文本、思考与工具执行过程。</p></div>
           </ThreadPrimitive.Empty>
           <ThreadPrimitive.Messages components={{ UserMessage, AssistantMessage }} />
+          {workspaceSummary}
         </ThreadPrimitive.Viewport>
         <ThreadPrimitive.ScrollToBottom className="aui-scroll-bottom" aria-label="滚动到底部"><ArrowDown size={16} /></ThreadPrimitive.ScrollToBottom>
         <ComposerPrimitive.Root className="composer-wrap aui-composer-wrap">
@@ -379,6 +416,7 @@ export default function RuxAssistantThread({
           </div>
         </ComposerPrimitive.Root>
       </ThreadPrimitive.Root>
+      </MessageEditContext.Provider>
       </MessageProjectContext.Provider>
     </AssistantRuntimeProvider>
   );

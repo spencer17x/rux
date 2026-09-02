@@ -115,11 +115,11 @@ export function reduceStreamEvent(message: RuxMessage, event: AgentEvent): RuxMe
     updatePart({ type: "tool-call", toolCallId: event.itemId, toolName, args: { tool: event.approval.toolName, ...event.approval }, argsText: JSON.stringify(event.approval), _itemId: event.itemId }, (part) => ({ ...part, approval: { id: event.approval.id, options: [{ id: "allow-once", kind: "allow-once", label: "允许一次" }, { id: "allow-session", kind: "allow-always", label: "本次会话允许" }, { id: "reject-once", kind: "reject-once", label: "拒绝" }] } }));
   } else if (event.type === "turn-completed") {
     const interrupted = ["interrupted", "cancelled", "canceled", "aborted"].includes(String(event.status || "").toLowerCase());
-    return { ...message, parts: parts.map((part) => part.status?.type === "running" ? { ...part, status: { type: interrupted ? "incomplete" : "complete" } } : part), status: event.status === "completed" ? "complete" : interrupted ? "incomplete" : "error", error: event.error ? userFacingError(event.error) : undefined };
+    return { ...message, parts: parts.map((part) => part.status?.type === "running" ? { ...part, status: { type: interrupted ? "incomplete" : "complete" } } : part), status: event.status === "completed" ? "complete" : interrupted ? "incomplete" : "error", completedAt: new Date().toISOString(), error: event.error ? userFacingError(event.error) : undefined };
   } else if (event.type === "error") {
     const error = userFacingError(event.error || "Agent 执行失败");
     parts.push({ type: "text", text: error, status: { type: "incomplete", reason: "error" }, _itemId: `error-${Date.now()}` });
-    return { ...message, parts, status: "error", error };
+    return { ...message, parts, status: "error", completedAt: new Date().toISOString(), error };
   }
   return { ...message, parts };
 }

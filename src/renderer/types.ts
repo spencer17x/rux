@@ -11,7 +11,7 @@ export type ActiveThread = ThreadRecord & { type: "project" | "standalone"; proj
 export type AuthState = { connected: boolean; message?: string; account?: { email?: string; planType?: string } | null };
 export type GitFile = { path: string; status: string; plus: number; minus: number; untracked: boolean; staged: boolean; unstaged: boolean };
 export type GitState = { branch: string; files: GitFile[] };
-export type WorkspaceToolId = "review" | "terminal" | "browser" | "files" | "chat";
+export type WorkspaceToolId = "environment" | "review" | "terminal" | "browser" | "files" | "chat";
 
 export type ProjectAction =
   | { kind: "import"; path: string; createThread: boolean }

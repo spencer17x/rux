@@ -9,6 +9,7 @@ describe("canonical message reducer", () => {
     const completed = reduceStreamEvent(streamed, { type: "turn-completed", status: "completed" });
     expect(completed.parts?.[0].text).toBe("Hello");
     expect(completed.status).toBe("complete");
+    expect(completed.completedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
 
   it("keeps a user-stopped turn incomplete instead of marking it failed or complete", () => {

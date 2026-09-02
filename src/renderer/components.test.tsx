@@ -14,7 +14,9 @@ describe("typed renderer components", () => {
   it("renders project context in the top bar", () => {
     const html = renderToStaticMarkup(<TopBar activeThread={{ id: "thread", title: "Task", type: "project", projectName: "Rux" }} leftPanelOpen={false} bottomPanelOpen={false} rightPanelOpen onToggleLeftPanel={() => {}} onToggleBottomPanel={() => {}} onToggleRightPanel={() => {}} onOpenSettings={() => {}} onOpenPath={() => {}} onCopyPath={() => {}} onShare={() => {}} onRename={() => {}} onRemoveThread={() => {}} />);
     expect(html).toContain("Rux"); expect(html).toContain("Task");
-    expect(html).toContain('aria-label="切换左侧面板"'); expect(html).toContain('aria-label="切换底部面板"'); expect(html).toContain('aria-label="切换环境信息"');
+    expect(html).toContain('aria-label="切换左侧面板"'); expect(html).toContain('aria-label="切换底部面板"'); expect(html).toContain('aria-label="切换右侧面板"');
+    expect(html.indexOf('aria-label="切换左侧面板"')).toBeLessThan(html.indexOf('aria-label="切换底部面板"'));
+    expect(html.indexOf('aria-label="切换底部面板"')).toBeLessThan(html.indexOf('aria-label="切换右侧面板"'));
   });
 
   it("exposes conversation action menus for standalone and project conversations", () => {
@@ -56,6 +58,8 @@ describe("typed renderer components", () => {
     expect(renameHtml).toContain('role="dialog"'); expect(renameHtml).toContain("会话名称");
     const dockHtml = renderToStaticMarkup(<WorkspaceDock activeTool="chat" hasProject gitState={{ branch: "main", files: [] }} terminalProps={{ output: [], onInput: () => {}, onResize: () => {} }} remoteUrl="" projectFiles={[]} sideMessages={[{ id: "u", role: "user", text: "hello" }]} sideValue="" sideSending sideApproval={{ id: "approval", label: "执行命令" }} sideAgentLabel="Codex" onSelectTool={() => {}} onClose={() => {}} onOpenReview={() => {}} onOpenRemote={() => {}} onOpenFile={() => {}} onSideValue={() => {}} onSendSide={() => {}} onSideApproval={() => {}} onCancelSide={() => {}} />);
     expect(dockHtml).toContain("Codex 正在回复"); expect(dockHtml).toContain("执行命令需要批准"); expect(dockHtml).toContain('role="status"');
+    const rightDockHtml = renderToStaticMarkup(<WorkspaceDock placement="right" activeTool="environment" environmentContent={<div>共享环境内容</div>} hasProject gitState={{ branch: "main", files: [] }} terminalProps={{ output: [], onInput: () => {}, onResize: () => {} }} remoteUrl="" projectFiles={[]} sideMessages={[]} sideValue="" sideSending={false} sideApproval={null} sideAgentLabel="Codex" onSelectTool={() => {}} onClose={() => {}} onOpenReview={() => {}} onOpenRemote={() => {}} onOpenFile={() => {}} onSideValue={() => {}} onSendSide={() => {}} onSideApproval={() => {}} onCancelSide={() => {}} />);
+    expect(rightDockHtml).toContain('aria-label="右侧工作区面板"'); expect(rightDockHtml).toContain('aria-label="关闭右侧面板"'); expect(rightDockHtml).toContain("共享环境内容"); expect(rightDockHtml).toContain('aria-label="终端"'); expect(rightDockHtml).toContain('aria-label="侧边聊天"');
   });
 
   it("renders typed model and permission choices", () => {

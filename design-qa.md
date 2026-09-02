@@ -1000,3 +1000,143 @@ This section supersedes the preceding combined-menu visual pass. User review cor
 - No actionable P0/P1/P2 visual or interaction differences remain in the supplied states. Minor text antialiasing variance is expected between live browser rendering and Retina screenshots.
 
 final result: passed
+
+---
+
+# Conversation Column Fidelity QA — 2026-09-02
+
+## Comparison target
+
+- Source visual truth:
+  - `/var/folders/hl/d5hg44c53b958y88jbqlwdw00000gn/T/codex-clipboard-f9cf5a60-c3e8-4dec-934f-97a5c5738f46.png`
+  - `/var/folders/hl/d5hg44c53b958y88jbqlwdw00000gn/T/codex-clipboard-802fc0cc-2091-43ca-90c9-1876fd54a94a.png`
+- Browser-rendered implementation:
+  - `/Users/17a/projects/rux/qa/conversation-column-v2/implementation-785.jpg`
+  - `/Users/17a/projects/rux/qa/conversation-column-v2/implementation-normalized.jpg`
+- Density-normalized comparison: `/Users/17a/projects/rux/qa/conversation-column-v2/comparison.png`.
+- State: light desktop project conversation, final completed turn, conversation Sticky disabled for parity with the supplied capture, three real Git file changes, composer visible.
+
+## Normalization
+
+- Source screenshot: `1590 × 1382` px at Retina density.
+- Source normalized to `795 × 690` px.
+- Browser viewport: `795 × 785` CSS px; the 78 px app chrome/conversation inset was removed to produce a `795 × 690` content-region comparison.
+- The production layout was also measured at `1590 × 1414` CSS px: composer and conversation margins were `52.47` px, matching the source's approximately `3.3%` horizontal margin.
+
+## Full-view and focused evidence
+
+- The normalized side-by-side comparison verifies the same hierarchy: right-aligned black user bubble, time/copy/edit row, assistant duration divider, continuous unboxed prose, bullet list, full-width edited-files card, centered scroll control, and composer aligned to the reading column.
+- The user bubble is positioned 24 px below the normalized conversation content top; its metadata row and assistant duration line align to the same vertical rhythm as the reference.
+- The implementation card uses real Git file paths and line counts. It intentionally exposes only the implemented `审查` action; the reference's `撤销` action is not presented because Rux does not yet have a safe end-to-end multi-file undo operation.
+- Conversation Sticky remains a user setting in production. It was disabled only in the deterministic visual-preview state because the source capture does not show it.
+
+## Findings and comparison history
+
+- [P1] The previous conversation column was capped at 800 px and visually centered as a narrow chat.
+  - Fix: expanded the production conversation screen to the full available width with responsive 3.3% horizontal gutters; standalone and project conversations now share the same reading column.
+- [P1] User messages used a pale bubble with an avatar and no timestamp/action row.
+  - Fix: replaced the presentation with a black rounded bubble, removed the avatar, and added real time, copy, and edit controls using Phosphor icons.
+- [P1] Assistant turns had no duration divider and retained an avatar/status-badge chat layout.
+  - Fix: added a full-width `用时 / 已处理` row backed by message timing, removed the assistant avatar and complete badge, and placed prose directly on the page.
+- [P1] The first edit-control pass used Assistant UI's unsupported edit primitive and produced a runtime console error.
+  - Fix: replaced it with a real Rux edit-and-resend flow that loads the selected user text into the main composer and focuses the input. Fresh-browser verification reports no console warnings or errors.
+- [P2] The existing live Git summary sat outside the scrolling thread as a compact footer.
+  - Fix: moved it into the conversation viewport after the last turn and rebuilt it as a header plus file rows with real additions/deletions and a working review action.
+- [P2] Initial normalized spacing left an extra 30 px between user metadata and the Assistant duration row and doubled the gap before the Git card.
+  - Fix: reduced the user-turn bottom rhythm, removed the final Assistant margin, and remeasured at the normalized target size.
+- [P2] A stale CSS declaration produced an esbuild syntax warning during the first full build.
+  - Fix: removed the orphan declaration and reran the web build without warnings.
+
+## Required fidelity surfaces
+
+- Fonts and typography: passed; system SF/PingFang stack, 15 px conversation copy, 14 px duration metadata, 12 px timestamps, list rhythm, and muted secondary hierarchy align after Retina normalization.
+- Spacing and layout rhythm: passed; 3.3% gutters, user/assistant turn spacing, 42 px duration divider, 64 px change-card header, 36 px file rows, 16 px bubble/composer radii, and centered scroll control match the source structure.
+- Colors and visual tokens: passed; black user bubble, white canvas, neutral separators, gray metadata, green additions, red deletions, and subtle card borders use the established Rux tokens.
+- Image quality and asset fidelity: passed; copy, edit, review, file, duration, and scroll icons use the existing Phosphor vector family. No raster substitute, custom SVG, CSS illustration, gradient, or placeholder asset was introduced.
+- Copy and content: passed with intentional realistic mock differences; the implementation uses current Rux tool names, real Git counts, and working local actions rather than duplicating the screenshot's historical message verbatim.
+- Interaction and accessibility: passed; copy, edit-and-resend, review card/rows, scroll-to-bottom, sticky setting, and composer remain semantic and keyboard reachable.
+
+## Primary interactions tested
+
+1. Copy a user message through the message action bar — available.
+2. Edit the final user message and verify its text is loaded into the main composer — passed.
+3. Open the Git review screen from the summary card — passed.
+4. Verify real completion timestamps produce persisted duration metadata — covered by unit test.
+5. Verify the content region and composer share the same responsive gutters — passed at normalized and full-size viewports.
+6. Fresh browser console warning/error check — no entries.
+7. Full unit suite (`21` files, `75` tests), typecheck, Web build, and Electron build — passed; post-fix Web build contains no CSS warning.
+
+## Follow-up polish
+
+- [P3] Exact line wrapping varies with live message content and available side panels; column gutters, font metrics, and component geometry remain stable.
+
+final result: passed
+
+---
+
+# Codex-Native Workbench UI QA — 2026-09-02
+
+## Comparison target
+
+- Source visual truth: `/Users/17a/.codex/generated_images/01a04711-8a0b-7460-bfc3-ced4efe0142d/exec-ec5770bf-a3d1-4570-9eb4-5573224a523c.png` (the third displayed design selected by the user).
+- Browser-rendered implementation: `/Users/17a/projects/rux/qa/codex-native-ui/implementation-open-panels.jpg`.
+- Full-view comparison: `/Users/17a/projects/rux/qa/codex-native-ui/full-comparison.png`.
+- Focused workspace comparison: `/Users/17a/projects/rux/qa/codex-native-ui/focused-workspace-comparison.png`.
+- State: light desktop project conversation, left sidebar open, right workspace open, bottom workspace open, shared environment tool active, bottom tool switcher open.
+
+## Normalization
+
+- Browser viewport: `1280 × 720` CSS px at device scale factor 1.
+- Source image: `1672 × 941` px, proportionally normalized to `1280 × 720` for full-view comparison.
+- Implementation screenshot: `1280 × 720` px.
+- The source and implementation share the same `16:9` composition after normalization; no crop or padding was used in the full-view evidence.
+- The focused comparison crops the right 60% of each frame and normalizes both crops to `900 × 844` before horizontal stacking.
+
+## Full-view comparison evidence
+
+The combined view confirms the selected Codex App language: flat white canvas, warm-gray navigation, hairline region separators, compact system typography, restrained gray selection fills, black/gray icon hierarchy, a spacious conversation column, a lightly bordered composer, a full-height right workspace, and a bottom workbench with a compact floating tool switcher. The toolbar panel controls are visibly ordered left sidebar, bottom panel, right sidebar.
+
+## Focused-region comparison evidence
+
+The focused workspace evidence verifies the highest-risk details at readable scale: the three panel glyphs and active surfaces, shared right/bottom tool icons, keyboard shortcut pills, muted row selection, border and radius weight, composer controls, floating menu, and panel dividers. No custom raster artwork is present in the target; all standard UI icons use the existing Phosphor outline library rather than handcrafted SVG or CSS drawings.
+
+## Findings and comparison history
+
+### Iteration 1
+
+- [P2] The first implementation used a 260 px left sidebar and 324 px right workspace, compressing the conversation more than the selected design.
+  - Fix: reduced the sidebar to 236 px and the right workspace to 300 px, preserving responsive fallbacks.
+  - Post-fix evidence: `qa/codex-native-ui/full-comparison.png`.
+- [P2] The first bottom tool switcher opened upward over the conversation because its 42 px rows did not fit inside the bottom workbench.
+  - Fix: introduced the compact Codex row density for the popover and opened it downward inside the panel; all six tools and shortcut pills remain fully visible.
+  - Post-fix evidence: `qa/codex-native-ui/implementation-open-panels.jpg`.
+- [P2] The first toolbar retained a prominent `打开位置` control that was not part of the selected Codex composition.
+  - Fix: moved open-directory and copy-path actions into the existing title ellipsis menu, preserving both real capabilities while restoring the sparse toolbar hierarchy.
+  - Post-fix evidence: focused top-toolbar area in `qa/codex-native-ui/focused-workspace-comparison.png`.
+
+### Final pass
+
+- Fonts and typography: passed. System SF/PingFang stack, compact 14–15 px UI scale, muted secondary labels, truncation, and shortcut-chip weights align with the source.
+- Spacing and layout rhythm: passed. Sidebar, conversation, right workspace, bottom dock, menu density, 58 px toolbar, radii, and hairline separators reproduce the selected composition without viewport overflow.
+- Colors and visual tokens: passed. White and warm-neutral surfaces, low-contrast selected fills, black primary text, semantic Git colors, and subtle elevation follow the Codex-native palette.
+- Image quality and asset fidelity: passed. The target contains only standard product icons; the implementation consistently uses Phosphor outline icons with regular weight and no raster placeholders, handcrafted SVGs, or CSS icon approximations.
+- Copy and content: passed with intentional product-data differences. Rux keeps its real project, conversation, Git, permission, model, and environment data rather than duplicating generated mock copy.
+- Interaction and accessibility: passed. Left/bottom/right panels independently toggle, `aria-pressed` reflects each state, the shared tool definitions drive both placements, the bottom launcher closes after selection, tool-disabled rules remain enforced, and focus/hover/pressed states remain visible.
+- Browser console: passed. `tab.dev.logs({ levels: ["error"] })` returned no entries after the final interaction pass.
+
+## Primary interactions tested
+
+1. Open the panel toggles in visual order: left, bottom, right — passed.
+2. Verify both right and bottom placements expose the same six tools and shortcut metadata — passed.
+3. Open the bottom tool switcher and select `环境`; the menu closes and both open workspaces render the real environment content — passed.
+4. Verify project-only tools retain disabled behavior without a project — covered by component tests.
+5. Hover the top-right panel control and inspect the Codex-style tooltip/active treatment — passed.
+6. Check browser console errors after panel and tool interactions — none.
+7. Run all `75` unit tests, TypeScript validation, Web build, Electron build, and macOS directory package — passed.
+
+## Follow-up polish
+
+- [P3] The implementation retains a compact `工作区` heading and close button in the right panel so the panel remains directly dismissible and accessible; the generated target relied only on its toolbar toggle.
+- [P3] Live system-font antialiasing is slightly crisper than the generated reference raster.
+
+final result: passed
