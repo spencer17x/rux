@@ -69,15 +69,21 @@ export default function RuxTerminal({ starting = false, output, onInput, onResiz
     terminal.loadAddon(fitAddon);
     terminal.open(containerRef.current);
     terminalRef.current = terminal;
+    lastSequenceRef.current = 0;
+    let frame = 0;
     const fit = () => {
+      frame = 0;
+      if (!containerRef.current?.clientWidth || !containerRef.current?.clientHeight) return;
       fitAddon.fit();
       onResizeRef.current({ cols: terminal.cols, rows: terminal.rows });
     };
-    const observer = new ResizeObserver(fit);
+    const scheduleFit = () => { if (!frame) frame = requestAnimationFrame(fit); };
+    const observer = new ResizeObserver(scheduleFit);
     observer.observe(containerRef.current);
     const inputSubscription = terminal.onData((data) => onInputRef.current(data));
-    requestAnimationFrame(fit);
+    scheduleFit();
     return () => {
+      cancelAnimationFrame(frame);
       inputSubscription.dispose();
       observer.disconnect();
       terminal.dispose();
@@ -86,6 +92,7 @@ export default function RuxTerminal({ starting = false, output, onInput, onResiz
   }, []);
 
   useEffect(() => {
+    if (!output.length) { terminalRef.current?.reset(); lastSequenceRef.current = 0; }
     for (const chunk of output) {
       if (chunk.sequence <= lastSequenceRef.current) continue;
       terminalRef.current?.write(chunk.data);

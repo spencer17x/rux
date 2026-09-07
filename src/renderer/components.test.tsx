@@ -25,7 +25,7 @@ describe("typed renderer components", () => {
     expect(html).toContain('aria-label="会话操作 独立任务"');
     expect(html).toContain('aria-label="会话操作 项目任务"');
     expect(html).toContain('aria-label="项目任务 正在响应"');
-    expect(html).not.toContain('aria-label="独立任务 正在响应"');
+    expect(html).toContain('aria-label="独立任务 正在响应"');
   });
 
   it("keeps project-only tools disabled without a project", () => {

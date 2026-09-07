@@ -33,7 +33,7 @@ test("creates the initial standalone conversation and opens typed settings", asy
   await expect(page.locator("aside.sidebar")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "切换左侧面板" })).toHaveAttribute("aria-pressed", "false");
   await expect(page.getByRole("button", { name: "切换底部面板" })).toHaveAttribute("aria-pressed", "false");
-  await expect(page.getByRole("button", { name: "切换环境信息" })).toHaveAttribute("aria-pressed", "false");
+  await expect(page.getByRole("button", { name: "切换右侧面板" })).toHaveAttribute("aria-pressed", "false");
   await page.getByRole("button", { name: "切换左侧面板" }).click();
   await expect(page.getByText("独立会话", { exact: true }).first()).toBeVisible();
   await page.getByRole("textbox", { name: "消息" }).fill("Create standalone draft");
@@ -106,12 +106,12 @@ test("creates the initial standalone conversation and opens typed settings", asy
   await permissionTrigger.click();
   await page.getByRole("button", { name: "选择 Agent 模式" }).click();
   await expect(page.getByRole("menu")).toBeVisible();
-  await page.getByRole("button", { name: "选择模型" }).click();
-  await expect(page.getByRole("dialog", { name: "选择模型" })).toBeVisible();
-  await expect(page.getByRole("menu")).toBeHidden();
+  await page.getByRole("button", { name: "切换模型、推理强度和速度" }).click();
+  await expect(page.getByRole("dialog", { name: "切换模型、推理强度和速度" })).toBeVisible();
+  await expect(page.locator(".agent-mode-popover")).toBeHidden();
   await page.keyboard.press("Escape");
-  await expect(page.getByRole("dialog", { name: "选择模型" })).toBeHidden();
-  await expect(page.getByRole("button", { name: "选择模型" })).toBeFocused();
+  await expect(page.getByRole("dialog", { name: "切换模型、推理强度和速度" })).toBeHidden();
+  await expect(page.getByRole("button", { name: "切换模型、推理强度和速度" })).toBeFocused();
   await page.getByRole("button", { name: "选择 Agent", exact: true }).click();
   await expect(page.getByRole("menu")).toBeVisible();
   await page.keyboard.press("Escape");
@@ -182,7 +182,7 @@ test("navigates between completed turns from the conversation sticky", async () 
   await expect(next).toBeDisabled(); await expect(previous).toBeEnabled();
 });
 
-test("restores a SQLite project and executes a command through the PTY terminal", async () => {
+test("restores a SQLite project and executes a command through the PTY terminal", async ({}, testInfo) => {
   test.slow();
   const projectPath = join(testRoot, "project");
   mkdirSync(projectPath, { recursive: true });
@@ -196,12 +196,13 @@ test("restores a SQLite project and executes a command through the PTY terminal"
   await application.close();
   await launchApplication();
   await expect(page.getByText("project", { exact: true }).first()).toBeVisible();
-  await expect(page.getByRole("button", { name: "切换环境信息" })).toHaveAttribute("aria-pressed", "false");
-  await page.getByRole("button", { name: "打开位置" }).click();
+  await expect(page.getByRole("button", { name: "切换右侧面板" })).toHaveAttribute("aria-pressed", "false");
+  await page.getByRole("button", { name: "更多", exact: true }).click();
   await expect(page.getByRole("button", { name: "复制项目路径" })).toBeVisible();
   await page.getByRole("button", { name: "复制项目路径" }).click();
   await expect(page.getByRole("status")).toContainText("项目路径已复制");
-  await page.getByRole("button", { name: "切换环境信息" }).click();
+  await page.getByRole("button", { name: "切换右侧面板" }).click();
+  await page.getByRole("button", { name: "环境", exact: true }).click();
   await expect(page.getByRole("complementary", { name: "环境信息" })).toBeVisible();
   await expect(page.getByRole("button", { name: /变更/ })).toBeVisible();
   await expect(page.getByRole("button", { name: "提交或推送" })).toBeVisible();
@@ -210,6 +211,9 @@ test("restores a SQLite project and executes a command through the PTY terminal"
   await page.getByRole("menuitem", { name: "main", exact: true }).click();
   await expect(page.getByRole("button", { name: /^分支比较/ })).toBeVisible();
   await expect(page.locator(".real-diff")).toContainText("+feature");
+  await expect(page.locator(".diff-line.is-added")).toBeInViewport();
+  await expect(page.getByRole("complementary", { name: "环境信息" }).getByRole("button", { name: "提交或推送" })).toBeDisabled();
+  await page.screenshot({ path: testInfo.outputPath("git-review.png") });
   await page.getByRole("button", { name: "返回对话" }).click();
   await expect(page.getByRole("textbox", { name: "消息" })).toBeVisible();
   await page.getByRole("button", { name: "切换左侧面板" }).click();
@@ -224,12 +228,15 @@ test("restores a SQLite project and executes a command through the PTY terminal"
   await expect(page.getByRole("menu")).toBeHidden();
   await expect(projectMenuTrigger).toBeFocused();
   await page.getByRole("button", { name: "切换底部面板" }).click();
-  await page.getByRole("tab", { name: "侧边聊天" }).click();
+  await page.getByRole("button", { name: "关闭右侧面板" }).click();
+  await page.getByRole("button", { name: "切换工作区工具" }).click();
+  await page.getByRole("button", { name: /^侧边聊天/ }).click();
   await page.getByRole("textbox", { name: "侧边聊天消息" }).fill("E2E side turn");
   await page.getByRole("button", { name: "发送侧边聊天消息" }).click();
   await expect(page.getByText("Codex 正在回复", { exact: true })).toBeVisible();
   await expect(page.getByText("RUX_E2E_AGENT_OK", { exact: true }).last()).toBeVisible();
-  await page.getByRole("tab", { name: "终端" }).click();
+  await page.getByRole("button", { name: "切换工作区工具" }).click();
+  await page.getByRole("button", { name: /^终端/ }).click();
   const terminalInput = page.locator(".xterm-helper-textarea");
   await terminalInput.focus();
   await terminalInput.pressSequentially("printf RUX_E2E_TERMINAL", { delay: 50 });
@@ -237,4 +244,38 @@ test("restores a SQLite project and executes a command through the PTY terminal"
   await expect(page.locator(".xterm-rows")).toContainText("RUX_E2E_TERMINAL", { timeout: 10_000 });
   await expect(page.getByLabel("终端输出")).toContainText("RUX_E2E_TERMINAL");
   await expect(page.getByLabel("终端输出")).not.toContainText("正在启动终端");
+  await page.getByRole("button", { name: "关闭底部面板" }).click();
+  await page.getByRole("button", { name: "切换底部面板" }).click();
+  await expect(page.getByLabel("终端输出")).toContainText("RUX_E2E_TERMINAL");
+  await page.locator(".xterm-helper-textarea").pressSequentially("printf RUX_TERMINAL_REOPEN");
+  await page.locator(".xterm-helper-textarea").press("Enter");
+  await expect(page.getByLabel("终端输出")).toContainText("RUX_TERMINAL_REOPEN");
+});
+
+
+test("keeps composer controls within a narrow desktop pane and dismisses menus", async () => {
+  await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(900, 650));
+  await page.getByRole("button", { name: "切换左侧面板" }).click();
+  const controls = page.locator(".composer-controls");
+  const sizes = await controls.evaluate((element) => {
+    const parent = element.getBoundingClientRect();
+    return Array.from(element.querySelectorAll("button")).map((button) => {
+      const rect = button.getBoundingClientRect();
+      return { name: button.getAttribute("aria-label"), within: rect.left >= parent.left - 1 && rect.right <= parent.right + 1, height: rect.height };
+    });
+  });
+  expect(sizes.every((control) => control.within && control.height >= 28)).toBe(true);
+  await page.getByRole("button", { name: "更多", exact: true }).click();
+  await expect(page.getByRole("menu", { name: "会话操作", exact: true })).toBeVisible();
+  await page.getByRole("textbox", { name: "消息" }).click();
+  await expect(page.getByRole("menu", { name: "会话操作", exact: true })).toBeHidden();
+  await page.getByRole("button", { name: "更多", exact: true }).click();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("button", { name: "更多", exact: true })).toBeFocused();
+  await page.getByRole("button", { name: "切换模型、推理强度和速度", exact: true }).click();
+  await page.getByRole("menuitem", { name: /^模型 / }).focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(page.getByRole("menu", { name: "模型", exact: true }).getByRole("menuitemradio").first()).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog", { name: "切换模型、推理强度和速度", exact: true })).toBeHidden();
 });

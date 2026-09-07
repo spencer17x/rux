@@ -55,7 +55,7 @@ type Props = {
   activeOverlay: OverlayId | null; onOverlayChange: (overlay: OverlayId | null) => void;
   attachments: string[]; showAttachments?: boolean; webSearch?: boolean; showWebSearch?: boolean; onToggleWebSearch: () => void;
   draftKey: string; draftText: string; onDraftTextChange: (text: string) => void;
-  onAddFiles: () => void; onRemoveAttachment: (path: string) => void; listening: boolean; onVoice: () => void;
+  onAddFiles: () => void; onRemoveAttachment: (path: string) => void; listening: boolean; showVoice?: boolean; onVoice: () => void;
   workspaceSummary?: ReactNode;
 };
 
@@ -212,6 +212,7 @@ function AssistantMessage() {
         <AuiIf condition={(state) => state.message.status?.type === "incomplete"}>
           <div className="agent-turn-status is-incomplete" aria-label="本轮状态：未完成"><WarningCircle size={15} weight="fill" /><span>未完成</span></div>
         </AuiIf>
+        <AuiIf condition={(state) => state.message.status?.type === "complete"}><div className="assistant-completion" aria-label="本轮状态：已完成"><span><Check size={14} />已完成</span><ActionBarPrimitive.Root><ActionBarPrimitive.Copy aria-label="复制回复"><Copy size={15} /></ActionBarPrimitive.Copy></ActionBarPrimitive.Root></div></AuiIf>
         <MessagePrimitive.Error><span className="aui-message-error">消息执行失败</span></MessagePrimitive.Error>
       </div></div>
     </MessagePrimitive.Root>
@@ -249,7 +250,7 @@ function ConversationSticky({ enabled, messages, viewportRef }: { enabled: boole
   }, [enabled, turns, viewportRef]);
   if (!enabled || !active) return null;
   const previous = adjacentStickyTurn(turns, active.id, -1); const next = adjacentStickyTurn(turns, active.id, 1);
-  const scrollTo = (turn: { id: string; text: string }) => { navigationTarget.current = { id: turn.id, until: performance.now() + 750 }; setActive(turn); const viewport = viewportRef.current; const target = viewport?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(turn.id)}"]`); target?.scrollIntoView({ behavior: "smooth", block: "start" }); };
+  const scrollTo = (turn: { id: string; text: string }) => { navigationTarget.current = { id: turn.id, until: performance.now() + 750 }; setActive(turn); const viewport = viewportRef.current; const target = viewport?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(turn.id)}"]`); target?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth", block: "start" }); };
   return <div className="conversation-sticky"><div className="conversation-sticky-card"><button type="button" className="conversation-sticky-current" aria-label={`返回当前轮问题：${active.text}`} onClick={() => scrollTo(active)}><span>上一轮</span><strong>{active.text}</strong></button><div className="conversation-sticky-nav" role="group" aria-label="切换对话轮次"><button type="button" aria-label="切换到上一轮" title="上一轮" disabled={!previous} onClick={() => previous && scrollTo(previous)}><ArrowUp size={15} /></button><button type="button" aria-label="切换到下一轮" title="下一轮" disabled={!next} onClick={() => next && scrollTo(next)}><ArrowDown size={15} /></button></div></div></div>;
 }
 
@@ -332,6 +333,7 @@ export default function RuxAssistantThread({
   onAddFiles,
   onRemoveAttachment,
   listening,
+  showVoice = true,
   onVoice,
   workspaceSummary,
 }: Props) {
@@ -392,7 +394,7 @@ export default function RuxAssistantThread({
           <div className="composer">
             {runtimeProgress?.[selectedAgent] && !["ready", "error"].includes(runtimeProgress[selectedAgent].state) && <div className="runtime-inline-progress"><CircleNotch size={13} className="spin" /><span>{runtimeProgress[selectedAgent].state === "downloading" ? `正在下载 ${agents.find((agent) => agent.id === selectedAgent)?.name || selectedAgent} 运行时` : "正在验证并安装运行时"}</span><em>{runtimeProgress[selectedAgent].percent || 0}%</em><i><i style={{ width: `${runtimeProgress[selectedAgent].percent || 4}%` }} /></i></div>}
             {runtimeProgress?.[selectedAgent]?.state === "error" && <div className="runtime-inline-progress is-error"><WarningCircle size={13} /><span>{runtimeProgress[selectedAgent].message || "运行时下载失败"}</span></div>}
-            {showAttachments && attachments.length > 0 && <div className="attachment-list">{attachments.map((path) => <span key={path}><Paperclip size={13} />{path.split(/[\\/]/).pop()}<button type="button" onClick={() => onRemoveAttachment(path)}><X size={12} /></button></span>)}</div>}
+            {showAttachments && attachments.length > 0 && <div className="attachment-list">{attachments.map((path) => <span key={path}><Paperclip size={13} />{path.split(/[\\/]/).pop()}<button type="button" aria-label={`移除附件 ${path.split(/[\\/]/).pop()}`} onClick={() => onRemoveAttachment(path)}><X size={12} /></button></span>)}</div>}
             <ComposerPrimitive.Input className="aui-composer-input" aria-label="消息" placeholder="向 Rux 发送消息" rows={2} onChange={(event) => { composerDraftRef.current = { key: draftKey, text: event.currentTarget.value }; onDraftTextChange(event.currentTarget.value); }} />
             <div className="composer-controls">
               <div className="composer-left">
@@ -404,7 +406,7 @@ export default function RuxAssistantThread({
                 <AgentSelector agents={agents} selectedAgent={selectedAgent} onSelectAgent={onSelectAgent} runtimeProgress={runtimeProgress} open={activeOverlay === "agents"} onToggle={() => onOverlayChange(activeOverlay === "agents" ? null : "agents")} onClose={() => onOverlayChange(null)} buttonRef={agentTrigger} />
                 <AgentModeSelector agent={selectedDefinition} mode={agentMode} onMode={onAgentMode} open={activeOverlay === "agent-mode"} onToggle={() => onOverlayChange(activeOverlay === "agent-mode" ? null : "agent-mode")} onClose={() => onOverlayChange(null)} buttonRef={modeTrigger} />
                 <span className="run-settings-wrap" data-overlay-scope><button ref={modelTrigger} type="button" aria-label="切换模型、推理强度和速度" className={`composer-menu run-settings-trigger ${modelOpen ? "is-active" : ""}`} onClick={onToggleModel} aria-expanded={modelOpen} aria-haspopup="dialog"><strong>{compactModelName(modelLabel)}</strong><span>{reasoningLabel}</span><CaretDown size={13} /></button>{modelOpen && modelPopover}</span>
-                <button type="button" className={`icon-button ${listening ? "is-active" : ""}`} aria-label="语音输入" onClick={onVoice}><Microphone size={18} /></button>
+                {showVoice && <button type="button" className={`icon-button ${listening ? "is-active" : ""}`} aria-label="语音输入" onClick={onVoice}><Microphone size={18} /></button>}
                 <ThreadPrimitive.If running>
                   <ComposerPrimitive.Cancel className="send-button stop-button" aria-label="停止"><Stop size={15} weight="fill" /></ComposerPrimitive.Cancel>
                 </ThreadPrimitive.If>

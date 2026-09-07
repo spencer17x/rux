@@ -8,6 +8,8 @@ type ModalStep = "choose" | "import" | "create";
 export function useWorkspaceController(api: RuxApi, notify: (message: string) => void, onThreadsRemoved: (threadIds: string[]) => void, onThreadSelected: (thread: ThreadRecord) => void) {
   const [workspace, setWorkspace] = useState<WorkspaceState>({ projects: [], standaloneThreads: [] });
   const [activeThread, setActiveThread] = useState<ActiveThread | null>(null);
+  const activeThreadRef = useRef(activeThread);
+  activeThreadRef.current = activeThread;
   const [expandedProjects, setExpandedProjects] = useState<string[]>([]);
   const [defaultParent, setDefaultParent] = useState("");
   const [view, setView] = useState<View>("project");
@@ -56,13 +58,14 @@ export function useWorkspaceController(api: RuxApi, notify: (message: string) =>
     const thread = renameTarget; const nextTitle = title.trim(); if (!thread || !nextTitle) return;
     if (nextTitle === thread.title) { setRenameTarget(null); return; }
     if (thread.draft) { const updated = { ...thread, title: nextTitle }; previewDrafts.current.set(thread.id, updated); setActiveThread((current) => current?.id === thread.id ? { ...current, title: nextTitle } : current); setRenameTarget(null); notify("草稿名称已更新"); return; }
-    try { const updated = await api.threads.update({ type: thread.type, projectId: thread.projectId, threadId: thread.id, title: nextTitle }); if (activeThread?.id === thread.id) setActiveThread((current) => current ? { ...current, ...(updated as Partial<ThreadRecord>) } : current); await reloadWorkspace(); setRenameTarget(null); notify("会话已重命名"); }
+    try { const updated = await api.threads.update({ type: thread.type, projectId: thread.projectId, threadId: thread.id, title: nextTitle }); setActiveThread((current) => current?.id === thread.id ? { ...current, ...(updated as Partial<ThreadRecord>) } : current); await reloadWorkspace(); setRenameTarget(null); notify("会话已重命名"); }
     catch (error) { notify(error instanceof Error ? error.message : String(error)); }
   }, [activeThread, api, notify, reloadWorkspace, renameTarget]);
   const removeThread = useCallback(async (thread: ActiveThread, running = false) => {
     if (running) { notify("请先停止该会话，再删除它"); return; }
     if (thread.draft) {
       previewDrafts.current.delete(thread.id);
+      onThreadsRemoved([thread.id]);
       const project = thread.projectId ? workspace.projects.find((item) => item.id === thread.projectId) : undefined;
       if (project?.threads[0]) selectProjectThread(project, project.threads[0]);
       else if (workspace.standaloneThreads[0]) selectStandalone(workspace.standaloneThreads[0]);
@@ -73,7 +76,7 @@ export function useWorkspaceController(api: RuxApi, notify: (message: string) =>
     try {
       const removed = await api.threads.remove({ type: thread.type, projectId: thread.projectId, threadId: thread.id }) as { workspace: WorkspaceState; cleanupWarning?: string }; const next = removed.workspace;
       setWorkspace(next); onThreadsRemoved([thread.id]);
-      if (activeThread?.id === thread.id) {
+      if (activeThreadRef.current?.id === thread.id) {
         const sameProject = thread.type === "project" ? next.projects.find((item) => item.id === thread.projectId) : undefined;
         if (sameProject?.threads[0]) selectProjectThread(sameProject, sameProject.threads[0]);
         else if (next.standaloneThreads[0]) selectStandalone(next.standaloneThreads[0]);
@@ -88,11 +91,13 @@ export function useWorkspaceController(api: RuxApi, notify: (message: string) =>
     if (!window.confirm(`从 Rux 中移除“${project.name}”？\n\n仅解除侧栏关联，不会删除磁盘中的项目文件。`)) return;
     try {
       const { workspace: rawWorkspace } = await api.projects.remove(project.id); const next = rawWorkspace as WorkspaceState; setWorkspace(next);
-      onThreadsRemoved(project.threads.map((thread) => thread.id)); setExpandedProjects((current) => current.filter((id) => id !== project.id));
-      if (activeThread?.type === "project" && activeThread.projectId === project.id) { const nextProject = next.projects[0]; if (nextProject?.threads[0]) selectProjectThread(nextProject, nextProject.threads[0]); else if (next.standaloneThreads[0]) selectStandalone(next.standaloneThreads[0]); }
+      const draftId = `draft:project:${project.id}`;
+      previewDrafts.current.delete(draftId);
+      onThreadsRemoved([...project.threads.map((thread) => thread.id), draftId]); setExpandedProjects((current) => current.filter((id) => id !== project.id));
+      if (activeThreadRef.current?.type === "project" && activeThreadRef.current.projectId === project.id) { const nextProject = next.projects.find((item) => item.threads.length); if (nextProject) selectProjectThread(nextProject, nextProject.threads[0]); else if (next.standaloneThreads[0]) selectStandalone(next.standaloneThreads[0]); else newStandalone(); }
       notify(`已移除 ${project.name}，本地文件未删除`);
     } catch (error) { notify(error instanceof Error ? error.message : String(error)); }
-  }, [activeThread, api, notify, onThreadsRemoved, selectProjectThread, selectStandalone]);
+  }, [activeThread, api, newStandalone, notify, onThreadsRemoved, selectProjectThread, selectStandalone]);
   const completeProjectAction = useCallback(async (action: ProjectAction) => {
     const diskAction = { ...action, createThread: false } as ProjectAction;
     const project = (diskAction.kind === "create" ? await api.projects.create(diskAction) : diskAction.kind === "clone" ? await api.projects.clone(diskAction) : await api.projects.import(diskAction)) as ProjectRecord;

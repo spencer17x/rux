@@ -77,8 +77,9 @@ function App() {
   const handleDraftPersisted = useCallback((id: string) => { completeDraft(id); setComposerDrafts((current) => Object.fromEntries(Object.entries(current).filter(([key]) => key !== id))); }, [completeDraft]);
   useEffect(() => {
     const retained = Object.fromEntries(Object.entries(composerDrafts).filter(([, draft]) => draft.text.trim() || draft.attachments.length || draft.webSearch));
-    localStorage.setItem("rux.composer-drafts.v1", JSON.stringify(retained));
-  }, [composerDrafts]);
+    try { localStorage.setItem("rux.composer-drafts.v1", JSON.stringify(retained)); }
+    catch { notify("草稿未能保存到本地，请先复制内容后重试"); }
+  }, [composerDrafts, notify]);
 
   const activeMessages = activeThread ? messages[activeThread.id] || [] : [];
   const environmentSources = [...new Set([...activeMessages.flatMap((message) => Array.isArray(message.attachments) ? message.attachments.map(String) : []), ...attachments])];
@@ -88,13 +89,13 @@ function App() {
   const customModels: ModelInfo[] = settings.provider === "custom" && settings.model ? [{ id: `custom:${settings.model}`, model: settings.model, displayName: settings.model, description: settings.serviceName, isDefault: true, defaultReasoningEffort: settings.reasoning, supportedReasoningEfforts: [{ reasoningEffort: settings.reasoning, description: `${settings.serviceName} · ${settings.reasoning}` }] }] : [];
   const activeModels = selectedAgent === "codex" ? settings.provider === "custom" ? customModels : models : modelsByAgent[selectedAgent] || [];
   const activePreference = selectedAgent === "codex"
-    ? { model: settings.model, reasoning: settings.reasoning, serviceTier: agentPreferences.codex.serviceTier }
+    ? { model: settings.provider === "custom" ? settings.model : agentPreferences.codex.model || settings.model, reasoning: settings.provider === "custom" ? settings.reasoning : agentPreferences.codex.reasoning, serviceTier: settings.provider === "custom" ? null : agentPreferences.codex.serviceTier }
     : agentPreferences[selectedAgent] || { model: "default", reasoning: "high", serviceTier: null };
   const activeSandboxMode: SandboxMode = selectedAgent === "pi" && settings.sandboxMode === "workspace-write" ? "read-only" : settings.sandboxMode;
   const supportsSandbox = selectedAgent === "pi" || (selectedAgent === "codex" && settings.provider === "codex");
   const activeRunSettings: AppSettings = { ...settings, sandboxMode: activeSandboxMode };
   const activeComposerSettings: AppSettings = { ...activeRunSettings, ...activePreference, provider: selectedAgent === "codex" ? settings.provider : "codex" };
-  const { gitState, branches, selectedFile, diff, busy, comparisonBase, selectDiff, refreshGit, switchBranch, stage, discardSelected, commitOrPush, openReview, compareBranch, closeReview } = useGitController(api, activeProject?.id, notify, setView);
+  const { gitState, branches, selectedFile, diff, busy, loading: gitLoading, diffLoading, error: gitError, comparisonBase, selectDiff, refreshGit, switchBranch, stage, discardSelected, commitOrPush, openReview, compareBranch, closeReview } = useGitController(api, activeProject?.id, notify, setView);
   const { bottomPanelOpen, setBottomPanelOpen, rightPanelOpen, setRightPanelOpen, activeTool, projectFiles, remoteUrl, sideMessages, sideValue, setSideValue, sideSending, sideApproval, sideAgentLabel, closeBottomPanel, closeRightPanel, toggleBottomPanel, toggleRightPanel, selectWorkspaceTool, openRemote, sendSideChat, respondToSideApproval, cancelSideChat, terminalStarting, terminalOutput, writeTerminalInput, resizeTerminal } = useWorkspaceTools(api, activeProject?.id, selectedAgent, agentMode, activePreference, activeRunSettings, refreshGit, notify);
   const { sending, runningThreadIds, sendMessage: sendAgentMessage, cancelCurrentRun, respondToApproval, isThreadRunning, isProjectRunning } = useAgentRuns({ api, activeThread, activeProjectId: activeProject?.id, selectedAgent, agentMode, preference: activePreference, settings: activeRunSettings, attachments, webSearch, agents, setMessages, setAttachments, setComposerValue, setActiveThread, reloadWorkspace, refreshGit, notify, onDraftPersisted: handleDraftPersisted });
   const sendMessage = (prompt: string = composerValue) => sendAgentMessage(prompt);
@@ -102,11 +103,16 @@ function App() {
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.metaKey && event.key === ",") { event.preventDefault(); setView("settings"); }
-      if (event.metaKey && event.key.toLowerCase() === "b") { event.preventDefault(); setLeftPanelOpen((open) => !open); }
-      if (event.metaKey && event.key.toLowerCase() === "n") { event.preventDefault(); newStandalone(); }
+      if (event.defaultPrevented || event.isComposing || event.repeat || modalStep || renameTarget || fullAccessConfirmOpen) return;
+      if (!event.metaKey && event.target instanceof Element && event.target.closest(".xterm")) return;
+      if ((event.metaKey || event.ctrlKey) && event.key === ",") { event.preventDefault(); setView("settings"); }
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "b") { event.preventDefault(); setLeftPanelOpen((open) => !open); }
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "n") { event.preventDefault(); newStandalone(); }
       if (event.ctrlKey && event.key === "`") { event.preventDefault(); selectWorkspaceTool("terminal"); }
       if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "g") { event.preventDefault(); openReview(); }
+      if (event.metaKey && event.key.toLowerCase() === "p") { event.preventDefault(); selectWorkspaceTool("files"); }
+      if (event.metaKey && event.key.toLowerCase() === "t") { event.preventDefault(); selectWorkspaceTool("browser"); }
+      if (event.metaKey && event.altKey && event.key.toLowerCase() === "s") { event.preventDefault(); selectWorkspaceTool("chat"); }
       if (event.key === "Escape") setActiveOverlay(null);
     };
     window.addEventListener("keydown", handleKeyDown);
@@ -116,8 +122,8 @@ function App() {
   async function copyConversation() {
     const title = activeThread?.title || "Rux 会话";
     const body = activeMessages.map((message) => `## ${message.role === "user" ? "用户" : "Rux"}\n\n${messageExportText(message)}`).join("\n\n");
-    await api.system.copy(`# ${title}\n\n${body || "暂无消息"}`);
-    notify("会话内容已复制");
+    try { await api.system.copy(`# ${title}\n\n${body || "暂无消息"}`); notify("会话内容已复制"); }
+    catch (error) { notify(errorMessage(error)); }
   }
 
   async function addFiles() {
@@ -128,7 +134,7 @@ function App() {
   }
 
   async function selectSandbox(sandboxMode: SandboxMode) {
-    if (sending && sandboxMode !== activeSandboxMode) { setActiveOverlay(null); notify("请先停止当前任务；权限变更会从下一轮对话开始生效"); return; }
+    if ((sending || sideSending) && sandboxMode !== activeSandboxMode) { setActiveOverlay(null); notify("请先停止当前任务；权限变更会从下一轮对话开始生效"); return; }
     if (selectedAgent === "pi" && sandboxMode === "workspace-write") { setActiveOverlay(null); notify("Pi RPC 暂不支持逐次操作审批，请选择只读模式或完整访问"); return; }
     if (sandboxMode === "danger-full-access" && settings.sandboxMode !== "danger-full-access") { setActiveOverlay(null); setFullAccessConfirmOpen(true); return; }
     try { await saveSettings({ sandboxMode }); setActiveOverlay(null); notify(`权限已切换为${sandboxLabels[sandboxMode]}`); }
@@ -193,7 +199,7 @@ function App() {
 
   if (fatalError) return <div className="fatal-screen"><WarningCircle size={32} /><h1>Rux 无法启动</h1><p>{fatalError}</p></div>;
   if (!activeThread) return <div className="fatal-screen"><CircleNotch size={30} className="spin" /><p>正在加载工作区…</p></div>;
-  if (view === "settings") return <div className="app-frame"><Suspense fallback={<div className="fatal-screen"><CircleNotch size={30} className="spin" /><p>正在加载设置…</p></div>}><TypedSettingsScreen settings={settings} auth={auth} models={models} modelsLoading={codexModelsLoading} modelsError={codexModelsError} agents={agents} modelsByAgent={modelsByAgent} providerStore={providerStore} onProviderSave={saveProvider} onProviderRemove={removeProvider} onProviderSetActive={setActiveProvider} onProviderTest={(id) => api.providers.test(id)} systemInfo={systemInfo} projectCount={workspace.projects.length} activeProject={activeProject} gitState={gitState} permissionChangesLocked={sending} onBack={() => setView(isStandalone ? "standalone" : "project")} onSave={async (input: Partial<AppSettings> & { apiKey?: string }) => { if (sending && input.sandboxMode && input.sandboxMode !== settings.sandboxMode) throw new Error("请先停止当前任务；权限变更会从下一轮对话开始生效"); return await saveSettings(input); }} onTest={testSettings} onLogin={async () => { await api.auth.login(); return "设备登录已启动，请按账户区域中的提示完成验证"; }} onLogout={async () => { await api.auth.logout(); setAuth(await api.auth.status()); return "已退出"; }} onNotify={notify} /></Suspense>{toast && <div className="toast" role="status" aria-live="polite"><CheckCircle size={18} />{toast}</div>}</div>;
+  if (view === "settings") return <div className="app-frame"><Suspense fallback={<div className="fatal-screen"><CircleNotch size={30} className="spin" /><p>正在加载设置…</p></div>}><TypedSettingsScreen settings={settings} auth={auth} models={models} modelsLoading={codexModelsLoading} modelsError={codexModelsError} agents={agents} modelsByAgent={modelsByAgent} providerStore={providerStore} onProviderSave={saveProvider} onProviderRemove={removeProvider} onProviderSetActive={setActiveProvider} onProviderTest={(id) => api.providers.test(id)} systemInfo={systemInfo} projectCount={workspace.projects.length} activeProject={activeProject} gitState={gitState} permissionChangesLocked={sending || sideSending} onBack={() => { void closeReview(); }} onSave={async (input: Partial<AppSettings> & { apiKey?: string }) => { if ((sending || sideSending) && input.sandboxMode && input.sandboxMode !== settings.sandboxMode) throw new Error("请先停止当前任务；权限变更会从下一轮对话开始生效"); return await saveSettings(input); }} onTest={testSettings} onLogin={async () => { await api.auth.login(); return "设备登录已启动，请按账户区域中的提示完成验证"; }} onLogout={async () => { await api.auth.logout(); setAuth(await api.auth.status()); return "已退出"; }} onNotify={notify} /></Suspense>{toast && <div className="toast" role="status" aria-live="polite"><CheckCircle size={18} />{toast}</div>}</div>;
 
   const toggleOverlay = (overlay: OverlayId) => setActiveOverlay((current) => current === overlay ? null : overlay);
   const removeAttachment = (path: string) => setAttachments((current) => current.filter((item) => item !== path));
@@ -258,6 +264,7 @@ function App() {
     onAddFiles: addFiles,
     onRemoveAttachment: removeAttachment,
     listening,
+    showVoice: Boolean(window.SpeechRecognition || window.webkitSpeechRecognition),
     onVoice: toggleVoice,
   };
   return (
@@ -267,10 +274,10 @@ function App() {
         <TypedTopBar activeThread={activeThread} leftPanelOpen={leftPanelOpen} bottomPanelOpen={bottomPanelOpen} rightPanelOpen={rightPanelOpen} onToggleLeftPanel={() => setLeftPanelOpen((open) => !open)} onToggleBottomPanel={toggleBottomPanel} onToggleRightPanel={toggleRightPanel} onOpenSettings={() => setView("settings")} onOpenPath={() => activeProject && api.system.openPath(activeProject.id).catch((error) => notify(errorMessage(error)))} onCopyPath={() => activeProject && api.system.copy(activeProject.path).then(() => notify("项目路径已复制"))} onShare={copyConversation} onRename={renameActiveThread} onRemoveThread={() => { void removeWorkspaceThread(sending); }} />
         <div className={`stage-body ${bottomPanelOpen ? "bottom-panel-is-open" : ""}`}>
           <div className="work-pane">
-            <div className="main-content">{view === "review" ? <TypedReviewScreen gitState={gitState} branches={branches} selectedFile={selectedFile} diff={diff} comparisonBase={comparisonBase} onSelectFile={selectDiff} onBack={closeReview} onSwitchBranch={switchBranch} onCommitPush={commitOrPush} onStageAll={() => stage(gitState.files.map((file) => file.path))} onStageFile={() => stage([selectedFile])} onDiscard={discardSelected} busy={busy} /> : <ConversationScreen standalone={isStandalone} activeThread={activeThread} assistantProps={assistantProps} gitState={gitState} onReview={openReview} />}</div>
-            {rightPanelOpen && <Suspense fallback={<div className="workspace-dock is-right"><div className="runtime-inline-progress"><CircleNotch size={13} className="spin" /><span>正在加载右侧工具…</span></div></div>}><TypedWorkspaceDock placement="right" activeTool={activeTool} hasProject={Boolean(activeProject)} gitState={gitState} environmentContent={<EnvironmentPanel hasProject={Boolean(activeProject)} gitState={gitState} branches={branches} sources={environmentSources} busy={busy} onOpenReview={openReview} onOpenPath={() => activeProject && api.system.openPath(activeProject.id).catch((error) => notify(errorMessage(error)))} onSwitchBranch={switchBranch} onCompareBranch={compareBranch} onCommitPush={commitOrPush} onAddSource={addFiles} />} terminalProps={{ starting: terminalStarting, output: terminalOutput, onInput: writeTerminalInput, onResize: resizeTerminal }} remoteUrl={remoteUrl} projectFiles={projectFiles} sideMessages={sideMessages} sideValue={sideValue} sideSending={sideSending} sideApproval={sideApproval} sideAgentLabel={sideAgentLabel} onSelectTool={(tool) => selectWorkspaceTool(tool, "right")} onClose={closeRightPanel} onOpenReview={() => { setView("review"); setRightPanelOpen(false); }} onOpenRemote={openRemote} onOpenFile={(path) => activeProject && api.files.open({ projectId: activeProject.id, path }).catch((error) => notify(errorMessage(error)))} onSideValue={setSideValue} onSendSide={sendSideChat} onSideApproval={respondToSideApproval} onCancelSide={cancelSideChat} /></Suspense>}
+            <div className="main-content">{view === "review" ? <TypedReviewScreen gitState={gitState} branches={branches} selectedFile={selectedFile} diff={diff} loading={gitLoading} diffLoading={diffLoading} error={gitError} onRetry={() => refreshGit()} comparisonBase={comparisonBase} onSelectFile={selectDiff} onBack={closeReview} onSwitchBranch={switchBranch} onCommitPush={commitOrPush} onStageAll={() => stage(gitState.files.map((file) => file.path))} onStageFile={() => stage([selectedFile])} onDiscard={discardSelected} busy={busy} /> : <ConversationScreen standalone={isStandalone} activeThread={activeThread} assistantProps={assistantProps} gitState={gitState} onReview={openReview} />}</div>
+            {rightPanelOpen && <Suspense fallback={<div className="workspace-dock is-right"><div className="runtime-inline-progress"><CircleNotch size={13} className="spin" /><span>正在加载右侧工具…</span></div></div>}><TypedWorkspaceDock placement="right" activeTool={activeTool} hasProject={Boolean(activeProject)} gitState={gitState} environmentContent={<EnvironmentPanel hasProject={Boolean(activeProject)} gitState={gitState} branches={branches} sources={environmentSources} busy={busy || gitLoading} readOnly={Boolean(comparisonBase)} onOpenReview={openReview} onOpenPath={() => activeProject && api.system.openPath(activeProject.id).catch((error) => notify(errorMessage(error)))} onSwitchBranch={switchBranch} onCompareBranch={compareBranch} onCommitPush={commitOrPush} onAddSource={addFiles} />} terminalProps={{ starting: terminalStarting, output: terminalOutput, onInput: writeTerminalInput, onResize: resizeTerminal }} remoteUrl={remoteUrl} projectFiles={projectFiles} sideMessages={sideMessages} sideValue={sideValue} sideSending={sideSending} sideApproval={sideApproval} sideAgentLabel={sideAgentLabel} onSelectTool={(tool) => selectWorkspaceTool(tool, "right")} onClose={closeRightPanel} onOpenReview={() => { void openReview(); setRightPanelOpen(false); }} onOpenRemote={openRemote} onOpenFile={(path) => activeProject && api.files.open({ projectId: activeProject.id, path }).catch((error) => notify(errorMessage(error)))} onSideValue={setSideValue} onSendSide={sendSideChat} onSideApproval={respondToSideApproval} onCancelSide={cancelSideChat} /></Suspense>}
           </div>
-          {bottomPanelOpen && <Suspense fallback={<div className="workspace-dock is-bottom"><div className="runtime-inline-progress"><CircleNotch size={13} className="spin" /><span>正在加载工作区工具…</span></div></div>}><TypedWorkspaceDock placement="bottom" activeTool={activeTool} hasProject={Boolean(activeProject)} gitState={gitState} environmentContent={<EnvironmentPanel hasProject={Boolean(activeProject)} gitState={gitState} branches={branches} sources={environmentSources} busy={busy} onOpenReview={openReview} onOpenPath={() => activeProject && api.system.openPath(activeProject.id).catch((error) => notify(errorMessage(error)))} onSwitchBranch={switchBranch} onCompareBranch={compareBranch} onCommitPush={commitOrPush} onAddSource={addFiles} />} terminalProps={{ starting: terminalStarting, output: terminalOutput, onInput: writeTerminalInput, onResize: resizeTerminal }} remoteUrl={remoteUrl} projectFiles={projectFiles} sideMessages={sideMessages} sideValue={sideValue} sideSending={sideSending} sideApproval={sideApproval} sideAgentLabel={sideAgentLabel} onSelectTool={(tool) => selectWorkspaceTool(tool, "bottom")} onClose={closeBottomPanel} onOpenReview={() => { setView("review"); setBottomPanelOpen(false); }} onOpenRemote={openRemote} onOpenFile={(path) => activeProject && api.files.open({ projectId: activeProject.id, path }).catch((error) => notify(errorMessage(error)))} onSideValue={setSideValue} onSendSide={sendSideChat} onSideApproval={respondToSideApproval} onCancelSide={cancelSideChat} /></Suspense>}
+          {bottomPanelOpen && <Suspense fallback={<div className="workspace-dock is-bottom"><div className="runtime-inline-progress"><CircleNotch size={13} className="spin" /><span>正在加载工作区工具…</span></div></div>}><TypedWorkspaceDock placement="bottom" activeTool={activeTool} hasProject={Boolean(activeProject)} gitState={gitState} environmentContent={<EnvironmentPanel hasProject={Boolean(activeProject)} gitState={gitState} branches={branches} sources={environmentSources} busy={busy || gitLoading} readOnly={Boolean(comparisonBase)} onOpenReview={openReview} onOpenPath={() => activeProject && api.system.openPath(activeProject.id).catch((error) => notify(errorMessage(error)))} onSwitchBranch={switchBranch} onCompareBranch={compareBranch} onCommitPush={commitOrPush} onAddSource={addFiles} />} terminalProps={{ starting: terminalStarting, output: terminalOutput, onInput: writeTerminalInput, onResize: resizeTerminal }} remoteUrl={remoteUrl} projectFiles={projectFiles} sideMessages={sideMessages} sideValue={sideValue} sideSending={sideSending} sideApproval={sideApproval} sideAgentLabel={sideAgentLabel} onSelectTool={(tool) => selectWorkspaceTool(tool, "bottom")} onClose={closeBottomPanel} onOpenReview={() => { void openReview(); setBottomPanelOpen(false); }} onOpenRemote={openRemote} onOpenFile={(path) => activeProject && api.files.open({ projectId: activeProject.id, path }).catch((error) => notify(errorMessage(error)))} onSideValue={setSideValue} onSendSide={sendSideChat} onSideApproval={respondToSideApproval} onCancelSide={cancelSideChat} /></Suspense>}
         </div>
       </main>
       {modalStep && <AddProjectModal step={modalStep} defaultParent={defaultParent} onClose={closeProjectModal} onStep={setModalStep} onComplete={completeProjectAction} onChooseDirectory={() => api.projects.chooseDirectory()} />}

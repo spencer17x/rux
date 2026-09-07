@@ -1,0 +1,22 @@
+{
+  "unminified_same_run_kb": 2249.37,
+  "final_renderer_js_bytes": 1184462,
+  "reduction_percent": 47.3,
+  "chunks": {
+    "App-C96vy2IW.js": 105106,
+    "RuxTerminal-2cKA0lUh.js": 333390,
+    "SettingsScreen-CMlb9-DQ.js": 19823,
+    "WorkspaceDock-BThF5JeR.js": 6771,
+    "assistant-ui-C6vqDRdg.js": 277329,
+    "icons-Bv-A_HWJ.js": 121993,
+    "index-DaYsNyDG.js": 2989,
+    "react-cRg_50ET.js": 317061
+  },
+  "unit_tests": 93,
+  "unit_files": 23,
+  "electron_e2e_tests": 6,
+  "package": "release/mac-arm64/Rux.app",
+  "signing": "unsigned local build",
+  "final_git_terminal_recheck": "passed",
+  "followup_regression_tests": 4
+}

@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import { ArrowSquareOut, ArrowUp, CircleNotch, Eye, File, FolderOpen, Globe, Plus, Stop, X } from "@phosphor-icons/react";
-import RuxTerminal, { type TerminalChunk } from "../terminal/RuxTerminal";
+import type { TerminalChunk } from "../terminal/RuxTerminal";
+const RuxTerminal = lazy(() => import("../terminal/RuxTerminal"));
 import type { WorkspaceToolId } from "../renderer/types";
 import ToolLauncher from "./ToolLauncher";
 import { workspaceTool } from "./workspaceTools";
@@ -37,9 +38,9 @@ export default function WorkspaceDock(props: Props) {
     <div className="workspace-dock-content">
       {activeTool === "environment" && <div className="dock-environment">{props.environmentContent}</div>}
       {activeTool === "review" && <div className="dock-review"><div><strong>{gitState.files.length} 个文件变更</strong><span>{gitState.branch || "—"}</span></div><div className="dock-file-chips">{gitState.files.slice(0, 8).map((file) => <span key={file.path}>{file.path}<small><b>+{file.plus}</b> <em>−{file.minus}</em></small></span>)}</div><button type="button" className="secondary-button" onClick={props.onOpenReview}><Eye size={15} />打开完整审查</button></div>}
-      {activeTool === "terminal" && <RuxTerminal {...terminalProps} />}
+      {activeTool === "terminal" && <Suspense fallback={<div className="runtime-inline-progress" role="status">正在加载终端…</div>}><RuxTerminal {...terminalProps} /></Suspense>}
       {activeTool === "browser" && <div className="dock-empty-tool"><Globe size={24} /><strong>{remoteUrl ? "项目远程仓库" : "未配置远程仓库"}</strong><span>{remoteUrl || "为当前项目添加 origin 后，可从这里打开。"}</span><button type="button" className="secondary-button" disabled={!remoteUrl} onClick={props.onOpenRemote}>在浏览器中打开</button></div>}
-      {activeTool === "files" && <div className="dock-files">{projectFiles.length ? projectFiles.map((path) => <button type="button" key={path} onDoubleClick={() => props.onOpenFile(path)}><File size={14} /><span>{path}</span><ArrowSquareOut size={13} /></button>) : <div className="dock-empty-tool"><FolderOpen size={24} /><strong>项目中没有可显示的文件</strong></div>}</div>}
+      {activeTool === "files" && <div className="dock-files">{projectFiles.length ? projectFiles.map((path) => <button type="button" key={path} onClick={() => props.onOpenFile(path)} title={`打开 ${path}`}><File size={14} /><span>{path}</span><ArrowSquareOut size={13} /></button>) : <div className="dock-empty-tool"><FolderOpen size={24} /><strong>项目中没有可显示的文件</strong></div>}</div>}
       {activeTool === "chat" && <div className="dock-side-chat"><div className="dock-chat-messages" aria-live="polite">{sideMessages.some((message) => message.text) ? sideMessages.filter((message) => message.text).map((message) => <p key={message.id} className={message.role === "user" ? "is-user" : "is-agent"}>{message.text}</p>) : <span>使用 {sideAgentLabel} 针对当前工作区快速提问，不影响主会话。</span>}{sideApproval && <div className="side-chat-approval" role="group" aria-label="侧边聊天操作批准"><strong>{sideApproval.label}需要批准</strong><span><button type="button" onClick={() => props.onSideApproval("decline")}>拒绝</button><button type="button" onClick={() => props.onSideApproval("accept")}>允许一次</button><button type="button" onClick={() => props.onSideApproval("acceptForSession")}>本次会话允许</button></span></div>}{sideSending && <p className="is-agent side-chat-loading" role="status"><CircleNotch size={14} className="spin" /><span>{sideAgentLabel} 正在回复</span><i aria-hidden="true"><b /><b /><b /></i></p>}</div><form onSubmit={(event) => { event.preventDefault(); if (!sideSending) props.onSendSide(); }}><input aria-label="侧边聊天消息" placeholder={sideSending ? `正在等待 ${sideAgentLabel} 回复…` : "输入工作区问题"} value={sideValue} onChange={(event) => props.onSideValue(event.target.value)} disabled={sideSending} />{sideSending ? <button type="button" aria-label="停止侧边聊天" onClick={props.onCancelSide}><Stop size={14} weight="fill" /></button> : <button type="submit" aria-label="发送侧边聊天消息" disabled={!sideValue.trim()}><ArrowUp size={15} /></button>}</form></div>}
     </div>
   </section>;
