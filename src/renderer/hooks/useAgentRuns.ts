@@ -57,7 +57,7 @@ export function useAgentRuns(input: Input) {
   }), [input.api, input.notify, input.refreshGit, input.reloadWorkspace, input.setActiveThread, flushStream]);
   const sending = input.activeThread ? runningThreadIds.has(input.activeThread.id) : false;
   const sendMessage = useCallback(async (nextPrompt = "") => {
-    const prompt = nextPrompt.trim(); if (!prompt || !input.activeThread || sending || startingThreads.current.has(input.activeThread.id)) return;
+    const prompt = nextPrompt.trim() || (input.attachments.length ? "请查看所附文件。" : ""); if (!prompt || !input.activeThread || sending || startingThreads.current.has(input.activeThread.id)) return;
     const agent = input.agents.find((item) => item.id === input.selectedAgent); if (!agent?.integrated) { input.notify(`${agent?.name || input.selectedAgent} 适配器尚未启用`); return; }
     let targetThread = input.activeThread;
     const originalId = targetThread.id;

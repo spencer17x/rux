@@ -117,3 +117,9 @@ export function parseInput<T>(schema: z.ZodType<T>, input: unknown): T {
   if (result.success) return result.data;
   throw new Error(`请求参数无效：${result.error.issues[0]?.message || "格式错误"}`);
 }
+
+export const imageImportSchema = z.object({
+  name: z.string().min(1).max(255),
+  mimeType: z.enum(["image/png", "image/jpeg", "image/gif", "image/webp"]),
+  base64: z.string().min(4).max(13_981_016).regex(/^[A-Za-z0-9+/]*={0,2}$/).refine((value) => value.length % 4 === 0),
+}).strict();

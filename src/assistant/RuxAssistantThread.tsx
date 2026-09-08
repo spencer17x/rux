@@ -55,6 +55,7 @@ type Props = {
   activeOverlay: OverlayId | null; onOverlayChange: (overlay: OverlayId | null) => void;
   attachments: string[]; showAttachments?: boolean; webSearch?: boolean; showWebSearch?: boolean; onToggleWebSearch: () => void;
   draftKey: string; draftText: string; onDraftTextChange: (text: string) => void;
+  onImportImages?: (files: File[]) => Promise<void>; importingImages?: boolean;
   onAddFiles: () => void; onRemoveAttachment: (path: string) => void; listening: boolean; showVoice?: boolean; onVoice: () => void;
   workspaceSummary?: ReactNode;
 };
@@ -110,7 +111,7 @@ function normalizeMessage(message: RuxMessage): any {
           ? { type: "incomplete", reason: "error", error: message.error || message.text }
           : { type: "complete" },
     } : {}),
-    metadata: { custom: { agentId: message.agentId || "codex" }, ...(message.role === "assistant" ? { timing: { streamStartTime: new Date(message.createdAt || Date.now()).getTime(), ...(message.completedAt ? { totalStreamTime: Math.max(0, new Date(message.completedAt).getTime() - new Date(message.createdAt || message.completedAt).getTime()) } : {}), totalChunks: message.parts?.length || 0, toolCallCount: message.parts?.filter((part) => part.type === "tool-call").length || 0 } } : {}) },
+    metadata: { custom: { agentId: message.agentId || "codex", attachments: message.attachments || [] }, ...(message.role === "assistant" ? { timing: { streamStartTime: new Date(message.createdAt || Date.now()).getTime(), ...(message.completedAt ? { totalStreamTime: Math.max(0, new Date(message.completedAt).getTime() - new Date(message.createdAt || message.completedAt).getTime()) } : {}), totalChunks: message.parts?.length || 0, toolCallCount: message.parts?.filter((part) => part.type === "tool-call").length || 0 } } : {}) },
   };
 }
 
@@ -190,10 +191,11 @@ function ToolPart({ toolName, args, result, isError, approval, respondToApproval
 
 function UserMessage() {
   const editMessage = useContext(MessageEditContext);
+  const attachments = useAuiState((state) => state.message.metadata.custom?.attachments as string[] | undefined);
   const messageText = useAuiState((state) => state.message.content.filter((part) => part.type === "text").map((part) => part.text).join("\n"));
   return (
     <MessagePrimitive.Root className="aui-message aui-user-message">
-      <div className="aui-user-stack"><div className="aui-user-bubble"><MessagePrimitive.Parts components={{ Text: UserText }} /></div><div className="aui-user-meta"><MessageTimestamp /><ActionBarPrimitive.Root className="aui-user-actions"><ActionBarPrimitive.Copy aria-label="复制用户消息"><Copy size={16} /></ActionBarPrimitive.Copy><button type="button" aria-label="编辑用户消息" title="编辑并重新发送" onClick={() => editMessage(messageText)}><PencilSimple size={16} /></button></ActionBarPrimitive.Root></div></div>
+      <div className="aui-user-stack"><div className="aui-user-bubble"><MessagePrimitive.Parts components={{ Text: UserText }} /></div>{attachments?.length ? <div className="attachment-list" aria-label="消息附件">{attachments.map((path) => <span key={path} title={path}><Paperclip size={13} />{path.split(/[\\/]/).pop()}</span>)}</div> : null}<div className="aui-user-meta"><MessageTimestamp /><ActionBarPrimitive.Root className="aui-user-actions"><ActionBarPrimitive.Copy aria-label="复制用户消息"><Copy size={16} /></ActionBarPrimitive.Copy><button type="button" aria-label="编辑用户消息" title="编辑并重新发送" onClick={() => editMessage(messageText)}><PencilSimple size={16} /></button></ActionBarPrimitive.Root></div></div>
     </MessagePrimitive.Root>
   );
 }
@@ -331,6 +333,8 @@ export default function RuxAssistantThread({
   draftText,
   onDraftTextChange,
   onAddFiles,
+  onImportImages,
+  importingImages = false,
   onRemoveAttachment,
   listening,
   showVoice = true,
@@ -390,12 +394,29 @@ export default function RuxAssistantThread({
           {workspaceSummary}
         </ThreadPrimitive.Viewport>
         <ThreadPrimitive.ScrollToBottom className="aui-scroll-bottom" aria-label="滚动到底部"><ArrowDown size={16} /></ThreadPrimitive.ScrollToBottom>
-        <ComposerPrimitive.Root className="composer-wrap aui-composer-wrap">
+        <ComposerPrimitive.Root className="composer-wrap aui-composer-wrap"
+          onPasteCapture={(event) => {
+            const files = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith("image/"));
+            if (!files.length || !onImportImages) return;
+            event.preventDefault(); event.stopPropagation(); void onImportImages(files);
+          }}
+          onDragOver={(event) => { if (event.dataTransfer.types.includes("Files")) { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; } }}
+          onDrop={(event) => {
+            if (!event.dataTransfer.files.length) return;
+            event.preventDefault(); event.stopPropagation(); void onImportImages?.(Array.from(event.dataTransfer.files));
+          }}>
+          {importingImages && <div className="runtime-inline-progress" role="status"><CircleNotch size={13} className="spin" />正在添加图片…</div>}
           <div className="composer">
             {runtimeProgress?.[selectedAgent] && !["ready", "error"].includes(runtimeProgress[selectedAgent].state) && <div className="runtime-inline-progress"><CircleNotch size={13} className="spin" /><span>{runtimeProgress[selectedAgent].state === "downloading" ? `正在下载 ${agents.find((agent) => agent.id === selectedAgent)?.name || selectedAgent} 运行时` : "正在验证并安装运行时"}</span><em>{runtimeProgress[selectedAgent].percent || 0}%</em><i><i style={{ width: `${runtimeProgress[selectedAgent].percent || 4}%` }} /></i></div>}
             {runtimeProgress?.[selectedAgent]?.state === "error" && <div className="runtime-inline-progress is-error"><WarningCircle size={13} /><span>{runtimeProgress[selectedAgent].message || "运行时下载失败"}</span></div>}
             {showAttachments && attachments.length > 0 && <div className="attachment-list">{attachments.map((path) => <span key={path}><Paperclip size={13} />{path.split(/[\\/]/).pop()}<button type="button" aria-label={`移除附件 ${path.split(/[\\/]/).pop()}`} onClick={() => onRemoveAttachment(path)}><X size={12} /></button></span>)}</div>}
-            <ComposerPrimitive.Input className="aui-composer-input" aria-label="消息" placeholder="向 Rux 发送消息" rows={2} onChange={(event) => { composerDraftRef.current = { key: draftKey, text: event.currentTarget.value }; onDraftTextChange(event.currentTarget.value); }} />
+            <ComposerPrimitive.Input className="aui-composer-input" aria-label="消息" placeholder="向 Rux 发送消息" rows={2} onKeyDownCapture={(event) => {
+              if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing || event.keyCode === 229) return;
+              if (importingImages || attachments.length) {
+                event.preventDefault(); event.stopPropagation();
+                if (!importingImages && !running) void onNewMessage(draftText);
+              }
+            }} onChange={(event) => { composerDraftRef.current = { key: draftKey, text: event.currentTarget.value }; onDraftTextChange(event.currentTarget.value); }} />
             <div className="composer-controls">
               <div className="composer-left">
                 {showAttachments && <button type="button" className="icon-button" aria-label="添加文件" onClick={onAddFiles}><Plus size={19} /></button>}
@@ -411,7 +432,7 @@ export default function RuxAssistantThread({
                   <ComposerPrimitive.Cancel className="send-button stop-button" aria-label="停止"><Stop size={15} weight="fill" /></ComposerPrimitive.Cancel>
                 </ThreadPrimitive.If>
                 <ThreadPrimitive.If running={false}>
-                  <ComposerPrimitive.Send className="send-button" aria-label="发送"><ArrowUp size={19} weight="bold" /></ComposerPrimitive.Send>
+                  {attachments.length ? <button type="button" className="send-button" aria-label="发送" disabled={importingImages} onClick={() => void onNewMessage(draftText)}><ArrowUp size={19} weight="bold" /></button> : <ComposerPrimitive.Send className="send-button" aria-label="发送" disabled={importingImages}><ArrowUp size={19} weight="bold" /></ComposerPrimitive.Send>}
                 </ThreadPrimitive.If>
               </div>
             </div>

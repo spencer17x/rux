@@ -37,6 +37,29 @@ export default function Sidebar(props: Props) {
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [profileOpen, setProfileOpen] = useState(false);
+  const profileTrigger = useRef<HTMLButtonElement>(null);
+  const profilePopover = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!profileOpen) return;
+    const closeOutside = (event: Event) => {
+      const target = event.target;
+      if (target instanceof Node && !profileTrigger.current?.contains(target) && !profilePopover.current?.contains(target)) setProfileOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setProfileOpen(false);
+      profileTrigger.current?.focus();
+    };
+    document.addEventListener("pointerdown", closeOutside, true);
+    document.addEventListener("focusin", closeOutside);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOutside, true);
+      document.removeEventListener("focusin", closeOutside);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [profileOpen]);
   const [projectMenuId, setProjectMenuId] = useState<string | null>(null);
   const [projectMenuPosition, setProjectMenuPosition] = useState<{ top: number; left: number } | null>(null);
   const projectMenuTriggers = useRef<Record<string, HTMLButtonElement | null>>({});
@@ -64,7 +87,7 @@ export default function Sidebar(props: Props) {
         {projectMenuId === project.id && projectMenuPosition && createPortal(<div className="project-action-popover" data-project-menu-scope={project.id} role="menu" style={projectMenuPosition}><button type="button" onClick={() => { setProjectMenuId(null); setProjectMenuPosition(null); props.onNewProjectThread(project); }}><PencilSimple size={17} />新建会话</button><div className="project-menu-separator" /><button type="button" onClick={() => { setProjectMenuId(null); setProjectMenuPosition(null); props.onOpenProjectPath(project); }}><FolderOpen size={17} />在文件管理器中打开</button><button type="button" onClick={() => { setProjectMenuId(null); setProjectMenuPosition(null); props.onCopyProjectPath(project); }}><Paperclip size={17} />复制项目路径</button><div className="project-menu-separator" /><button type="button" className="danger-text" onClick={() => { setProjectMenuId(null); setProjectMenuPosition(null); props.onRemoveProject(project); }}><Trash size={17} />移除项目</button></div>, document.body)}
         {expanded && <div className="thread-children">{project.threads.map((thread) => { const target: ActiveThread = { type: "project", projectId: project.id, projectName: project.name, projectPath: project.path, ...thread }; return <ThreadRow key={thread.id} thread={thread} child running={props.runningThreadIds.has(thread.id)} active={props.activeThread?.type === "project" && props.activeThread.id === thread.id} onSelect={() => props.onSelectProjectThread(project, thread)} onRename={() => props.onRenameThread(target)} onDelete={() => props.onDeleteThread(target)} />; })}</div>}
       </div>; })}</div></section></nav>
-    {profileOpen && <div className="sidebar-popover profile-popover"><strong>{accountName}</strong><small>{email || (props.auth.connected ? "Codex 已连接" : "Codex 未登录")}</small><button type="button" onClick={props.onOpenSettings}><GearSix size={16} />设置</button></div>}
-    <button type="button" className="profile-row" onClick={() => { setProfileOpen((open) => !open); setSearchOpen(false); }} aria-expanded={profileOpen}><span className="avatar avatar-small">{accountName.slice(0, 1).toUpperCase()}</span><span>{accountName}</span><CaretDown size={15} /></button>
+    {profileOpen && <div ref={profilePopover} id="sidebar-account-popover" className="sidebar-popover profile-popover"><strong>{accountName}</strong><small>{email || (props.auth.connected ? "Codex 已连接" : "Codex 未登录")}</small><button type="button" onClick={() => { setProfileOpen(false); props.onOpenSettings(); }}><GearSix size={16} />设置</button></div>}
+    <button ref={profileTrigger} type="button" className="profile-row" onClick={() => { setProfileOpen((open) => !open); setSearchOpen(false); }} aria-controls={profileOpen ? "sidebar-account-popover" : undefined} aria-expanded={profileOpen}><span className="avatar avatar-small">{accountName.slice(0, 1).toUpperCase()}</span><span>{accountName}</span><CaretDown size={15} /></button>
   </aside>;
 }

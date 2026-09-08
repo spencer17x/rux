@@ -279,3 +279,71 @@ test("keeps composer controls within a narrow desktop pane and dismisses menus",
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog", { name: "切换模型、推理强度和速度", exact: true })).toBeHidden();
 });
+
+test("pastes and drops images, retains their files, and sends without text", async () => {
+  const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=";
+  const picked = join(testRoot, "picked.png");
+  writeFileSync(picked, Buffer.from(png, "base64"));
+  await application.evaluate(({ dialog }, path) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [path] }); }, picked);
+  await page.getByRole("button", { name: "添加文件", exact: true }).click();
+  await expect(page.getByRole("button", { name: "移除附件 picked.png" })).toBeVisible();
+  await page.getByRole("button", { name: "移除附件 picked.png" }).click();
+  await page.getByRole("textbox", { name: "消息", exact: true }).evaluate((element, data) => {
+    const file = new File([Uint8Array.from(atob(data), (char) => char.charCodeAt(0))], "pasted.png", { type: "image/png" });
+    const clipboardData = new DataTransfer(); clipboardData.items.add(file);
+    element.dispatchEvent(new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true }));
+  }, png);
+  await expect(page.getByRole("button", { name: "移除附件 pasted.png" })).toBeVisible();
+  await page.locator(".composer").evaluate((element, data) => {
+    const file = new File([Uint8Array.from(atob(data), (char) => char.charCodeAt(0))], "dropped.png", { type: "image/png" });
+    const dataTransfer = new DataTransfer(); dataTransfer.items.add(file);
+    element.dispatchEvent(new DragEvent("drop", { dataTransfer, bubbles: true, cancelable: true }));
+  }, png);
+  await expect(page.getByRole("button", { name: "移除附件 dropped.png" })).toBeVisible();
+  await page.getByRole("button", { name: "移除附件 pasted.png" }).click();
+  await expect(page.getByRole("button", { name: "移除附件 pasted.png" })).toHaveCount(0);
+  await expect(page.getByRole("textbox", { name: "消息", exact: true })).toHaveValue("");
+  await expect(page.getByRole("button", { name: "发送", exact: true })).toBeEnabled();
+  await page.getByRole("button", { name: "发送", exact: true }).click();
+  await expect(page.getByText("RUX_E2E_AGENT_OK", { exact: true }).last()).toBeVisible();
+  await expect(page.getByRole("button", { name: "移除附件 dropped.png" })).toHaveCount(0);
+  await expect(page.getByLabel("消息附件")).toContainText("dropped.png");
+  await expect.poll(async () => page.evaluate(async () => {
+    const all = await window.rux.messages.list() as Record<string, Array<{ role: string; attachments?: string[] }>>;
+    return Object.values(all).flat().find(message => message.role === "user")?.attachments?.[0] || "";
+  })).toMatch(/attachments.*dropped\.png$/);
+  await expect(page.getByRole("button", { name: "发送", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "添加文件", exact: true }).click();
+  await expect(page.getByRole("button", { name: "移除附件 picked.png" })).toBeVisible();
+  await page.getByRole("textbox", { name: "消息", exact: true }).press("Enter");
+  await expect(page.getByText("RUX_E2E_AGENT_OK", { exact: true })).toHaveCount(2);
+});
+
+test("dismisses the account menu outside or with Escape and keeps settings usable", async () => {
+  await page.getByRole("button", { name: "切换左侧面板" }).click();
+  const trigger = page.locator(".profile-row");
+  const popover = page.locator(".profile-popover");
+  await trigger.click();
+  await expect(popover).toBeVisible();
+  await popover.locator("strong").click();
+  await expect(popover).toBeVisible();
+  await page.locator(".conversation-empty h2").click();
+  await expect(popover).toBeHidden();
+  await expect(trigger).toHaveAttribute("aria-expanded", "false");
+  await trigger.click();
+  await page.getByRole("textbox", { name: "消息", exact: true }).click();
+  await expect(popover).toBeHidden();
+  await expect(page.getByRole("textbox", { name: "消息", exact: true })).toBeFocused();
+  await trigger.click();
+  await page.keyboard.press("Escape");
+  await expect(popover).toBeHidden();
+  await expect(trigger).toBeFocused();
+  await trigger.click();
+  await trigger.click();
+  await expect(popover).toBeHidden();
+  await trigger.click();
+  await popover.getByRole("button", { name: "设置", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "模型与连接", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "返回 Rux" }).click();
+  await expect(popover).toBeHidden();
+});

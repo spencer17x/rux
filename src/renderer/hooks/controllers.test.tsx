@@ -66,12 +66,12 @@ function runApi() {
   let listener: (event: unknown) => void = () => {};
   return { emit: (event: unknown) => listener(event), agent: { onEvent: vi.fn((next: typeof listener) => { listener = next; return () => {}; }), start: vi.fn(async () => ({ threadId: "native", turnId: "turn" })), interrupt: vi.fn(), respondToApproval: vi.fn() }, projects: { addStandalone: vi.fn(async () => ({ id: "saved", title: "Task" })) }, threads: { update: vi.fn() } };
 }
-function runHook(api: ReturnType<typeof runApi>) {
+function runHook(api: ReturnType<typeof runApi>, attachments: string[] = []) {
   const notify = vi.fn(); const reloadWorkspace = vi.fn(async () => ({ projects: [], standaloneThreads: [] })); const refreshGit = vi.fn(async () => {});
   return () => {
     const [activeThread, setActiveThread] = useState<ActiveThread | null>({ id: "draft:standalone", title: "Task", type: "standalone", draft: true });
     const [messages, setMessages] = useState<MessageStore>({});
-    const runs = useAgentRuns({ api: api as unknown as RuxApi, activeThread, selectedAgent: "codex", agentMode: "default", preference: { model: "m", reasoning: "high", serviceTier: null }, settings: { provider: "codex", serviceName: "Codex", model: "m", reasoning: "high", sandboxMode: "read-only" }, attachments: [], webSearch: false, agents: [{ id: "codex", name: "Codex", integrated: true }], setMessages, setAttachments: vi.fn(), setComposerValue: vi.fn(), setActiveThread, reloadWorkspace, refreshGit, notify });
+    const runs = useAgentRuns({ api: api as unknown as RuxApi, activeThread, selectedAgent: "codex", agentMode: "default", preference: { model: "m", reasoning: "high", serviceTier: null }, settings: { provider: "codex", serviceName: "Codex", model: "m", reasoning: "high", sandboxMode: "read-only" }, attachments, webSearch: false, agents: [{ id: "codex", name: "Codex", integrated: true }], setMessages, setAttachments: vi.fn(), setComposerValue: vi.fn(), setActiveThread, reloadWorkspace, refreshGit, notify });
     return { ...runs, activeThread, setActiveThread, messages };
   };
 }
@@ -189,4 +189,13 @@ it("discards buffered output from a failed terminal before retrying", async () =
   await act(async () => h.value.startTerminal());
   await act(async () => { await vi.advanceTimersByTimeAsync(20); });
   expect(h.value.terminalOutput.map(chunk => chunk.data).join("")).not.toContain("STALE_STARTUP_OUTPUT");
+});
+
+
+it("forwards attachments to the agent for an image-only message", async () => {
+  const api = runApi();
+  const h = await mount(runHook(api, ["/tmp/image.png"]), undefined);
+  await act(async () => h.value.sendMessage(""));
+  expect(api.agent.start).toHaveBeenCalledWith(expect.objectContaining({ images: ["/tmp/image.png"], prompt: "请查看所附文件。" }));
+  expect(h.value.messages.saved[0].attachments).toEqual(["/tmp/image.png"]);
 });

@@ -1,5 +1,7 @@
 import { app, BrowserWindow, clipboard, dialog, Menu, shell, type MenuItemConstructorOptions } from "electron";
 import { readFile, stat } from "node:fs/promises";
+import { join } from "node:path";
+import { importImageAttachment } from "./image-attachments";
 import { pathToFileURL } from "node:url";
 import { clipboardTextSchema, externalUrlSchema, messageTargetSchema, parseInput, projectIdSchema, terminalResizeSchema, terminalWriteSchema } from "../shared/ipc";
 import type { IpcRegistrar, ResolveProject } from "./ipc-types";
@@ -26,6 +28,7 @@ export function registerTerminalSystemIpc(ipc: IpcRegistrar, deps: Dependencies)
   ipc.handle("terminal:stop", async (event) => { deps.terminalManager.stop(event.sender.id); return { stopped: true }; });
   ipc.handle("system:open-path", async (_event, value) => { const project = await deps.resolveProject(parseInput(projectIdSchema, value)); const error = await shell.openPath(project.path); if (error) throw new Error(error); return { opened: true }; });
   ipc.handle("system:choose-files", async () => { const options = { properties: ["openFile", "multiSelections"] as Array<"openFile" | "multiSelections"> }; const window = deps.getWindow(); const result = window ? await dialog.showOpenDialog(window, options) : await dialog.showOpenDialog(options); return result.canceled ? [] : result.filePaths; });
+  ipc.handle("system:import-image", async (_event, value) => importImageAttachment(join(app.getPath("userData"), "attachments"), value));
   ipc.handle("system:copy", async (_event, value) => { clipboard.writeText(parseInput(clipboardTextSchema, value)); return { copied: true }; });
   ipc.handle("system:open-external", async (_event, value) => { await shell.openExternal(parseInput(externalUrlSchema, value)); return { opened: true }; });
   ipc.handle("system:open-message-target", async (_event, value) => {

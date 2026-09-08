@@ -55,6 +55,7 @@ function App() {
   const sandboxOpen = activeOverlay === "sandbox";
   const [composerDrafts, setComposerDrafts] = useState<Record<string, ComposerDraft>>(loadComposerDrafts);
   const [listening, setListening] = useState(false);
+  const [imageImports, setImageImports] = useState(0);
   const [fullAccessConfirmOpen, setFullAccessConfirmOpen] = useState(false);
   const handleThreadsRemoved = useCallback((threadIds: string[]) => { setMessages((current) => Object.fromEntries(Object.entries(current).filter(([threadId]) => !threadIds.includes(threadId)))); setComposerDrafts((current) => Object.fromEntries(Object.entries(current).filter(([threadId]) => !threadIds.includes(threadId)))); }, [setMessages]);
   const handleThreadSelected = useCallback((thread: { agentId?: AgentId; agentMode?: string }) => { setSelectedAgent(thread.agentId || "codex"); setAgentMode(thread.agentMode || "default"); setActiveOverlay(null); }, []);
@@ -131,6 +132,27 @@ function App() {
       const paths = await api.system.chooseFiles();
       setAttachments((current) => [...new Set([...current, ...paths])].slice(0, 8));
     } catch (error) { notify(errorMessage(error)); }
+  }
+
+  async function importImages(files: File[]) {
+    const available = 8 - attachments.length;
+    if (files.length > available) notify("每条消息最多添加 8 个附件");
+    setImageImports((count) => count + 1);
+    try {
+      for (const file of files.slice(0, Math.max(0, available))) {
+        if (!["image/png", "image/jpeg", "image/gif", "image/webp"].includes(file.type)) { notify("请使用 PNG、JPEG、GIF 或 WebP 图片"); continue; }
+        if (file.size > 10 * 1024 * 1024) { notify("单张图片不能超过 10 MB"); continue; }
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result));
+          reader.onerror = () => reject(new Error("无法读取图片，请重试"));
+          reader.readAsDataURL(file);
+        });
+        const path = await api.system.importImage({ name: file.name || "图片", mimeType: file.type, base64: dataUrl.slice(dataUrl.indexOf(",") + 1) });
+        setAttachments((current) => [...new Set([...current, path])].slice(0, 8));
+      }
+    } catch (error) { notify(errorMessage(error)); }
+    finally { setImageImports((count) => count - 1); }
   }
 
   async function selectSandbox(sandboxMode: SandboxMode) {
@@ -262,6 +284,8 @@ function App() {
     draftText: composerValue,
     onDraftTextChange: (text: string) => setComposerValue(text),
     onAddFiles: addFiles,
+    onImportImages: importImages,
+    importingImages: imageImports > 0,
     onRemoveAttachment: removeAttachment,
     listening,
     showVoice: Boolean(window.SpeechRecognition || window.webkitSpeechRecognition),

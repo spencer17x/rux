@@ -99,6 +99,7 @@ const api = {
   },
   system: {
     openPath: (projectId: string) => ipcRenderer.invoke("system:open-path", projectId),
+    importImage: (input: { name: string; mimeType: string; base64: string }): Promise<string> => ipcRenderer.invoke("system:import-image", input),
     chooseFiles: () => ipcRenderer.invoke("system:choose-files"),
     copy: (value: string) => ipcRenderer.invoke("system:copy", value),
     openExternal: (url: string) => ipcRenderer.invoke("system:open-external", url),
