@@ -184,23 +184,24 @@ function App() {
     recognition.start();
   }
 
-  async function selectModel(model: ModelInfo) {
+  async function selectModel(model: ModelInfo, keepOpen = false, reset = false) {
     try {
       const supported = model.supportedReasoningEfforts.map((effort) => effort.reasoningEffort);
-      const reasoning = supported.includes(activePreference.reasoning) ? activePreference.reasoning : model.defaultReasoningEffort;
-      const serviceTier = model.serviceTiers?.some((tier) => tier.id === activePreference.serviceTier) ? activePreference.serviceTier : model.defaultServiceTier || null;
+      const reasoning = !reset && supported.includes(activePreference.reasoning) ? activePreference.reasoning : model.defaultReasoningEffort;
+      const serviceTier = !reset && model.serviceTiers?.some((tier) => tier.id === activePreference.serviceTier) ? activePreference.serviceTier : model.defaultServiceTier || null;
       if (selectedAgent === "codex") {
         await saveSettings({ model: model.model, reasoning });
         setAgentPreferences((current) => ({ ...current, codex: { model: model.model, reasoning, serviceTier } }));
       } else {
         setAgentPreferences((current) => ({ ...current, [selectedAgent]: { model: model.model, reasoning, serviceTier } }));
       }
-      setActiveOverlay(null);
+      if (!keepOpen) setActiveOverlay(null);
       notify(`已切换到 ${model.displayName}`);
-    } catch (error) { notify(errorMessage(error)); }
+      return true;
+    } catch (error) { notify(errorMessage(error)); return false; }
   }
 
-  async function selectReasoning(reasoning: Reasoning) {
+  async function selectReasoning(reasoning: Reasoning, keepOpen = false) {
     try {
       if (selectedAgent === "codex") {
         await saveSettings({ reasoning });
@@ -208,20 +209,21 @@ function App() {
       } else {
         setAgentPreferences((current) => ({ ...current, [selectedAgent]: { ...current[selectedAgent], reasoning } }));
       }
-      setActiveOverlay(null);
+      if (!keepOpen) setActiveOverlay(null);
       notify(`思考程度已切换为${reasoningLabels[reasoning] || reasoning}`);
-    } catch (error) { notify(errorMessage(error)); }
+      return true;
+    } catch (error) { notify(errorMessage(error)); return false; }
   }
 
-  function selectServiceTier(serviceTier: string | null) {
+  function selectServiceTier(serviceTier: string | null, keepOpen = false) {
     setAgentPreferences((current) => ({ ...current, [selectedAgent]: { ...current[selectedAgent], serviceTier } }));
-    setActiveOverlay(null);
+    if (!keepOpen) setActiveOverlay(null);
     notify(serviceTier === "priority" ? "速度已切换为快速" : "速度已切换为标准");
   }
 
   if (fatalError) return <div className="fatal-screen"><WarningCircle size={32} /><h1>Rux 无法启动</h1><p>{fatalError}</p></div>;
   if (!activeThread) return <div className="fatal-screen"><CircleNotch size={30} className="spin" /><p>正在加载工作区…</p></div>;
-  if (view === "settings") return <div className="app-frame"><Suspense fallback={<div className="fatal-screen"><CircleNotch size={30} className="spin" /><p>正在加载设置…</p></div>}><TypedSettingsScreen settings={settings} auth={auth} models={models} modelsLoading={codexModelsLoading} modelsError={codexModelsError} agents={agents} modelsByAgent={modelsByAgent} providerStore={providerStore} onProviderSave={saveProvider} onProviderRemove={removeProvider} onProviderSetActive={setActiveProvider} onProviderTest={(id) => api.providers.test(id)} systemInfo={systemInfo} projectCount={workspace.projects.length} activeProject={activeProject} gitState={gitState} permissionChangesLocked={sending || sideSending} onBack={() => { void closeReview(); }} onSave={async (input: Partial<AppSettings> & { apiKey?: string }) => { if ((sending || sideSending) && input.sandboxMode && input.sandboxMode !== settings.sandboxMode) throw new Error("请先停止当前任务；权限变更会从下一轮对话开始生效"); return await saveSettings(input); }} onTest={testSettings} onLogin={async () => { await api.auth.login(); return "设备登录已启动，请按账户区域中的提示完成验证"; }} onLogout={async () => { await api.auth.logout(); setAuth(await api.auth.status()); return "已退出"; }} onNotify={notify} /></Suspense>{toast && <div className="toast" role="status" aria-live="polite"><CheckCircle size={18} />{toast}</div>}</div>;
+  if (view === "settings") return <div className="app-frame" data-native-mac={systemInfo.platform === "darwin" && systemInfo.appVersion !== "preview"}><Suspense fallback={<div className="fatal-screen"><CircleNotch size={30} className="spin" /><p>正在加载设置…</p></div>}><TypedSettingsScreen settings={settings} auth={auth} models={models} modelsLoading={codexModelsLoading} modelsError={codexModelsError} agents={agents} modelsByAgent={modelsByAgent} providerStore={providerStore} onProviderSave={saveProvider} onProviderRemove={removeProvider} onProviderSetActive={setActiveProvider} onProviderTest={(id) => api.providers.test(id)} systemInfo={systemInfo} projectCount={workspace.projects.length} activeProject={activeProject} gitState={gitState} permissionChangesLocked={sending || sideSending} onBack={() => { void closeReview(); }} onSave={async (input: Partial<AppSettings> & { apiKey?: string }) => { if ((sending || sideSending) && input.sandboxMode && input.sandboxMode !== settings.sandboxMode) throw new Error("请先停止当前任务；权限变更会从下一轮对话开始生效"); return await saveSettings(input); }} onTest={testSettings} onLogin={async () => { await api.auth.login(); return "设备登录已启动，请按账户区域中的提示完成验证"; }} onLogout={async () => { await api.auth.logout(); setAuth(await api.auth.status()); return "已退出"; }} onNotify={notify} /></Suspense>{toast && <div className="toast" role="status" aria-live="polite"><CheckCircle size={18} />{toast}</div>}</div>;
 
   const toggleOverlay = (overlay: OverlayId) => setActiveOverlay((current) => current === overlay ? null : overlay);
   const removeAttachment = (path: string) => setAttachments((current) => current.filter((item) => item !== path));
@@ -271,7 +273,7 @@ function App() {
     sandboxOpen,
     activeOverlay,
     onOverlayChange: setActiveOverlay,
-    modelPopover: modelOpen ? <ModelPopover settings={activeComposerSettings} auth={auth} models={activeModels} loading={settings.provider === "custom" && selectedAgent === "codex" ? false : modelsLoading} error={settings.provider === "custom" && selectedAgent === "codex" ? "" : modelsError} serviceTier={activePreference.serviceTier} onSelectModel={selectModel} onSelectReasoning={selectReasoning} onSelectServiceTier={selectServiceTier} /> : null,
+    modelPopover: modelOpen ? <ModelPopover settings={activeComposerSettings} auth={auth} models={activeModels} loading={settings.provider === "custom" && selectedAgent === "codex" ? false : modelsLoading} error={settings.provider === "custom" && selectedAgent === "codex" ? "" : modelsError} serviceTier={activePreference.serviceTier} onSelectModel={(model) => selectModel(model, true)} onSelectReasoning={(reasoning) => selectReasoning(reasoning, true)} onSelectServiceTier={(tier) => selectServiceTier(tier, true)} onClose={() => setActiveOverlay(null)} onReset={() => { const model = activeModels.find((item) => item.isDefault) || activeModels[0]; return model ? selectModel(model, true, true) : false; }} /> : null,
     permissionPopover: <PermissionPopover agentId={selectedAgent === "pi" ? "pi" : "codex"} selectedValue={activeSandboxMode} onSelect={selectSandbox} onLearnMore={() => notify(selectedAgent === "pi" ? "Pi RPC 不提供逐次审批，因此 Rux 仅开放可真实执行的只读或完整访问模式" : "可在设置 > 权限中修改默认批准方式")} />,
     onToggleModel: () => toggleOverlay("run-settings"),
     onToggleSandbox: () => toggleOverlay("sandbox"),
@@ -292,8 +294,8 @@ function App() {
     onVoice: toggleVoice,
   };
   return (
-    <div className="app-frame">
-      {leftPanelOpen && <TypedSidebar workspace={workspace} auth={auth} expandedProjects={expandedProjects} activeThread={activeThread} runningThreadIds={runningThreadIds} onToggleProject={(projectId) => setExpandedProjects((current) => current.includes(projectId) ? current.filter((id) => id !== projectId) : [...current, projectId])} onSelectProjectThread={selectProjectThread} onSelectStandalone={selectStandalone} onAddProject={(trigger) => { addProjectTrigger.current = trigger; setModalStep("choose"); }} onRemoveProject={(project) => { void removeProject(project, isProjectRunning(project.id)); }} onOpenProjectPath={(project) => api.system.openPath(project.id).catch((error) => notify(errorMessage(error)))} onCopyProjectPath={(project) => api.system.copy(project.path).then(() => notify("项目路径已复制"))} onNewProjectThread={newProjectThread} onNewStandalone={newStandalone} onRenameThread={(thread) => { void renameThread(thread); }} onDeleteThread={(thread) => { void removeThread(thread, isThreadRunning(thread.id)); }} onOpenSettings={() => setView("settings")} />}
+    <div className="app-frame" data-native-mac={systemInfo.platform === "darwin" && systemInfo.appVersion !== "preview"}>
+      {leftPanelOpen && <TypedSidebar reservedPanelWidth={rightPanelOpen ? 320 : 0} workspace={workspace} auth={auth} expandedProjects={expandedProjects} activeThread={activeThread} runningThreadIds={runningThreadIds} onToggleProject={(projectId) => setExpandedProjects((current) => current.includes(projectId) ? current.filter((id) => id !== projectId) : [...current, projectId])} onSelectProjectThread={selectProjectThread} onSelectStandalone={selectStandalone} onAddProject={(trigger) => { addProjectTrigger.current = trigger; setModalStep("choose"); }} onRemoveProject={(project) => { void removeProject(project, isProjectRunning(project.id)); }} onOpenProjectPath={(project) => api.system.openPath(project.id).catch((error) => notify(errorMessage(error)))} onCopyProjectPath={(project) => api.system.copy(project.path).then(() => notify("项目路径已复制"))} onNewProjectThread={newProjectThread} onNewStandalone={newStandalone} onRenameThread={(thread) => { void renameThread(thread); }} onDeleteThread={(thread) => { void removeThread(thread, isThreadRunning(thread.id)); }} onOpenSettings={() => setView("settings")} />}
       <main className="app-stage">
         <TypedTopBar activeThread={activeThread} leftPanelOpen={leftPanelOpen} bottomPanelOpen={bottomPanelOpen} rightPanelOpen={rightPanelOpen} onToggleLeftPanel={() => setLeftPanelOpen((open) => !open)} onToggleBottomPanel={toggleBottomPanel} onToggleRightPanel={toggleRightPanel} onOpenSettings={() => setView("settings")} onOpenPath={() => activeProject && api.system.openPath(activeProject.id).catch((error) => notify(errorMessage(error)))} onCopyPath={() => activeProject && api.system.copy(activeProject.path).then(() => notify("项目路径已复制"))} onShare={copyConversation} onRename={renameActiveThread} onRemoveThread={() => { void removeWorkspaceThread(sending); }} />
         <div className={`stage-body ${bottomPanelOpen ? "bottom-panel-is-open" : ""}`}>

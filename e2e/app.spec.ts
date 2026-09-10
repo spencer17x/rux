@@ -273,7 +273,7 @@ test("keeps composer controls within a narrow desktop pane and dismisses menus",
   await page.keyboard.press("Escape");
   await expect(page.getByRole("button", { name: "更多", exact: true })).toBeFocused();
   await page.getByRole("button", { name: "切换模型、推理强度和速度", exact: true }).click();
-  await page.getByRole("menuitem", { name: /^模型 / }).focus();
+  await page.getByRole("button", { name: "选择模型", exact: true }).focus();
   await page.keyboard.press("ArrowRight");
   await expect(page.getByRole("menu", { name: "模型", exact: true }).getByRole("menuitemradio").first()).toBeFocused();
   await page.keyboard.press("Escape");
@@ -346,4 +346,90 @@ test("dismisses the account menu outside or with Escape and keeps settings usabl
   await expect(page.getByRole("heading", { name: "模型与连接", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "返回 Rux" }).click();
   await expect(popover).toBeHidden();
+});
+
+test("offers draft starters without sending and keeps the compact tools usable", async ({}, testInfo) => {
+  await page.getByRole("button", { name: "切换左侧面板", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "想构建些什么？" })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("workbench-empty.png") });
+  await page.getByRole("button", { name: "修复问题", exact: true }).click();
+  await expect(page.getByRole("textbox", { name: "消息", exact: true })).toHaveValue("帮我定位并修复这个问题：");
+  await expect(page.getByRole("textbox", { name: "消息", exact: true })).toBeFocused();
+  await expect(page.locator(".aui-user-message")).toHaveCount(0);
+  await page.getByRole("button", { name: "切换右侧面板", exact: true }).click();
+  await expect(page.getByRole("button", { name: "环境", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "终端", exact: true })).toBeDisabled();
+  const toolbar = page.locator(".tool-launcher.is-panel");
+  const bounds = await toolbar.boundingBox();
+  expect(bounds?.height).toBeLessThan(60);
+  await page.getByRole("button", { name: "侧边聊天", exact: true }).click();
+  await expect(page.getByRole("textbox", { name: "侧边聊天消息", exact: true })).toBeVisible();
+});
+
+test("commits model effort on release, keeps the picker open, and preserves outside focus", async ({}, testInfo) => {
+  const trigger = page.getByRole("button", { name: "切换模型、推理强度和速度", exact: true });
+  await trigger.click();
+  const picker = page.getByRole("dialog", { name: "切换模型、推理强度和速度", exact: true });
+  const range = picker.getByRole("slider", { name: "推理强度", exact: true });
+  await expect(range).toBeVisible();
+  const efforts = await page.evaluate(async () => {
+    const result = await window.rux.models.list({ agentId: "codex" });
+    return (result.models[0] as { supportedReasoningEfforts: Array<{ reasoningEffort: string }> }).supportedReasoningEfforts.map(item => item.reasoningEffort);
+  });
+  await range.press("End");
+  await expect.poll(async () => page.evaluate(async () => (await window.rux.settings.get()).reasoning)).toBe(efforts.at(-1));
+  await expect(picker).toBeVisible();
+  const box = await range.boundingBox();
+  if (!box) throw new Error("Missing range bounds");
+  await page.mouse.move(box.x + box.width - 7, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 5, box.y + box.height / 2, { steps: 4 });
+  expect(await page.evaluate(async () => (await window.rux.settings.get()).reasoning)).toBe(efforts.at(-1));
+  await page.mouse.up();
+  await expect.poll(async () => page.evaluate(async () => (await window.rux.settings.get()).reasoning)).toBe(efforts[0]);
+  await expect(picker).toBeVisible();
+  await picker.getByRole("button", { name: "选择模型", exact: true }).click();
+  await picker.getByRole("menuitemradio").first().click();
+  await expect(range).toBeVisible();
+  await expect.poll(async () => {
+    const menu = await picker.boundingBox();
+    const anchor = await trigger.boundingBox();
+    return Boolean(menu && anchor && menu.y >= 8 && menu.y + menu.height <= anchor.y - 5);
+  }).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath("model-picker-26903.png") });
+  const fastMode = picker.getByRole("button", { name: "快速模式", exact: true });
+  await fastMode.click();
+  await expect(fastMode).toHaveAttribute("aria-pressed", "true");
+  await picker.getByRole("button", { name: "恢复默认模型设置", exact: true }).click();
+  await expect(fastMode).toHaveAttribute("aria-pressed", "false");
+  await expect.poll(async () => page.evaluate(async () => (await window.rux.settings.get()).reasoning)).toBe("medium");
+  await expect(picker).toBeVisible();
+  await page.getByRole("textbox", { name: "消息", exact: true }).click();
+  await expect(picker).toBeHidden();
+  await expect(page.getByRole("textbox", { name: "消息", exact: true })).toBeFocused();
+  await trigger.click();
+  await page.keyboard.press("Escape");
+  await expect(trigger).toBeFocused();
+});
+
+test("resizes and remembers sidebar width with the measured desktop dimensions", async () => {
+  await page.getByRole("button", { name: "切换左侧面板", exact: true }).click();
+  const separator = page.getByRole("separator", { name: "调整侧栏宽度", exact: true });
+  await expect(separator).toHaveAttribute("aria-valuenow", "275");
+  const dimensions = await page.evaluate(() => ({ header: document.querySelector(".topbar")!.getBoundingClientRect().height, content: document.querySelector(".aui-thread-root")!.getBoundingClientRect().width }));
+  expect(dimensions.header).toBe(46);
+  expect(dimensions.content).toBe(768);
+  await separator.press("ArrowRight");
+  await expect(separator).toHaveAttribute("aria-valuenow", "285");
+  const box = await separator.boundingBox();
+  if (!box) throw new Error("Missing sidebar handle");
+  await page.mouse.move(box.x + box.width / 2, box.y + 180);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 + 45, box.y + 180, { steps: 4 });
+  await page.mouse.up();
+  await expect(separator).toHaveAttribute("aria-valuenow", "330");
+  await application.close();
+  await launchApplication();
+  await page.getByRole("button", { name: "切换左侧面板", exact: true }).click();
+  await expect(page.getByRole("separator", { name: "调整侧栏宽度", exact: true })).toHaveAttribute("aria-valuenow", "330");
 });

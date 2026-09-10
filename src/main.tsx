@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { installWebMock } from "./renderer/web-mock";
 import "./styles.css";
+import "./workbench-theme.css";
 
 const root = document.getElementById("root");
 if (!root) throw new Error("Rux root element is missing");

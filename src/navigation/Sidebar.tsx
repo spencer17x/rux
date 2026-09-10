@@ -2,9 +2,11 @@ import { useDeferredValue, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { CaretDown, ChatCircle, CircleNotch, DotsThree, Folder, FolderOpen, GearSix, MagnifyingGlass, Paperclip, PencilSimple, Plus, Trash, X } from "@phosphor-icons/react";
 import IconButton from "../components/IconButton";
+import SidebarResizeHandle, { readSidebarWidth, SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH, SIDEBAR_WIDTH_KEY } from "./SidebarResizeHandle";
 import type { ActiveThread, AuthState, ProjectRecord, ThreadRecord, WorkspaceState } from "../renderer/types";
 
 type Props = {
+  reservedPanelWidth?: number;
   workspace: WorkspaceState; auth: AuthState; expandedProjects: string[]; activeThread: ActiveThread | null; runningThreadIds: ReadonlySet<string>;
   onToggleProject: (projectId: string) => void; onSelectProjectThread: (project: ProjectRecord, thread: ThreadRecord) => void;
   onSelectStandalone: (thread: ThreadRecord) => void; onAddProject: (trigger: HTMLButtonElement) => void; onRemoveProject: (project: ProjectRecord) => void;
@@ -34,6 +36,11 @@ function ThreadRow({ thread, active, child = false, running = false, onSelect, o
 }
 
 export default function Sidebar(props: Props) {
+  const [preferredWidth, setPreferredWidth] = useState(readSidebarWidth);
+  const [viewportWidth, setViewportWidth] = useState(() => typeof window === "undefined" ? 1280 : window.innerWidth);
+  useEffect(() => { const update = () => setViewportWidth(window.innerWidth); window.addEventListener("resize", update); return () => window.removeEventListener("resize", update); }, []);
+  const maximumWidth = Math.max(SIDEBAR_MIN_WIDTH, Math.min(SIDEBAR_MAX_WIDTH, viewportWidth - 320 - (props.reservedPanelWidth || 0)));
+  const sidebarWidth = Math.min(preferredWidth, maximumWidth);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [profileOpen, setProfileOpen] = useState(false);
@@ -77,11 +84,12 @@ export default function Sidebar(props: Props) {
   const projects = props.workspace.projects.map((project) => ({ ...project, threads: project.threads.filter((thread) => !query || project.name.toLocaleLowerCase().includes(query) || thread.title.toLocaleLowerCase().includes(query)) })).filter((project) => !query || project.name.toLocaleLowerCase().includes(query) || project.threads.length);
   const email = props.auth.account?.email || "";
   const accountName = email ? email.split("@")[0] : "Rux User";
-  return <aside className="sidebar" aria-label="Rux 导航">
+  return <aside className="sidebar" aria-label="Rux 导航" style={{ flexBasis: sidebarWidth, width: sidebarWidth }}>
     <div className="sidebar-brand-row"><strong className="brand">Rux</strong><div className="sidebar-actions"><IconButton label="搜索" active={searchOpen} onClick={() => { setSearchOpen((open) => !open); setProfileOpen(false); }}><MagnifyingGlass size={18} /></IconButton></div></div>
     {searchOpen && <label className="sidebar-search"><MagnifyingGlass size={16} /><input aria-label="搜索项目和会话" autoFocus value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} /><IconButton label="清除搜索" onClick={() => setSearchQuery("")}><X size={14} /></IconButton></label>}
 
-    <nav className="sidebar-scroll">{query && !standaloneThreads.length && !projects.length && <p className="sidebar-empty" role="status">未找到匹配的项目或会话</p>}<section className="sidebar-section"><div className="section-heading"><span>独立会话</span><IconButton label="新建独立会话" onClick={props.onNewStandalone}><Plus size={17} /></IconButton></div><div className="sidebar-list">{standaloneThreads.map((thread) => { const target: ActiveThread = { type: "standalone", ...thread }; return <ThreadRow key={thread.id} thread={thread} running={props.runningThreadIds.has(thread.id)} active={props.activeThread?.type === "standalone" && props.activeThread.id === thread.id} onSelect={() => props.onSelectStandalone(thread)} onRename={() => props.onRenameThread(target)} onDelete={() => props.onDeleteThread(target)} />; })}</div></section>
+    <button type="button" className="sidebar-new-chat" aria-label="新建独立会话" onClick={props.onNewStandalone}><PencilSimple size={17} /><span>新建会话</span></button>
+    <nav className="sidebar-scroll">{query && !standaloneThreads.length && !projects.length && <p className="sidebar-empty" role="status">未找到匹配的项目或会话</p>}<section className="sidebar-section"><div className="section-heading"><span>独立会话</span></div><div className="sidebar-list">{standaloneThreads.map((thread) => { const target: ActiveThread = { type: "standalone", ...thread }; return <ThreadRow key={thread.id} thread={thread} running={props.runningThreadIds.has(thread.id)} active={props.activeThread?.type === "standalone" && props.activeThread.id === thread.id} onSelect={() => props.onSelectStandalone(thread)} onRename={() => props.onRenameThread(target)} onDelete={() => props.onDeleteThread(target)} />; })}</div></section>
       <div className="section-divider" />
       <section className="sidebar-section project-section"><div className="section-heading"><span>项目</span><IconButton label="添加项目" onClick={(event) => props.onAddProject(event.currentTarget)}><Plus size={17} /></IconButton></div><div className="project-tree">{projects.map((project) => { const expanded = Boolean(query) || props.expandedProjects.includes(project.id); const activeProject = props.activeThread?.type === "project" && props.activeThread.projectId === project.id; return <div className={`project-node ${expanded ? "is-expanded" : ""} ${activeProject ? "has-active-thread" : ""} ${projectMenuId === project.id ? "is-menu-open" : ""}`} data-project-menu-scope={project.id} key={project.id}><div className="project-row-wrap"><button type="button" className="project-row" aria-expanded={expanded} onClick={() => { props.onToggleProject(project.id); setProjectMenuId(null); setProjectMenuPosition(null); }} onContextMenu={(event) => { event.preventDefault(); setProjectMenuId(project.id); setProjectMenuPosition({ top: event.clientY + 4, left: event.clientX - 8 }); }}>{expanded ? <FolderOpen size={18} /> : <Folder size={18} />}<span>{project.name}</span></button><div className="project-row-actions"><IconButton ref={(element) => { projectMenuTriggers.current[project.id] = element; }} label={`项目操作 ${project.name}`} className="project-action-button" active={projectMenuId === project.id} onClick={(event) => { event.stopPropagation(); if (projectMenuId === project.id) { setProjectMenuId(null); setProjectMenuPosition(null); } else { const rect = event.currentTarget.getBoundingClientRect(); setProjectMenuId(project.id); setProjectMenuPosition({ top: rect.bottom + 4, left: rect.left - 6 }); } }}><DotsThree size={17} /></IconButton><IconButton label={`新建项目会话 ${project.name}`} className="project-new-thread-button" onClick={(event) => { event.stopPropagation(); props.onNewProjectThread(project); }}><PencilSimple size={17} /></IconButton></div></div>
         {projectMenuId === project.id && projectMenuPosition && createPortal(<div className="project-action-popover" data-project-menu-scope={project.id} role="menu" style={projectMenuPosition}><button type="button" onClick={() => { setProjectMenuId(null); setProjectMenuPosition(null); props.onNewProjectThread(project); }}><PencilSimple size={17} />新建会话</button><div className="project-menu-separator" /><button type="button" onClick={() => { setProjectMenuId(null); setProjectMenuPosition(null); props.onOpenProjectPath(project); }}><FolderOpen size={17} />在文件管理器中打开</button><button type="button" onClick={() => { setProjectMenuId(null); setProjectMenuPosition(null); props.onCopyProjectPath(project); }}><Paperclip size={17} />复制项目路径</button><div className="project-menu-separator" /><button type="button" className="danger-text" onClick={() => { setProjectMenuId(null); setProjectMenuPosition(null); props.onRemoveProject(project); }}><Trash size={17} />移除项目</button></div>, document.body)}
@@ -89,5 +97,6 @@ export default function Sidebar(props: Props) {
       </div>; })}</div></section></nav>
     {profileOpen && <div ref={profilePopover} id="sidebar-account-popover" className="sidebar-popover profile-popover"><strong>{accountName}</strong><small>{email || (props.auth.connected ? "Codex 已连接" : "Codex 未登录")}</small><button type="button" onClick={() => { setProfileOpen(false); props.onOpenSettings(); }}><GearSix size={16} />设置</button></div>}
     <button ref={profileTrigger} type="button" className="profile-row" onClick={() => { setProfileOpen((open) => !open); setSearchOpen(false); }} aria-controls={profileOpen ? "sidebar-account-popover" : undefined} aria-expanded={profileOpen}><span className="avatar avatar-small">{accountName.slice(0, 1).toUpperCase()}</span><span>{accountName}</span><CaretDown size={15} /></button>
+    <SidebarResizeHandle width={sidebarWidth} maximum={maximumWidth} onChange={setPreferredWidth} onCommit={(width) => { try { localStorage.setItem(SIDEBAR_WIDTH_KEY, String(width)); } catch { /* Width still applies for this window. */ } }} />
   </aside>;
 }

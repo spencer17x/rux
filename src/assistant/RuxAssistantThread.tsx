@@ -32,12 +32,17 @@ import {
   Stop,
   TerminalWindow,
   WarningCircle,
+  Wrench,
+  Sparkle,
+  GitDiff,
   X,
 } from "@phosphor-icons/react";
 import type { RuxMessage } from "../renderer/messages";
 import { adjacentStickyTurn, completedStickyTurns } from "../renderer/messages";
 import { messageTargetFromHref } from "../renderer/message-targets";
 import type { AgentId } from "../renderer/types";
+import FloatingPopover from "../components/FloatingPopover";
+import { navigateMenu } from "../components/menuKeyboard";
 import PermissionModeIcon from "../components/PermissionModeIcon";
 import { compactModelName } from "../composer/ComposerControls";
 
@@ -259,15 +264,17 @@ function ConversationSticky({ enabled, messages, viewportRef }: { enabled: boole
 function AgentSelector({ agents, selectedAgent, onSelectAgent, runtimeProgress, open, onToggle, onClose, buttonRef }: { agents: AgentDefinition[]; selectedAgent: AgentId; onSelectAgent: (agentId: AgentId) => void; runtimeProgress: RuntimeProgress; open: boolean; onToggle: () => void; onClose: () => void; buttonRef: RefObject<HTMLButtonElement | null> }) {
   const current = agents.find((agent) => agent.id === selectedAgent) || agents[0];
   return (
-    <span className="agent-selector-wrap" data-overlay-scope>
+    <span className="agent-selector-wrap" data-overlay-scope data-overlay-id="agents">
       <button ref={buttonRef} type="button" className="composer-menu agent-selector-button" aria-label="选择 Agent" onClick={onToggle} aria-expanded={open} aria-haspopup="menu">
         <Robot size={15} />{current?.name || "Codex"}<CaretDown size={12} />
       </button>
-      {open && <span className="agent-selector-popover" role="menu">
+      {open && <FloatingPopover anchorRef={buttonRef} scope="agents"><span className="agent-selector-popover" role="menu" aria-label="Agent" onKeyDown={navigateMenu}>
         <strong>底座 Agent</strong>
         {agents.map((agent) => (
           <button
             type="button"
+            role="menuitemradio"
+            aria-checked={agent.id === selectedAgent}
             key={agent.id}
             className={agent.id === selectedAgent ? "is-selected" : ""}
             disabled={!agent.integrated}
@@ -277,7 +284,7 @@ function AgentSelector({ agents, selectedAgent, onSelectAgent, runtimeProgress, 
             {agent.id === selectedAgent && <Check size={14} />}
           </button>
         ))}
-      </span>}
+      </span></FloatingPopover>}
     </span>
   );
 }
@@ -286,11 +293,11 @@ function AgentModeSelector({ agent, mode, onMode, open, onToggle, onClose, butto
   const current = agent?.modes?.find((item) => item.id === mode) || agent?.modes?.[0];
   if (!agent?.modes?.length) return null;
   return (
-    <span className="agent-selector-wrap" data-overlay-scope>
+    <span className="agent-selector-wrap" data-overlay-scope data-overlay-id="agent-mode">
       <button ref={buttonRef} type="button" className="composer-menu" aria-label="选择 Agent 模式" onClick={onToggle} aria-expanded={open} aria-haspopup="menu">{current?.label || "默认"}<CaretDown size={12} /></button>
-      {open && <span className="agent-mode-popover" role="menu">
-        {agent.modes.map((item) => <button type="button" className={item.id === current?.id ? "is-selected" : ""} key={item.id} onClick={() => { onMode(item.id); onClose(); }}>{item.label}{item.id === current?.id && <Check size={13} />}</button>)}
-      </span>}
+      {open && <FloatingPopover anchorRef={buttonRef} scope="agent-mode"><span className="agent-mode-popover" role="menu" aria-label="Agent 模式" onKeyDown={navigateMenu}>
+        {agent.modes.map((item) => <button type="button" role="menuitemradio" aria-checked={item.id === current?.id} className={item.id === current?.id ? "is-selected" : ""} key={item.id} onClick={() => { onMode(item.id); onClose(); }}>{item.label}{item.id === current?.id && <Check size={13} />}</button>)}
+      </span></FloatingPopover>}
     </span>
   );
 }
@@ -354,11 +361,23 @@ export default function RuxAssistantThread({
   });
   const selectedDefinition = useMemo(() => agents.find((agent) => agent.id === selectedAgent), [agents, selectedAgent]);
   const viewportRef = useRef<HTMLDivElement>(null);
+  const threadRootRef = useRef<HTMLDivElement>(null);
+  const composerRef = useRef<HTMLFormElement>(null);
+  useEffect(() => {
+    const composer = composerRef.current;
+    if (!composer) return;
+    const measure = () => threadRootRef.current?.style.setProperty("--composer-height", `${Math.ceil(composer.getBoundingClientRect().height)}px`);
+    const observer = new ResizeObserver(measure);
+    observer.observe(composer);
+    measure();
+    return () => observer.disconnect();
+  }, []);
   const agentTrigger = useRef<HTMLButtonElement>(null);
   const modeTrigger = useRef<HTMLButtonElement>(null);
   const modelTrigger = useRef<HTMLButtonElement>(null);
   const sandboxTrigger = useRef<HTMLButtonElement>(null);
   const previousOverlay = useRef<OverlayId | null>(null);
+  const restoreOverlayFocus = useRef(true);
   const composerDraftRef = useRef({ key: "", text: "" });
   useEffect(() => {
     if (composerDraftRef.current.key === draftKey && composerDraftRef.current.text === draftText) return;
@@ -367,16 +386,30 @@ export default function RuxAssistantThread({
   }, [draftKey, draftText, runtime]);
   useEffect(() => {
     const previous = previousOverlay.current;
-    if (previous && !activeOverlay) ({ agents: agentTrigger, "agent-mode": modeTrigger, "run-settings": modelTrigger, sandbox: sandboxTrigger }[previous]).current?.focus();
+    if (previous && !activeOverlay && restoreOverlayFocus.current) ({ agents: agentTrigger, "agent-mode": modeTrigger, "run-settings": modelTrigger, sandbox: sandboxTrigger }[previous]).current?.focus();
     previousOverlay.current = activeOverlay;
+    restoreOverlayFocus.current = true;
   }, [activeOverlay]);
   useEffect(() => {
     if (!activeOverlay) return undefined;
-    const closeOnOutside = (event: PointerEvent) => { const target = event.target; if (!(target instanceof Element) || !target.closest("[data-overlay-scope]")) onOverlayChange(null); };
-    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") { event.preventDefault(); onOverlayChange(null); } };
-    document.addEventListener("pointerdown", closeOnOutside);
+    const closeOnOutside = (event: Event) => {
+      const target = event.target;
+      if (!(target instanceof Element) || !target.closest(`[data-overlay-id="${activeOverlay}"]`)) {
+        restoreOverlayFocus.current = false;
+        onOverlayChange(null);
+      }
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { event.preventDefault(); restoreOverlayFocus.current = true; onOverlayChange(null); }
+    };
+    document.addEventListener("pointerdown", closeOnOutside, true);
+    document.addEventListener("focusin", closeOnOutside);
     document.addEventListener("keydown", closeOnEscape);
-    return () => { document.removeEventListener("pointerdown", closeOnOutside); document.removeEventListener("keydown", closeOnEscape); };
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutside, true);
+      document.removeEventListener("focusin", closeOnOutside);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
   }, [activeOverlay, onOverlayChange]);
   const editMessage = (text: string) => { composerDraftRef.current = { key: draftKey, text }; onDraftTextChange(text); runtime.thread.composer.setText(text); requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>(".aui-composer-input")?.focus()); };
 
@@ -384,17 +417,22 @@ export default function RuxAssistantThread({
     <AssistantRuntimeProvider runtime={runtime}>
       <MessageProjectContext.Provider value={projectId}>
       <MessageEditContext.Provider value={editMessage}>
-      <ThreadPrimitive.Root className="aui-thread-root">
+      <ThreadPrimitive.Root ref={threadRootRef} className="aui-thread-root">
         <ConversationSticky enabled={conversationSticky} messages={messages} viewportRef={viewportRef} />
         <ThreadPrimitive.Viewport ref={viewportRef} className="aui-thread-viewport">
           <ThreadPrimitive.Empty>
-            <div className="conversation-empty"><Robot size={30} /><h2>{emptyTitle}</h2><p>输入任务后，Rux 将显示 Agent 的流式文本、思考与工具执行过程。</p></div>
+            <div className="conversation-empty"><Robot size={30} className="conversation-empty-mark" /><h2>想构建些什么？</h2><p>{emptyTitle}</p><div className="conversation-starters" aria-label="任务建议">{[
+              { label: "了解代码库", prompt: "帮我梳理这个项目的结构和主要功能。", Icon: Code },
+              { label: "实现新功能", prompt: "我想为这个项目添加一个新功能：", Icon: Sparkle },
+              { label: "审查代码", prompt: "帮我审查当前代码变更，找出潜在问题。", Icon: GitDiff },
+              { label: "修复问题", prompt: "帮我定位并修复这个问题：", Icon: Wrench },
+            ].map(({ label, prompt, Icon }) => <button type="button" key={label} onClick={() => editMessage(prompt)}><Icon size={17} /><span>{label}</span></button>)}</div></div>
           </ThreadPrimitive.Empty>
           <ThreadPrimitive.Messages components={{ UserMessage, AssistantMessage }} />
           {workspaceSummary}
         </ThreadPrimitive.Viewport>
         <ThreadPrimitive.ScrollToBottom className="aui-scroll-bottom" aria-label="滚动到底部"><ArrowDown size={16} /></ThreadPrimitive.ScrollToBottom>
-        <ComposerPrimitive.Root className="composer-wrap aui-composer-wrap"
+        <ComposerPrimitive.Root ref={composerRef} className="composer-wrap aui-composer-wrap"
           onPasteCapture={(event) => {
             const files = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith("image/"));
             if (!files.length || !onImportImages) return;
@@ -421,12 +459,12 @@ export default function RuxAssistantThread({
               <div className="composer-left">
                 {showAttachments && <button type="button" className="icon-button" aria-label="添加文件" onClick={onAddFiles}><Plus size={19} /></button>}
                 {showWebSearch && <button type="button" className={`icon-button ${webSearch ? "is-active" : ""}`} aria-label={webSearch ? "关闭网页搜索" : "启用网页搜索"} title={webSearch ? "网页搜索已启用" : "启用网页搜索"} onClick={onToggleWebSearch}><Globe size={18} /></button>}
-                {showPermission && <span className="scope-menu-wrap" data-overlay-scope><button ref={sandboxTrigger} type="button" className={`scope-button ${permissionDanger ? "" : "neutral"}`} data-permission-mode={permissionMode} aria-label="操作批准方式" onClick={onToggleSandbox} aria-expanded={sandboxOpen} aria-haspopup="menu"><PermissionModeIcon mode={permissionMode} size={16} />{permissionLabel}<CaretDown size={12} /></button>{sandboxOpen && permissionPopover}</span>}
+                {showPermission && <span className="scope-menu-wrap" data-overlay-scope data-overlay-id="sandbox"><button ref={sandboxTrigger} type="button" className={`scope-button ${permissionDanger ? "" : "neutral"}`} data-permission-mode={permissionMode} aria-label="操作批准方式" onClick={onToggleSandbox} aria-expanded={sandboxOpen} aria-haspopup="menu"><PermissionModeIcon mode={permissionMode} size={16} />{permissionLabel}<CaretDown size={12} /></button>{sandboxOpen && <FloatingPopover anchorRef={sandboxTrigger} scope="sandbox" align="start">{permissionPopover}</FloatingPopover>}</span>}
               </div>
               <div className="composer-right">
                 <AgentSelector agents={agents} selectedAgent={selectedAgent} onSelectAgent={onSelectAgent} runtimeProgress={runtimeProgress} open={activeOverlay === "agents"} onToggle={() => onOverlayChange(activeOverlay === "agents" ? null : "agents")} onClose={() => onOverlayChange(null)} buttonRef={agentTrigger} />
                 <AgentModeSelector agent={selectedDefinition} mode={agentMode} onMode={onAgentMode} open={activeOverlay === "agent-mode"} onToggle={() => onOverlayChange(activeOverlay === "agent-mode" ? null : "agent-mode")} onClose={() => onOverlayChange(null)} buttonRef={modeTrigger} />
-                <span className="run-settings-wrap" data-overlay-scope><button ref={modelTrigger} type="button" aria-label="切换模型、推理强度和速度" className={`composer-menu run-settings-trigger ${modelOpen ? "is-active" : ""}`} onClick={onToggleModel} aria-expanded={modelOpen} aria-haspopup="dialog"><strong>{compactModelName(modelLabel)}</strong><span>{reasoningLabel}</span><CaretDown size={13} /></button>{modelOpen && modelPopover}</span>
+                <span className="run-settings-wrap" data-overlay-scope data-overlay-id="run-settings"><button ref={modelTrigger} type="button" aria-label="切换模型、推理强度和速度" className={`composer-menu run-settings-trigger ${modelOpen ? "is-active" : ""}`} onClick={onToggleModel} aria-expanded={modelOpen} aria-haspopup="dialog"><strong>{compactModelName(modelLabel)}</strong><span>{reasoningLabel}</span><CaretDown size={13} /></button>{modelOpen && <FloatingPopover anchorRef={modelTrigger} scope="run-settings">{modelPopover}</FloatingPopover>}</span>
                 {showVoice && <button type="button" className={`icon-button ${listening ? "is-active" : ""}`} aria-label="语音输入" onClick={onVoice}><Microphone size={18} /></button>}
                 <ThreadPrimitive.If running>
                   <ComposerPrimitive.Cancel className="send-button stop-button" aria-label="停止"><Stop size={15} weight="fill" /></ComposerPrimitive.Cancel>

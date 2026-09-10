@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from "react";
-import { CaretDown, CaretRight, CaretUp, Check, CircleNotch, FolderOpen, Globe, TerminalWindow, WarningCircle } from "@phosphor-icons/react";
+import { useEffect, useId, useRef, useState } from "react";
+import { ArrowCounterClockwise, CaretDown, CaretLeft, CaretRight, Lightning, Check, CircleNotch, FolderOpen, Globe, TerminalWindow, WarningCircle } from "@phosphor-icons/react";
+import { navigateMenu } from "../components/menuKeyboard";
 import type { AuthState } from "../renderer/types";
 import { userFacingError } from "../renderer/errors";
 import PermissionModeIcon, { type PermissionMode } from "../components/PermissionModeIcon";
@@ -29,55 +30,97 @@ export function compactModelName(value: string): string {
   return value.replace(/^GPT[- ]?/i, "").replace(/^([\d.]+)-([A-Za-z])/, "$1 $2");
 }
 
-type RunSettingsSection = "models" | "reasoning" | "speed";
+type SelectionResult = void | boolean | Promise<void | boolean>;
+type ModelPopoverProps = {
+  settings: ComposerSettings; auth: AuthState; models: ModelInfo[]; loading: boolean; error: string; serviceTier: string | null;
+  onSelectModel: (model: ModelInfo) => SelectionResult;
+  onSelectReasoning: (reasoning: Reasoning) => SelectionResult;
+  onSelectServiceTier: (serviceTier: string | null) => SelectionResult;
+  onReset?: () => SelectionResult;
+  onClose?: () => void;
+};
 
-export function ModelPopover({ settings, models, loading, error, serviceTier, onSelectModel, onSelectReasoning, onSelectServiceTier }: { settings: ComposerSettings; auth: AuthState; models: ModelInfo[]; loading: boolean; error: string; serviceTier: string | null; onSelectModel: (model: ModelInfo) => void; onSelectReasoning: (reasoning: Reasoning) => void; onSelectServiceTier: (serviceTier: string | null) => void }) {
-  const [section, setSection] = useState<RunSettingsSection | null>(null);
+export function ModelPopover({ settings, models, loading, error, serviceTier, onSelectModel, onSelectReasoning, onSelectServiceTier, onReset, onClose }: ModelPopoverProps) {
+  const [view, setView] = useState<"power" | "models" | "speed">("power");
+  const [busy, setBusy] = useState(false);
+  const [saveError, setSaveError] = useState("");
+  const pending = useRef(false);
   const popoverRef = useRef<HTMLDivElement>(null);
-  const [advanced, setAdvanced] = useState(true);
+  const rangeRef = useRef<HTMLInputElement>(null);
+  const modelButtonRef = useRef<HTMLButtonElement>(null);
   const current = selectedModel(settings, models);
   const efforts = current?.supportedReasoningEfforts || [];
   const tiers = current?.serviceTiers || [];
+  const selectedIndex = Math.max(0, efforts.findIndex((effort) => effort.reasoningEffort === settings.reasoning));
+  const [previewIndex, setPreviewIndex] = useState(selectedIndex);
+  const previewRef = useRef(selectedIndex);
+  const dragging = useRef(false);
+  const ticksId = useId();
+  const hintId = useId();
   const selectedTier = tiers.find((tier) => tier.id === serviceTier);
+  const previewEffort = efforts[previewIndex]?.reasoningEffort || settings.reasoning;
+  const effortLabel = reasoningLabels[previewEffort] || previewEffort;
   const speedLabel = selectedTier?.id === "priority" ? "快速" : selectedTier?.name || "标准";
-  const sectionLabel = section === "models" ? "模型" : section === "reasoning" ? "推理强度" : section === "speed" ? "速度" : "";
-  const activateSection = (next: RunSettingsSection) => setSection(next);
-  return <div ref={popoverRef} className="model-popover run-settings-popover" onKeyDown={(event) => {
-    const target = event.target as HTMLElement;
-    const menu = target.closest('[role="menu"]');
-    if (event.key === "ArrowDown" || event.key === "ArrowUp" || event.key === "Home" || event.key === "End") {
-      const buttons = Array.from(menu?.querySelectorAll<HTMLButtonElement>(":scope > button:not(:disabled)") || []);
-      if (!buttons.length) return;
-      event.preventDefault();
-      const index = buttons.indexOf(target as HTMLButtonElement);
-      const next = event.key === "Home" ? 0 : event.key === "End" ? buttons.length - 1 : (index + (event.key === "ArrowDown" ? 1 : -1) + buttons.length) % buttons.length;
-      buttons[next]?.focus();
-    } else if (event.key === "ArrowRight" && target.getAttribute("aria-haspopup") === "menu") {
-      event.preventDefault();
-      requestAnimationFrame(() => popoverRef.current?.querySelector<HTMLButtonElement>(".run-settings-submenu button:not(:disabled)")?.focus());
-    } else if (event.key === "ArrowLeft" && menu?.classList.contains("run-settings-submenu")) {
-      event.preventDefault();
-      popoverRef.current?.querySelector<HTMLButtonElement>('.run-settings-main > button[aria-expanded="true"]')?.focus();
-    }
-  }} role="dialog" aria-label="切换模型、推理强度和速度" onMouseLeave={() => setSection(null)}>
-    <div className="run-settings-main" role="menu" aria-label="运行设置">
-      {advanced && <>
-        <button type="button" role="menuitem" aria-haspopup="menu" aria-expanded={section === "models"} className={section === "models" ? "is-selected" : ""} onMouseEnter={() => setSection("models")} onFocus={() => setSection("models")} onClick={() => activateSection("models")}><strong>模型</strong><span>{compactModelName(modelDisplayName(settings, models))}</span><CaretRight size={17} /></button>
-        <button type="button" role="menuitem" aria-haspopup="menu" aria-expanded={section === "reasoning"} disabled={loading || !efforts.length} className={section === "reasoning" ? "is-selected" : ""} onMouseEnter={() => setSection("reasoning")} onFocus={() => setSection("reasoning")} onClick={() => activateSection("reasoning")}><strong>推理强度</strong><span>{reasoningLabels[settings.reasoning] || settings.reasoning}</span><CaretRight size={17} /></button>
-        {tiers.length > 0 && <button type="button" role="menuitem" aria-haspopup="menu" aria-expanded={section === "speed"} className={section === "speed" ? "is-selected" : ""} onMouseEnter={() => setSection("speed")} onFocus={() => setSection("speed")} onClick={() => activateSection("speed")}><strong>速度</strong><span>{speedLabel}</span><CaretRight size={17} /></button>}
-      </>}
-      <button type="button" role="menuitem" className="run-settings-advanced" aria-expanded={advanced} onClick={() => { setAdvanced((value) => !value); setSection(null); }}><strong>高级</strong>{advanced ? <CaretUp size={15} /> : <CaretDown size={15} />}</button>
-    </div>
-    {advanced && section && <div className={`run-settings-submenu is-${section}`} role="menu" aria-label={sectionLabel}>
-      {section !== "models" && <div className="run-settings-heading">{sectionLabel}</div>}
-      {section === "models" && loading && <div className="picker-state" role="status"><CircleNotch size={16} className="spin" />正在读取 Agent 模型…</div>}
-      {section === "models" && error && <div className="picker-state error-text" role="alert">{userFacingError(error)}</div>}
-      {section === "models" && !loading && !error && !models.length && <div className="picker-state" role="status">暂无可用模型，请在设置中检查账户与连接。</div>}
-      {section === "models" && !loading && models.map((model) => <button type="button" role="menuitemradio" aria-checked={current?.model === model.model} className="run-settings-option" key={model.id} onClick={() => onSelectModel(model)}><span><strong>{compactModelName(model.displayName)}</strong></span>{current?.model === model.model && <Check size={17} />}</button>)}
-      {section === "reasoning" && efforts.map((effort) => <button type="button" role="menuitemradio" aria-checked={settings.reasoning === effort.reasoningEffort} className="run-settings-option" key={effort.reasoningEffort} onClick={() => onSelectReasoning(effort.reasoningEffort)}><span><strong>{reasoningLabels[effort.reasoningEffort] || effort.reasoningEffort}</strong>{effort.reasoningEffort === "ultra" && <small>更快消耗使用额度</small>}</span>{settings.reasoning === effort.reasoningEffort && <Check size={17} />}</button>)}
-      {section === "speed" && <button type="button" role="menuitemradio" aria-checked={!serviceTier} className="run-settings-option" onClick={() => onSelectServiceTier(null)}><span><strong>标准</strong><small>默认速度</small></span>{!serviceTier && <Check size={17} />}</button>}
-      {section === "speed" && tiers.map((tier) => <button type="button" role="menuitemradio" aria-checked={serviceTier === tier.id} className="run-settings-option" key={tier.id} onClick={() => onSelectServiceTier(tier.id)}><span><strong>{tier.id === "priority" ? "快速" : tier.name}</strong><small>{tier.id === "priority" ? "1.5 倍速度，用量更多" : tier.description}</small></span>{serviceTier === tier.id && <Check size={17} />}</button>)}
-    </div>}
+  useEffect(() => {
+    if (dragging.current) return;
+    previewRef.current = selectedIndex;
+    setPreviewIndex(selectedIndex);
+  }, [current?.model, selectedIndex]);
+  const apply = async (action: () => SelectionResult, returnToPower = false) => {
+    if (pending.current) return;
+    pending.current = true; setBusy(true); setSaveError("");
+    try {
+      const result = await action();
+      if (result === false) { previewRef.current = selectedIndex; setPreviewIndex(selectedIndex); return; }
+      if (returnToPower) {
+        setView("power");
+        requestAnimationFrame(() => (rangeRef.current || modelButtonRef.current)?.focus({ preventScroll: true }));
+      }
+    } catch (error) {
+      setSaveError(userFacingError(error)); previewRef.current = selectedIndex; setPreviewIndex(selectedIndex);
+    } finally { pending.current = false; setBusy(false); }
+  };
+  const commitEffort = () => {
+    dragging.current = false;
+    const effort = efforts[previewRef.current]?.reasoningEffort;
+    if (effort && effort !== settings.reasoning) void apply(() => onSelectReasoning(effort));
+  };
+  const changeView = (next: "models" | "speed") => {
+    setView(next);
+    requestAnimationFrame(() => popoverRef.current?.querySelector<HTMLElement>("[role='menuitemradio'][aria-checked='true'], [role='menuitemradio']")?.focus({ preventScroll: true }));
+  };
+  const returnToPower = () => { setView("power"); requestAnimationFrame(() => modelButtonRef.current?.focus({ preventScroll: true })); };
+  const toggleSpeed = () => {
+    if (tiers.length === 1) void apply(() => onSelectServiceTier(serviceTier ? null : tiers[0].id));
+    else changeView("speed");
+  };
+
+  return <div ref={popoverRef} className="model-popover model-picker" role="dialog" aria-label="切换模型、推理强度和速度" aria-busy={busy} data-high-effort={previewEffort === "max" || previewEffort === "ultra"} onKeyDown={(event) => {
+    if (event.key === "ArrowLeft" && view !== "power") { event.preventDefault(); event.stopPropagation(); returnToPower(); return; }
+    navigateMenu(event);
+  }}>
+    {view === "power" ? <>
+      <div className="model-picker-header">
+        {tiers.length > 0 && <button type="button" className="model-picker-speed" aria-label={tiers.length === 1 ? "快速模式" : "选择速度"} aria-pressed={tiers.length === 1 ? Boolean(serviceTier) : undefined} title={`速度：${speedLabel}${serviceTier ? "，用量更多" : ""}`} disabled={busy || loading} onClick={toggleSpeed}><Lightning size={16} weight={serviceTier ? "fill" : "regular"} /></button>}
+        <button ref={modelButtonRef} type="button" className="model-picker-model" aria-label="选择模型" aria-haspopup="menu" disabled={busy || loading || !models.length} onClick={() => changeView("models")} onKeyDown={(event) => { if (event.key === "ArrowRight") { event.preventDefault(); changeView("models"); } }}><span className="model-picker-current-effort">{effortLabel}<CaretRight size={13} /></span><small>{compactModelName(modelDisplayName(settings, models))}</small></button>
+        {onReset && <button type="button" className="model-picker-reset" aria-label="恢复默认模型设置" title="恢复默认模型设置" disabled={busy || loading || !models.length} onClick={() => void apply(onReset)}><ArrowCounterClockwise size={16} /></button>}
+      </div>
+      {loading ? <div className="picker-state" role="status"><CircleNotch size={16} className="spin" />正在读取 Agent 模型…</div> : error ? <div className="picker-state error-text" role="alert">{userFacingError(error)}</div> : !current ? <div className="picker-state" role="status">暂无可用模型，请在设置中检查账户与连接。</div> : efforts.length > 1 ? <div className="model-picker-power">
+        <label className="sr-only" htmlFor={ticksId}>推理强度</label>
+        <input ref={rangeRef} data-autofocus id={ticksId} type="range" min={0} max={efforts.length - 1} step={1} value={Math.min(previewIndex, efforts.length - 1)} disabled={busy} aria-valuetext={effortLabel} aria-describedby={hintId} onPointerDown={() => { dragging.current = true; }} onChange={(event) => { const index = Number(event.currentTarget.value); previewRef.current = index; setPreviewIndex(index); }} onPointerUp={commitEffort} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); event.stopPropagation(); commitEffort(); onClose?.(); } }} onPointerCancel={() => { dragging.current = false; previewRef.current = selectedIndex; setPreviewIndex(selectedIndex); }} onKeyUp={(event) => { if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"].includes(event.key)) commitEffort(); }} onBlur={() => { if (!dragging.current) commitEffort(); }} />
+        <div className="model-picker-ticks" aria-hidden="true">{efforts.map((effort, index) => <i key={effort.reasoningEffort} data-selected={index === previewIndex} />)}</div>
+        <div className="model-picker-range-labels"><span>{reasoningLabels[efforts[0].reasoningEffort]}</span><span>{reasoningLabels[efforts[efforts.length - 1].reasoningEffort]}</span></div>
+        <span id={hintId} className="sr-only">使用左右方向键调整当前模型的推理强度；拖动时预览，松开后保存。</span>
+      </div> : <p className="model-picker-no-efforts">该模型没有可调的推理强度</p>}
+      {previewEffort === "ultra" && <p className="model-picker-usage">更快消耗使用额度</p>}
+      <div className="model-picker-footer"><button type="button" disabled={busy || loading || !models.length} aria-label="浏览全部模型" onClick={() => changeView("models")}>全部模型<CaretRight size={13} /></button>{busy && <CircleNotch size={13} className="spin" aria-label="正在保存" />}</div>
+    </> : <>
+      <div className="model-picker-list-heading"><button type="button" aria-label="返回推理强度" onClick={returnToPower}><CaretLeft size={15} /></button><strong>{view === "models" ? "选择模型" : "速度"}</strong></div>
+      <div className="model-picker-list" role="menu" aria-label={view === "models" ? "模型" : "速度"} onKeyDown={navigateMenu}>
+        {view === "models" ? models.map((model) => <button type="button" role="menuitemradio" aria-checked={current?.model === model.model} className="model-picker-option" key={model.id} disabled={busy} onClick={() => void apply(() => onSelectModel(model), true)}><span>{compactModelName(model.displayName)}{model.isDefault && <small>推荐</small>}</span>{current?.model === model.model && <Check size={16} />}</button>) : [{ id: "", name: "标准", description: "默认速度" }, ...tiers].map((tier) => <button type="button" role="menuitemradio" aria-checked={(serviceTier || "") === tier.id} className="model-picker-option" key={tier.id} disabled={busy} onClick={() => void apply(() => onSelectServiceTier(tier.id || null), true)}><span>{tier.id === "priority" ? "快速" : tier.name}<small>{tier.description}</small></span>{(serviceTier || "") === tier.id && <Check size={16} />}</button>)}
+      </div>
+    </>}
+    {saveError && <p className="picker-state error-text" role="alert">{saveError}</p>}
   </div>;
 }
 
@@ -87,9 +130,9 @@ export function PermissionPopover({ selectedValue, onSelect, onLearnMore, agentI
     : option.value === "workspace-write"
       ? { ...option, description: "Pi RPC 暂不支持逐次审批，请使用只读或完整访问" }
       : option) : permissionOptions;
-  return <span className="scope-popover permission-popover" role="dialog" aria-label="操作批准方式"><span className="permission-popover-heading"><strong>应如何批准 Rux 操作？</strong><button type="button" onClick={onLearnMore}>了解更多</button></span>{options.map(({ value, title, description }) => {
+  return <span className="scope-popover permission-popover" onKeyDown={navigateMenu} role="dialog" aria-label="操作批准方式"><span className="permission-popover-heading"><strong>应如何批准 Rux 操作？</strong><button type="button" onClick={onLearnMore}>了解更多</button></span>{options.map(({ value, title, description }) => {
     const disabled = agentId === "pi" && value === "workspace-write";
-    return <button type="button" key={value} disabled={disabled} aria-disabled={disabled} aria-pressed={selectedValue === value} className={`permission-option ${value === "danger-full-access" ? "is-danger" : ""} ${selectedValue === value ? "is-selected" : ""}`} onClick={() => onSelect(value)}><PermissionModeIcon mode={value as PermissionMode} size={20} /><span><strong>{title}</strong><small>{description}</small></span>{selectedValue === value && <Check size={18} weight="bold" />}</button>;
+    return <button type="button" data-menu-item key={value} disabled={disabled} aria-disabled={disabled} aria-pressed={selectedValue === value} className={`permission-option ${value === "danger-full-access" ? "is-danger" : ""} ${selectedValue === value ? "is-selected" : ""}`} onClick={() => onSelect(value)}><PermissionModeIcon mode={value as PermissionMode} size={20} /><span><strong>{title}</strong><small>{description}</small></span>{selectedValue === value && <Check size={18} weight="bold" />}</button>;
   })}</span>;
 }
 

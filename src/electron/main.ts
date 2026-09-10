@@ -12,6 +12,7 @@ async function createWindow(): Promise<void> {
     minHeight: 600,
     show: false,
     title: "Rux",
+    ...(process.platform === "darwin" ? { titleBarStyle: "hiddenInset" as const, trafficLightPosition: { x: 16, y: 19 } } : {}),
     backgroundColor: "#ffffff",
     webPreferences: {
       contextIsolation: true,

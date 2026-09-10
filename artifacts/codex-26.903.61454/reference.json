@@ -1,0 +1,159 @@
+{
+  "reference": {
+    "app": "/Applications/ChatGPT.app",
+    "bundleId": "com.openai.codex",
+    "version": "26.903.61454",
+    "build": "8378",
+    "inspectedAt": "2026-09-10",
+    "method": "Read installed static app.asar resources. Did not execute bundled JavaScript or inspect user data. No live reference GUI capture."
+  },
+  "resources": [
+    {
+      "file": "app-initial-1b87ae739476.js",
+      "bytes": 10486753,
+      "sha256": "c87b94027faefdc31cc165975dc0f14b28e3f6d922f6a5188756c8f570f2b3d7"
+    },
+    {
+      "file": "app-initial-49fc08c26651.css",
+      "bytes": 823559,
+      "sha256": "609a3a7d63469a0d06d33cce070c1711716bf786d03aafe85689c24629b90b43"
+    },
+    {
+      "file": "app-primary-d815831c9bad.css",
+      "bytes": 147890,
+      "sha256": "e33ac8be2166002193d6c5146ea44cdfd59cea76eec673337a189a61e6ddddf1"
+    },
+    {
+      "file": "app-primary-e25aaf15dbaf.js",
+      "bytes": 8217332,
+      "sha256": "0aa689053d9e32d7286dfb1d85ac62cadc3858086335518f15b1f97604eb61e9"
+    },
+    {
+      "file": "composer-4d587b24b341.js",
+      "bytes": 2429,
+      "sha256": "e4c19a7ea2c65ab3625dcdf51dd4ed30f9021d813c4108497e4b6cbe899d1d27"
+    },
+    {
+      "file": "composer-action-bar-run-location-dropdown-1f5d5cbc9890.js",
+      "bytes": 6291,
+      "sha256": "985c8ae7e569d25792afeef72cd57a89bbcfb130f6b2dd36d50acd1e58943534"
+    },
+    {
+      "file": "composer-project-selector-1358e3ee5ee2.js",
+      "bytes": 3088,
+      "sha256": "f1b2ee7e8321d972a3e10ecd46b33c7db30ca5cb1988ec0049b80289bc0a39d3"
+    },
+    {
+      "file": "composer-provider-94f3719549b5.js",
+      "bytes": 4382,
+      "sha256": "f1d059bec7fe84c74392e1c9d6415ed603f157f74d22ec2590531bf458730ff6"
+    },
+    {
+      "file": "composer-utility-bar-56b96a453c00.js",
+      "bytes": 30015,
+      "sha256": "2f9a37d2d780ac947d528539af8f78c79de267a5af5679851e15d96cac3e3cca"
+    },
+    {
+      "file": "local-conversation-thread-b5c1b90153e1.js",
+      "bytes": 353510,
+      "sha256": "a1cc0311cb9535538be33b79b3e8b24da47e1e8d720eed9ec781369e8b8c7c30"
+    },
+    {
+      "file": "local-conversation-thread-cc7429aa2937.js",
+      "bytes": 119,
+      "sha256": "722c1bd9c33f8dd55066da7c133022d0b2f771a339685fe7b62aaa83ac88af56"
+    },
+    {
+      "file": "local-conversation-thread-turn-entries-ecde8b7f5f01.js",
+      "bytes": 7235,
+      "sha256": "80f9f3dbfc87db54452f828a450b863804a6f97f9c1bb8f81b956a53a45d40ba"
+    },
+    {
+      "file": "permissions-mode-dropdown-1b0c19edaac2.js",
+      "bytes": 43133,
+      "sha256": "68555ba2b521eef625e86cd30688363e80c53f561944e8618a285ea164e5204a"
+    },
+    {
+      "file": "theme-font-family-30d6f9c40000.js",
+      "bytes": 287,
+      "sha256": "da7496ea6f7571a231437a0e868320a471ee93fb831cbd2a4a22a20b55807ad1"
+    },
+    {
+      "file": "theme-font-family-550a581dca1f.js",
+      "bytes": 753,
+      "sha256": "534fde2365b7c3535443a58e3dceac3015b12b2c18c3778967b28f7299ae0725"
+    },
+    {
+      "file": "thread-app-shell-chrome-310f43a548b5.js",
+      "bytes": 82634,
+      "sha256": "cf0885a0ba5f643ce5605f87c39ad4be336723d7beb34977c6bff34c5f33f6b2"
+    },
+    {
+      "file": "thread-app-shell-chrome-beb29be374ad.js",
+      "bytes": 102,
+      "sha256": "e65070968e62d9409781d8c6e47e1ad3c163336d8a04d47a79dc65afc2eba701"
+    },
+    {
+      "file": "thread-app-shell-chrome-e5c85156ae8a.css",
+      "bytes": 283,
+      "sha256": "0749cc06253bac0a829dd7656f8338cfe4fd262761d084f95d230f18391cef5e"
+    },
+    {
+      "file": "thread-overflow-menu-e52934ecb632.js",
+      "bytes": 11694,
+      "sha256": "eb2d822af26680933c2fe00d6e9823a7da817da4de56499afb08f191cd018d7b"
+    },
+    {
+      "file": "thread-scroll-layout-26a32b412ec3.css",
+      "bytes": 1432,
+      "sha256": "248304cf7dab96e4c7aff4ece74d336a5aeb32370000e2f09e12f7028f709ac6"
+    },
+    {
+      "file": "thread-scroll-layout-74b7b284e43f.js",
+      "bytes": 17922,
+      "sha256": "ff137a105c9753e116fc40eb087158ca1d54be05a4aaafe11b5f538cd186258b"
+    },
+    {
+      "file": "thread-user-message-navigation-rail-app-33e1d82a93e0.css",
+      "bytes": 3602,
+      "sha256": "c68cf20f60dd3363ec7dd8b2278b54efeca0520ae52dbaa6e1aa80d83a419ffa"
+    },
+    {
+      "file": "thread-user-message-navigation-rail-app-8935f5bd0f26.js",
+      "bytes": 30620,
+      "sha256": "123eaab32415de9e1b400b1abc69879cdbe240893dde24b657cf865d9a9ebfdb"
+    }
+  ],
+  "measurements": {
+    "desktopToolbarPx": 46,
+    "paneToolbarPx": 40,
+    "sidebarDefaultPx": 275,
+    "sidebarMinPx": 240,
+    "sidebarMaxPx": 520,
+    "sidebarRowPx": 30,
+    "sidebarRowRadiusPx": 10,
+    "threadMaxWidthPx": 768,
+    "bodyTextPx": 14,
+    "smallTextPx": 13,
+    "captionTextPx": 12,
+    "composerRadiusPx": 20,
+    "composerControlPx": 28,
+    "composerInputMinHeightPx": 44,
+    "modelPickerWidthPx": 254,
+    "modelListMaxHeightPx": 316,
+    "surface": "#ffffff",
+    "ink": "#1a1c1f",
+    "accent": "#339cff",
+    "contrast": 45,
+    "derivedSidebar": "#f6f6f6",
+    "borderAlpha": 0.078,
+    "heavyBorderAlpha": 0.117,
+    "secondaryForegroundAlpha": 0.695,
+    "tertiaryForegroundAlpha": 0.495
+  },
+  "scopeNotes": [
+    "Values refer to shipped default Codex light theme; account flags and user customization can change the live UI.",
+    "Power slider maps current-model reasoning in Rux. Cross-model model/effort bundles require metadata unavailable in the current Rux catalog.",
+    "Rux retains its brand, icons and supported Codex/Claude Code/Pi capability boundaries."
+  ]
+}
