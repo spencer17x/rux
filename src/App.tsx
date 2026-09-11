@@ -45,7 +45,7 @@ function errorMessage(error: unknown): string { return userFacingError(error); }
 function App() {
   const [selectedAgent, setSelectedAgent] = useState<AgentId>("codex");
   const [agentMode, setAgentMode] = useState("default");
-  const [leftPanelOpen, setLeftPanelOpen] = useState(false);
+  const [leftPanelOpen, setLeftPanelOpen] = useState(true);
   const [workspaceReady, setWorkspaceReady] = useState(false);
   const { toast, notify } = useToast();
   const [messages, setMessages] = usePersistentMessages(api, workspaceReady, notify);

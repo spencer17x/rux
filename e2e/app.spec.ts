@@ -30,11 +30,16 @@ test.afterEach(async () => {
 });
 
 test("creates the initial standalone conversation and opens typed settings", async () => {
+  await expect(page.locator("aside.sidebar")).toBeVisible();
+  const sidebarToggle = page.getByRole("button", { name: "切换左侧面板" });
+  await expect(sidebarToggle).toHaveAttribute("aria-pressed", "true");
+  await sidebarToggle.click();
   await expect(page.locator("aside.sidebar")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "切换左侧面板" })).toHaveAttribute("aria-pressed", "false");
+  await expect(sidebarToggle).toHaveAttribute("aria-pressed", "false");
+  await sidebarToggle.click();
+  await expect(page.locator("aside.sidebar")).toBeVisible();
   await expect(page.getByRole("button", { name: "切换底部面板" })).toHaveAttribute("aria-pressed", "false");
   await expect(page.getByRole("button", { name: "切换右侧面板" })).toHaveAttribute("aria-pressed", "false");
-  await page.getByRole("button", { name: "切换左侧面板" }).click();
   await expect(page.getByText("独立会话", { exact: true }).first()).toBeVisible();
   await page.getByRole("textbox", { name: "消息" }).fill("Create standalone draft");
   await page.getByRole("button", { name: "发送" }).click();
@@ -126,7 +131,6 @@ test("deletes a conversation from the sidebar action menu", async () => {
   await page.getByRole("textbox", { name: "消息" }).fill("Create deletable standalone");
   await page.getByRole("button", { name: "发送" }).click();
   await expect(page.getByText("RUX_E2E_AGENT_OK", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "切换左侧面板" }).click();
   await page.getByRole("button", { name: /会话操作 未命名会话/ }).last().click();
   await page.getByRole("menuitem", { name: "重命名会话" }).click();
   await page.getByRole("textbox", { name: "会话名称" }).fill("Delete me");
@@ -145,7 +149,6 @@ test("keeps unsent standalone drafts isolated and restores them after restart", 
   await page.getByRole("button", { name: "发送" }).click();
   await expect(page.getByText("RUX_E2E_AGENT_OK", { exact: true })).toBeVisible();
   await expect(page.getByText("已完成", { exact: true }).last()).toBeVisible();
-  await page.getByRole("button", { name: "切换左侧面板" }).click();
   const persistedThread = page.getByRole("button", { name: "未命名会话", exact: true });
   await expect(persistedThread).toBeVisible();
 
@@ -160,7 +163,6 @@ test("keeps unsent standalone drafts isolated and restores them after restart", 
   await page.waitForTimeout(100);
   await application.close();
   await launchApplication();
-  await page.getByRole("button", { name: "切换左侧面板" }).click();
   await page.getByRole("button", { name: "新建独立会话" }).click();
   await expect(page.getByRole("textbox", { name: "消息" })).toHaveValue("Unsent per-thread draft");
 });
@@ -216,7 +218,6 @@ test("restores a SQLite project and executes a command through the PTY terminal"
   await page.screenshot({ path: testInfo.outputPath("git-review.png") });
   await page.getByRole("button", { name: "返回对话" }).click();
   await expect(page.getByRole("textbox", { name: "消息" })).toBeVisible();
-  await page.getByRole("button", { name: "切换左侧面板" }).click();
   const projectMenuTrigger = page.getByRole("button", { name: "项目操作 project" });
   await projectMenuTrigger.click();
   await expect(page.getByRole("menu")).toBeVisible();
@@ -255,7 +256,6 @@ test("restores a SQLite project and executes a command through the PTY terminal"
 
 test("keeps composer controls within a narrow desktop pane and dismisses menus", async () => {
   await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(900, 650));
-  await page.getByRole("button", { name: "切换左侧面板" }).click();
   const controls = page.locator(".composer-controls");
   const sizes = await controls.evaluate((element) => {
     const parent = element.getBoundingClientRect();
@@ -320,7 +320,6 @@ test("pastes and drops images, retains their files, and sends without text", asy
 });
 
 test("dismisses the account menu outside or with Escape and keeps settings usable", async () => {
-  await page.getByRole("button", { name: "切换左侧面板" }).click();
   const trigger = page.locator(".profile-row");
   const popover = page.locator(".profile-popover");
   await trigger.click();
@@ -349,7 +348,6 @@ test("dismisses the account menu outside or with Escape and keeps settings usabl
 });
 
 test("offers draft starters without sending and keeps the compact tools usable", async ({}, testInfo) => {
-  await page.getByRole("button", { name: "切换左侧面板", exact: true }).click();
   await expect(page.getByRole("heading", { name: "想构建些什么？" })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("workbench-empty.png") });
   await page.getByRole("button", { name: "修复问题", exact: true }).click();
@@ -413,7 +411,6 @@ test("commits model effort on release, keeps the picker open, and preserves outs
 });
 
 test("resizes and remembers sidebar width with the measured desktop dimensions", async () => {
-  await page.getByRole("button", { name: "切换左侧面板", exact: true }).click();
   const separator = page.getByRole("separator", { name: "调整侧栏宽度", exact: true });
   await expect(separator).toHaveAttribute("aria-valuenow", "275");
   const dimensions = await page.evaluate(() => ({ header: document.querySelector(".topbar")!.getBoundingClientRect().height, content: document.querySelector(".aui-thread-root")!.getBoundingClientRect().width }));
@@ -430,6 +427,5 @@ test("resizes and remembers sidebar width with the measured desktop dimensions",
   await expect(separator).toHaveAttribute("aria-valuenow", "330");
   await application.close();
   await launchApplication();
-  await page.getByRole("button", { name: "切换左侧面板", exact: true }).click();
   await expect(page.getByRole("separator", { name: "调整侧栏宽度", exact: true })).toHaveAttribute("aria-valuenow", "330");
 });

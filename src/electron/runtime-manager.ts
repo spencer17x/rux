@@ -37,7 +37,7 @@ export type RuntimeCommand = {
   env: Record<string, string>;
 };
 
-const CODEX_VERSION = "0.149.1";
+const CODEX_VERSION = "0.154.0";
 const CLAUDE_VERSION = "0.3.245";
 const PI_VERSION = "0.84.3";
 
