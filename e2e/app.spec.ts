@@ -16,6 +16,9 @@ async function launchApplication() {
   });
   page = await application.firstWindow();
   await page.waitForLoadState("domcontentloaded");
+  // Hosted macOS displays can clamp native windows to 1024px. Test the renderer
+  // at a known viewport instead of depending on the host's physical work area.
+  await page.setViewportSize({ width: 1440, height: 900 });
 }
 
 test.beforeEach(async () => {
@@ -30,6 +33,18 @@ test.afterEach(async () => {
 });
 
 test("creates the initial standalone conversation and opens typed settings", async () => {
+  // Keep this turn running until the permission assertion has completed.
+  // A fixed-duration mock races UI actions on a slower CI runner.
+  const heldRuns = await application.evaluateHandle(({ ipcMain }) => {
+    const runs = new Map<string, Electron.WebContents>();
+    ipcMain.removeHandler("agent:start");
+    ipcMain.handle("agent:start", (event, input) => {
+      runs.set(input.runId, event.sender);
+      event.sender.send("agent:event", { runId: input.runId, type: "text-delta", itemId: `text-${input.runId}`, delta: "RUX_E2E_AGENT_OK" });
+      return { runId: input.runId, threadId: "e2e-thread", turnId: "e2e-turn" };
+    });
+    return runs;
+  });
   await expect(page.locator("aside.sidebar")).toBeVisible();
   await expect(page.getByRole("button", { name: "发送", exact: true })).toBeDisabled();
   const sidebarToggle = page.getByRole("button", { name: "切换左侧面板" });
@@ -49,6 +64,12 @@ test("creates the initial standalone conversation and opens typed settings", asy
   await page.getByRole("button", { name: "操作批准方式" }).click();
   await page.getByRole("button", { name: /^请求批准 / }).click();
   await expect(page.locator(".toast")).toContainText("请先停止当前任务");
+  await heldRuns.evaluate((runs) => {
+    if (runs.size !== 1) throw new Error("Expected one held Agent turn");
+    for (const [runId, sender] of runs) sender.send("agent:event", { runId, type: "turn-completed", status: "completed", turnId: "e2e-turn" });
+    runs.clear();
+  });
+  await heldRuns.dispose();
   await expect(page.getByText("RUX_E2E_AGENT_OK", { exact: true }).last()).toBeVisible();
   await expect(page.getByText("进行中", { exact: true })).toBeHidden();
   await expect(page.getByText("Rux 正在继续处理", { exact: true })).toBeHidden();
@@ -257,7 +278,7 @@ test("restores a SQLite project and executes a command through the PTY terminal"
 
 
 test("keeps composer controls within a narrow desktop pane and dismisses menus", async () => {
-  await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(900, 650));
+  await page.setViewportSize({ width: 900, height: 650 });
   const controls = page.locator(".composer-controls");
   const sizes = await controls.evaluate((element) => {
     const parent = element.getBoundingClientRect();
@@ -333,6 +354,8 @@ test("pastes and drops images, previews drafts and sent images, and retains them
   await expect(page.getByRole("button", { name: "移除附件 picked.png" })).toBeVisible();
   await page.getByRole("textbox", { name: "消息", exact: true }).press("Enter");
   await expect(page.getByText("RUX_E2E_AGENT_OK", { exact: true })).toHaveCount(2);
+  await expect(page.getByLabel("本轮状态：已完成", { exact: true })).toHaveCount(2);
+  await expect(page.getByRole("button", { name: "发送", exact: true })).toBeVisible();
   await expect.poll(async () => page.evaluate(async () => {
     const messages = await window.rux.messages.list() as Record<string, Array<{ attachments?: string[] }>>;
     return Object.values(messages).flat().some((message) => message.attachments?.some((path) => path.endsWith("picked.png")));
@@ -400,14 +423,22 @@ test("commits model effort on release, keeps the picker open, and preserves outs
   await trigger.click();
   const picker = page.getByRole("dialog", { name: "切换模型、推理强度和速度", exact: true });
   const range = picker.getByRole("slider", { name: "推理强度", exact: true });
+  const pressEffortKey = async (key: string) => {
+    // settings.get() can observe the disk write before React leaves its saving
+    // state. locator.press() does not wait for a disabled range to become enabled.
+    await expect(picker).toHaveAttribute("aria-busy", "false");
+    await expect(range).toBeEnabled();
+    await range.press(key);
+  };
   await expect(range).toBeVisible();
   const efforts = await page.evaluate(async () => {
     const result = await window.rux.models.list({ agentId: "codex" });
     return (result.models[0] as { supportedReasoningEfforts: Array<{ reasoningEffort: string }> }).supportedReasoningEfforts.map(item => item.reasoningEffort);
   });
-  await range.press("End");
+  await pressEffortKey("End");
   await expect.poll(async () => page.evaluate(async () => (await window.rux.settings.get()).reasoning)).toBe(efforts.at(-1));
   await expect(picker).toBeVisible();
+  await expect(range).toBeEnabled();
   const box = await range.boundingBox();
   if (!box) throw new Error("Missing range bounds");
   await page.mouse.move(box.x + box.width - 7, box.y + box.height / 2);
@@ -438,12 +469,12 @@ test("commits model effort on release, keeps the picker open, and preserves outs
   await expect(range).toHaveAttribute("max", "5");
   // The test Astra catalog has no speed tier; do not offer an unsupported toggle.
   await expect(fastMode).toHaveCount(0);
-  await range.press("End");
+  await pressEffortKey("End");
   await expect.poll(async () => page.evaluate(async () => (await window.rux.settings.get()).reasoning)).toBe("ultra");
   await expect(picker.getByText("更快消耗使用额度", { exact: true })).toBeVisible();
-  await range.press("ArrowLeft");
+  await pressEffortKey("ArrowLeft");
   await expect.poll(async () => page.evaluate(async () => (await window.rux.settings.get()).reasoning)).toBe("max");
-  await range.press("ArrowLeft");
+  await pressEffortKey("ArrowLeft");
   await expect.poll(async () => page.evaluate(async () => (await window.rux.settings.get()).reasoning)).toBe("xhigh");
   await expect(range).toHaveAttribute("aria-valuetext", "极高");
   await page.screenshot({ path: testInfo.outputPath("model-picker-capsule-astra.png") });
