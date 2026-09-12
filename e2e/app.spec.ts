@@ -4,6 +4,7 @@ import { writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { StateDatabase } from "../src/electron/state-database";
 
 let application: ElectronApplication;
 let page: Page;
@@ -19,6 +20,21 @@ async function launchApplication() {
   // Hosted macOS displays can clamp native windows to 1024px. Test the renderer
   // at a known viewport instead of depending on the host's physical work area.
   await page.setViewportSize({ width: 1440, height: 900 });
+}
+
+async function restartWithMessages(messages: Record<string, unknown[]>) {
+  // Seed only after the renderer has exited: its pending startup/close snapshot
+  // can otherwise overwrite messages inserted directly through IPC.
+  await application.close();
+  const database = new StateDatabase(join(testRoot, "user-data", "rux.sqlite"));
+  try {
+    database.saveTurnInfo(messages);
+    database.saveMessages(messages);
+    expect(database.loadMessages()).toEqual(messages);
+  } finally { database.close(); }
+  await launchApplication();
+  await expect(page.getByRole("textbox", { name: "消息", exact: true })).toBeVisible();
+  expect(await page.evaluate(() => window.rux.messages.list())).toMatchObject(messages);
 }
 
 test.beforeEach(async () => {
@@ -191,12 +207,12 @@ test("keeps unsent standalone drafts isolated and restores them after restart", 
 });
 
 test("navigates between completed turns from the conversation sticky", async () => {
-  await page.evaluate(async () => {
-    const thread = await (window as any).rux.projects.addStandalone({ title: "Sticky navigation" });
+  const messages = await page.evaluate(async () => {
+    const thread = await window.rux.projects.addStandalone({ title: "Sticky navigation" });
     const messages = Array.from({ length: 5 }, (_, index) => [{ id: `sticky-user-${index}`, role: "user", text: `Sticky question ${index + 1}`, parts: [{ type: "text", text: `Sticky question ${index + 1}` }] }, { id: `sticky-assistant-${index}`, role: "assistant", status: "complete", parts: [{ type: "text", text: `Completed turn ${index + 1}.\n\n${"Long response content. ".repeat(18)}` }] }]).flat();
-    await (window as any).rux.messages.save({ [thread.id]: messages });
+    return { [thread.id]: messages };
   });
-  await application.close(); await launchApplication();
+  await restartWithMessages(messages);
   const currentTurn = page.getByRole("button", { name: /返回当前轮问题/ }); const previous = page.getByRole("button", { name: "切换到上一轮" }); const next = page.getByRole("button", { name: "切换到下一轮" });
   await expect(currentTurn).toBeVisible(); const initialLabel = await currentTurn.getAttribute("aria-label");
   await previous.click(); await page.waitForTimeout(800); expect(await currentTurn.getAttribute("aria-label")).not.toBe(initialLabel);
@@ -205,6 +221,7 @@ test("navigates between completed turns from the conversation sticky", async () 
   await expect(previous).toBeDisabled(); await expect(next).toBeEnabled();
   for (let index = 0; index < 5 && await next.isEnabled(); index += 1) { await next.click(); await page.waitForTimeout(300); }
   await expect(next).toBeDisabled(); await expect(previous).toBeEnabled();
+  expect(await page.evaluate(() => window.rux.messages.list())).toMatchObject(messages);
 });
 
 test("restores a SQLite project and executes a command through the PTY terminal", async ({}, testInfo) => {
@@ -544,27 +561,24 @@ test("preserves each turn's model, effort and usage after switching models and r
 
 
 test("renders the selected signature layout with readable turn metadata", async ({}, testInfo) => {
-  await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1440, 1024));
   const projectPath = join(testRoot, "rux");
   mkdirSync(projectPath);
   execFileSync("git", ["init", "-b", "main"], { cwd: projectPath });
-  await page.evaluate(async (path) => {
+  const messages = await page.evaluate(async (path) => {
     const project = await window.rux.projects.import({ path, createThread: true }) as { id: string; threads: Array<{ id: string }> };
     const threadId = project.threads[0].id;
     await window.rux.threads.update({ type: "project", projectId: project.id, threadId, title: "优化对话界面" });
     await window.rux.projects.addThread({ projectId: project.id, title: "对话历史设计" });
     await window.rux.projects.addThread({ projectId: project.id, title: "模型选择体验" });
     await window.rux.settings.save({ model: "gpt-6-astra", reasoning: "xhigh", conversationSticky: false });
-    await window.rux.messages.save({ [threadId]: [
+    return { [threadId]: [
       { id: "visual-u1", role: "user", parts: [{ type: "text", text: "优化项目栏和常用组件。" }] },
       { id: "visual-a1", role: "assistant", agentId: "codex", status: "complete", parts: [{ type: "text", text: "项目与会话的层级已整理，图标、按钮和菜单采用统一规范。\n\n左侧项目栏默认展开，文件明细按需查看。" }, { type: "tool-call", toolName: "fileChange", toolCallId: "visual-files", args: { changes: [{ path: "src/navigation/Sidebar.tsx" }, { path: "src/components/IconButton.tsx" }, { path: "src/workbench-theme.css" }] }, result: { status: "completed" } }], turnInfo: { agentId: "codex", model: "gpt-5.6-sol", reasoning: "high", elapsedMs: 18400, usage: { inputTokens: 4980, outputTokens: 1340, totalTokens: 6320 } } },
       { id: "visual-u2", role: "user", parts: [{ type: "text", text: "每轮显示模型和实际消耗，但不要影响阅读。" }] },
       { id: "visual-a2", role: "assistant", agentId: "codex", status: "complete", parts: [{ type: "text", text: "已将运行信息压缩为一行，保留在每轮回复末尾。\n\n需要核对时可展开明细，其余时间保持简洁。" }], turnInfo: { agentId: "codex", model: "gpt-6-astra", reasoning: "xhigh", elapsedMs: 42600, usage: { inputTokens: 9860, outputTokens: 2620, cachedInputTokens: 6144, reasoningOutputTokens: 1820, totalTokens: 12480 } } },
-    ] });
+    ] };
   }, projectPath);
-  await application.close();
-  await launchApplication();
-  await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1440, 1024));
+  await restartWithMessages(messages);
   await page.setViewportSize({ width: 1440, height: 1024 });
   expect(await page.evaluate(() => innerHeight)).toBe(1024);
   await expect(page.getByLabel("本轮运行信息", { exact: true })).toHaveCount(2);
@@ -574,12 +588,12 @@ test("renders the selected signature layout with readable turn metadata", async 
   await expect(page.locator(".turn-file-changes")).not.toHaveAttribute("open", "");
   await expect.poll(async () => page.evaluate(() => document.getAnimations().filter(animation => animation.playState === "running" && animation.effect?.getTiming().iterations !== Infinity).length)).toBe(0);
   await page.screenshot({ path: testInfo.outputPath("signature-desktop.png") });
-  await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(900, 650));
   await page.setViewportSize({ width: 900, height: 650 });
   await page.getByRole("button", { name: "本轮 Token 明细：12,480", exact: true }).scrollIntoViewIfNeeded();
   const overflow = await page.locator(".assistant-turn-footer").evaluateAll(elements => elements.some(element => element.scrollWidth > element.clientWidth + 1));
   expect(overflow).toBe(false);
   await page.screenshot({ path: testInfo.outputPath("signature-narrow.png") });
+  expect(await page.evaluate(() => window.rux.messages.list())).toMatchObject(messages);
 });
 
 
