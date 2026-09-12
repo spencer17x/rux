@@ -1,0 +1,21 @@
+.attachment-list { display: flex; align-items: flex-start; gap: 8px; margin: 0; padding: 10px 12px 6px; overflow-x: auto; }
+.attachment-item { position: relative; flex: 0 0 auto; color: var(--text); }
+.attachment-item .attachment-open { display: flex; flex-direction: column; width: 112px; height: auto; padding: 0; overflow: hidden; border: 1px solid var(--border-strong); border-radius: var(--rux-radius-control); background: var(--surface); text-align: left; }
+.attachment-thumbnail { display: grid; place-items: center; width: 100%; height: 76px; background: var(--surface-muted); }
+.attachment-thumbnail img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.attachment-name { width: 100%; padding: 6px 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: var(--ui-caption); line-height: 16px; }
+.attachment-image-state { display: flex; flex-direction: column; align-items: center; gap: 6px; color: var(--subtle); }
+.attachment-image-state small { font-size: var(--ui-caption); }
+.attachment-item .attachment-remove { display: inline-flex; width: 24px; height: 24px; min-height: 24px; border-radius: 50%; }
+.attachment-image .attachment-remove { position: absolute; top: 4px; right: 4px; background: var(--surface); box-shadow: 0 1px 4px #0002; }
+.attachment-file { display: inline-flex; align-items: center; gap: 6px; max-width: 250px; padding: 3px 4px 3px 8px; border: 1px solid var(--border); border-radius: var(--rux-radius-control); background: var(--surface-muted); }
+.attachment-file-name { display: inline-flex; min-width: 0; align-items: center; gap: 6px; padding-block: 3px; font-size: var(--ui-caption); color: var(--muted); }
+.attachment-file-name > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.aui-user-stack > .attachment-list { max-width: 100%; justify-content: flex-end; flex-wrap: wrap; padding-inline: 0; }
+.ui-modal.attachment-preview-modal { display: flex; flex-direction: column; width: min(960px, calc(100vw - 40px)); max-height: calc(100vh - 40px); padding: 0; }
+.attachment-preview-header { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 16px; border-bottom: 1px solid var(--border); }
+.attachment-preview-header strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--ui-font-size, 14px); font-weight: 500; }
+.attachment-preview-body { display: flex; min-height: 180px; min-width: 0; align-items: center; justify-content: center; padding: 16px; overflow: auto; }
+.attachment-preview-body > img { display: block; max-width: 100%; max-height: calc(100vh - 140px); object-fit: contain; }
+.attachment-preview-state { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 24px; color: var(--muted); font-size: var(--ui-small); }
+.attachment-preview-state p { margin: 0; text-align: center; }

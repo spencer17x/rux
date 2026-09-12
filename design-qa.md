@@ -91,3 +91,51 @@ final result: passed
 - 类型检查、Web/desktop 构建、`pnpm package`、`git diff --check` 通过。桌面包仍为本地未签名 arm64 包。
 
 没有剩余的阻断性交互或布局问题。组件展示页仅在开发模式开放；历史独立演示和原生系统窗口属于明确保留的边界。
+
+## 2026-09-12 — 模型选择器与胶囊滑杆
+
+**Visual target**
+
+- Source visual truth: `artifacts/model-picker-capsule/selected-design.png`，用户确认的第 3 版布局与指定胶囊滑杆的合并稿。
+- Slider reference: `artifacts/model-picker-capsule/slider-reference.png`。
+- Implementation: `http://127.0.0.1:5173/?preview=signature`，真实工作台组件与浏览器预览数据。
+- State: GPT-6 Astra，极高（六档中的第 4 档），快速模式关闭，模型浮层展开。
+
+**Evidence and normalization**
+
+- Source image: 1444 × 1089 pixels。源图浮层区域约为 `(179, 174, 1100, 720)`；以约 0.325 的比例归一到 358 CSS px 宽，不比较源图外围的展示留白。
+- Desktop viewport / screenshot: 1280 × 720 CSS px / 1280 × 720 pixels。最终浮层内容 356 × 234 CSS px，含外层边框 358 × 236 CSS px，位置 `(815, 394)`。
+- Narrow viewport / screenshot: 900 × 650 CSS px / 900 × 650 pixels。内容位置 `(436, 325)`，356 × 234 CSS px；没有水平溢出，输入工具栏及发送按钮可见。
+- Full-view evidence: `artifacts/model-picker-capsule/workbench-desktop-final.jpg`、`workbench-narrow.jpg`。
+- Focused, combined comparison: `artifacts/model-picker-capsule/comparison-final.jpg`。`comparison.html` 使用原始源图和实际完整截图，在相同浮层宽度下通过 CSS 裁切并排展示；没有用重新绘制的 UI 替代截图。
+- 浏览器截图按 1 CSS px 对应 1 输出像素记录；JPEG 截图与源 PNG 在细小文字的抗锯齿和压缩上有轻微差别，不据此判断字体错误。临时视口设置已恢复。
+
+**Comparison history**
+
+1. 首轮 `comparison-initial.jpg`：浮层包含边框高 244 px，比归一后的确认稿约高 10 px。底部间距偏松，记录为 P2 布局节奏差异。
+2. 修正 `.model-picker-footer` 顶部间距 20 → 16 px，浮层底部内边距 16 → 12 px。
+3. 重新截图并在 `comparison-final.jpg` 并排复查：含边框高 236 px；标题、思考强度、轨道、标签和底部操作保持同一对齐关系。无剩余 P0/P1/P2 问题。
+
+**Required fidelity surfaces**
+
+- Fonts / typography: 复用系统中文字体与 Rux 字号；模型标题 15 px / 600，正文 14 px，档位说明 12 px。层级和换行符合确认稿；长模型名允许省略并提供完整 title，模型清单保留完整名称。源图模型标题约 16 px，与现有产品字号的约 1 px 差异属于 P3。
+- Spacing / layout: 使用统一 358 px 浮层宽度与 12 px 圆角。24 px 胶囊轨道、28 px 白色圆滑块；刻度和标签按同一滑块中心轨迹定位。保留顶部模型切换和底部快速开关 / 恢复默认。
+- Colors / tokens: 轨道蓝色 `--rux-slider-accent: #3b80f7`、未填充轨道 `#e9e9e9`、白色滑块，与用户指定滑杆一致；不随最高档变成另一套色系。其余使用既有中性色、边框与阴影 token。
+- Image / icon fidelity: CPU、闪电、箭头来自统一 Phosphor 图标入口。该浮层没有需要生成的装饰位图；轨道与刻度是可操作的原生 range 控件视觉层。
+- Copy / content: 保留 GPT-6 Astra 完整名称，六档为轻度 / 中 / 高 / 极高 / 最高 / Ultra；“切换”“快速模式”“恢复默认”均可操作。移除重复的“全部模型”入口。模型与档位来自当前 Agent 目录；无速度能力时隐藏开关，单档模型保留不可调说明。
+
+**Interaction and verification**
+
+- `pnpm check:ui`：69 个生产模块边界检查通过。
+- `pnpm test:unit --maxWorkers=2`：109 项通过。
+- `pnpm typecheck`、Web / Electron 构建通过。
+- 原生 Electron E2E：14 项通过。最后微调后，模型滑杆相关用例单独复跑通过。
+- 交互覆盖：拖动中仅预览、松开保存、键盘 Home/End/方向键、模型切换后动态更新档位、无服务档位时隐藏快速开关、Ultra 用量提示、快速模式保存与恢复默认、重新打开后的设置保留、点击外部的焦点保留、Escape 返回触发按钮。
+- 浏览器控制台 error / warn 记录为空。
+- `pnpm package`：arm64 桌面包生成成功（当前本地构建未签名）。没有发起付费模型请求。
+
+**Follow-up polish**
+
+- P3：图片稿字号与系统字体栅格化的轻微差异；以现有 Rux 字号规范为准。
+
+final result: passed

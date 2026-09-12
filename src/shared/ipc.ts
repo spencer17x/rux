@@ -123,3 +123,7 @@ export const imageImportSchema = z.object({
   mimeType: z.enum(["image/png", "image/jpeg", "image/gif", "image/webp"]),
   base64: z.string().min(4).max(13_981_016).regex(/^[A-Za-z0-9+/]*={0,2}$/).refine((value) => value.length % 4 === 0),
 }).strict();
+
+export const imagePreviewSchema = z.object({
+  path: z.string().min(1).max(4096).refine((value) => !value.includes("\0"), "文件路径包含无效字符"),
+}).strict();

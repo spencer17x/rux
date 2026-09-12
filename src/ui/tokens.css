@@ -36,11 +36,14 @@
   --rux-space-8: 32px;
   --rux-radius-control: 8px;
   --rux-radius-popup: 12px;
+  --rux-popup-xs: 160px;
   --rux-popup-sm: 254px;
   --rux-popup-md: 320px;
   --rux-popup-lg: 358px;
   --rux-radius-panel: 16px;
   --rux-focus: #339cff;
+  --rux-slider-accent: #3b80f7;
+  --rux-slider-track: #e9e9e9;
   --rux-primary: #1a1c1f;
   --rux-primary-hover: #30343a;
   --rux-danger: #ba2623;

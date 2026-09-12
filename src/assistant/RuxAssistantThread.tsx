@@ -25,7 +25,6 @@ import {
   Globe,
   MagnifyingGlass,
   Microphone,
-  Paperclip,
   PencilSimple,
   Plus,
   Robot,
@@ -35,7 +34,6 @@ import {
   Wrench,
   Sparkle,
   GitDiff,
-  X,
 } from "../ui/icons";
 import type { RuxMessage } from "../renderer/messages";
 import { adjacentStickyTurn, completedStickyTurns } from "../renderer/messages";
@@ -43,6 +41,7 @@ import { messageTargetFromHref } from "../renderer/message-targets";
 import type { AgentId } from "../renderer/types";
 import FloatingPopover from "../components/FloatingPopover";
 import PermissionModeIcon from "../components/PermissionModeIcon";
+import AttachmentList from "./AttachmentList";
 import TurnSignature, { turnModelName } from "./TurnSignature";
 import type { TurnInfo } from "../shared/turn-info";
 
@@ -194,7 +193,7 @@ function UserMessage() {
   const messageText = useAuiState((state) => state.message.content.filter((part) => part.type === "text").map((part) => part.text).join("\n"));
   return (
     <MessagePrimitive.Root className="aui-message aui-user-message">
-      <div className="aui-user-stack"><div className="aui-user-bubble"><MessagePrimitive.Parts components={{ Text: UserText }} /></div>{attachments?.length ? <div className="attachment-list" aria-label="消息附件">{attachments.map((path) => <span key={path} title={path}><Paperclip size="xs" />{path.split(/[\\/]/).pop()}</span>)}</div> : null}<div className="aui-user-meta"><MessageTimestamp /><ActionBarPrimitive.Root className="aui-user-actions"><ActionBarPrimitive.Copy asChild><IconButton label="复制用户消息" icon="copy" /></ActionBarPrimitive.Copy><IconButton label="编辑用户消息" icon="edit" onClick={() => editMessage(messageText)} /></ActionBarPrimitive.Root></div></div>
+      <div className="aui-user-stack"><div className="aui-user-bubble"><MessagePrimitive.Parts components={{ Text: UserText }} /></div><AttachmentList paths={attachments || []} /><div className="aui-user-meta"><MessageTimestamp /><ActionBarPrimitive.Root className="aui-user-actions"><ActionBarPrimitive.Copy asChild><IconButton label="复制用户消息" icon="copy" /></ActionBarPrimitive.Copy><IconButton label="编辑用户消息" icon="edit" onClick={() => editMessage(messageText)} /></ActionBarPrimitive.Root></div></div>
     </MessagePrimitive.Root>
   );
 }
@@ -287,7 +286,7 @@ function AgentModeSelector({ agent, mode, onMode, open, onToggle, onClose, butto
   return (
     <span className="agent-selector-wrap" data-overlay-scope data-overlay-id="agent-mode">
       <Button variant="plain" ref={buttonRef} type="button" className="composer-menu" aria-label="选择 Agent 模式" onClick={onToggle} aria-expanded={open} aria-haspopup="menu">{current?.label || "默认"}<CaretDown size="xs" /></Button>
-      {open && <FloatingPopover anchorRef={buttonRef} scope="agent-mode" onDismiss={onClose}><ChoiceList className="agent-mode-popover" aria-label="Agent 模式">
+      {open && <FloatingPopover anchorRef={buttonRef} scope="agent-mode" width="xs" onDismiss={onClose}><ChoiceList className="agent-mode-popover" aria-label="Agent 模式">
         {agent.modes.map((item) => <ChoiceItem checked={item.id === current?.id} className={item.id === current?.id ? "is-selected" : ""} key={item.id} onClick={() => { onMode(item.id); onClose(); }}>{item.label}{item.id === current?.id && <Check size="xs" />}</ChoiceItem>)}
       </ChoiceList></FloatingPopover>}
     </span>
@@ -410,7 +409,7 @@ export default function RuxAssistantThread({
           <div className="composer">
             {runtimeProgress?.[selectedAgent] && !["ready", "error"].includes(runtimeProgress[selectedAgent].state) && <div className="runtime-inline-progress"><CircleNotch size="xs" className="spin" /><span>{runtimeProgress[selectedAgent].state === "downloading" ? `正在下载 ${agents.find((agent) => agent.id === selectedAgent)?.name || selectedAgent} 运行时` : "正在验证并安装运行时"}</span><em>{runtimeProgress[selectedAgent].percent || 0}%</em><i><i style={{ width: `${runtimeProgress[selectedAgent].percent || 4}%` }} /></i></div>}
             {runtimeProgress?.[selectedAgent]?.state === "error" && <div className="runtime-inline-progress is-error"><WarningCircle size="xs" /><span>{runtimeProgress[selectedAgent].message || "运行时下载失败"}</span></div>}
-            {showAttachments && attachments.length > 0 && <div className="attachment-list">{attachments.map((path) => <span key={path}><Paperclip size="xs" />{path.split(/[\\/]/).pop()}<Button variant="plain" type="button" aria-label={`移除附件 ${path.split(/[\\/]/).pop()}`} onClick={() => onRemoveAttachment(path)}><X size="xs" /></Button></span>)}</div>}
+            {showAttachments && <AttachmentList paths={attachments} onRemove={onRemoveAttachment} />}
             <ComposerPrimitive.Input className="aui-composer-input" aria-label="消息" placeholder="继续对话…" rows={2} onKeyDownCapture={(event) => {
               if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing || event.keyCode === 229) return;
               if (importingImages || attachments.length) {
@@ -427,7 +426,7 @@ export default function RuxAssistantThread({
               <div className="composer-right">
                 <AgentSelector agents={agents} selectedAgent={selectedAgent} onSelectAgent={onSelectAgent} runtimeProgress={runtimeProgress} open={activeOverlay === "agents"} onToggle={() => onOverlayChange(activeOverlay === "agents" ? null : "agents")} onClose={() => onOverlayChange(null)} buttonRef={agentTrigger} />
                 <AgentModeSelector agent={selectedDefinition} mode={agentMode} onMode={onAgentMode} open={activeOverlay === "agent-mode"} onToggle={() => onOverlayChange(activeOverlay === "agent-mode" ? null : "agent-mode")} onClose={() => onOverlayChange(null)} buttonRef={modeTrigger} />
-                <span className="run-settings-wrap" data-overlay-scope data-overlay-id="run-settings"><Button variant="plain" ref={modelTrigger} type="button" aria-label="切换模型、推理强度和速度" className={`composer-menu run-settings-trigger ${modelOpen ? "is-active" : ""}`} onClick={onToggleModel} aria-expanded={modelOpen} aria-haspopup="dialog"><strong>{turnModelName({ modelLabel })}</strong><span>{reasoningLabel}</span><CaretDown size="xs" /></Button>{modelOpen && <FloatingPopover anchorRef={modelTrigger} scope="run-settings" onDismiss={() => onOverlayChange(null)}>{modelPopover}</FloatingPopover>}</span>
+                <span className="run-settings-wrap" data-overlay-scope data-overlay-id="run-settings"><Button variant="plain" ref={modelTrigger} type="button" aria-label="切换模型、推理强度和速度" className={`composer-menu run-settings-trigger ${modelOpen ? "is-active" : ""}`} onClick={onToggleModel} aria-expanded={modelOpen} aria-haspopup="dialog"><strong>{turnModelName({ modelLabel })}</strong><span>{reasoningLabel}</span><CaretDown size="xs" /></Button>{modelOpen && <FloatingPopover anchorRef={modelTrigger} scope="run-settings" width="lg" onDismiss={() => onOverlayChange(null)}>{modelPopover}</FloatingPopover>}</span>
                 {showVoice && <IconButton label="语音输入" icon="microphone" active={listening} onClick={onVoice} />}
                 <ThreadPrimitive.If running>
                   <ComposerPrimitive.Cancel asChild><IconButton label="停止" icon="stop" iconVariant="solid" variant="primary" size="lg" shape="round" className="send-button stop-button" /></ComposerPrimitive.Cancel>

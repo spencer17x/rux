@@ -35,11 +35,13 @@ import { Button, IconButton, Input, Menu, MenuItem, Modal, Select } from "../ui"
 - 图标尺寸：`xs` 12px、`sm` 16px、`md` 20px、`lg` 24px、`xl` 32px。默认线性 `outline`；选中或状态图标可用 `solid`，强调操作可用 `strong`。
 - `AppIcon name="settings"` 等语义名称用于业务；已有的 `GearSix`、`Copy` 等导出也经过同一个 AppIcon 实现。业务不得直接导入 Phosphor 或传入任意数值尺寸。
 - 品牌标记和两种权限盾牌是有意保留的图片例外，权限图案也通过统一尺寸解析。
+- 分档胶囊滑杆使用 `SteppedSlider`，通过受控 `value`（档位索引）和 `labels` 定义可用档位。原生 range 保留拖动、键盘与焦点行为；刻度和标签与滑块中心对齐。普通连续滑杆仍使用 `Slider`。
 - Select 使用 `value/onValueChange/options`，空值选项由组件统一编码。Switch 和 Checkbox 使用 `checked/onCheckedChange`。
 - 单选 SegmentedControl 的条目使用 Radix 提供的 `radio` 语义，不再按普通按钮查询。
 - 菜单操作使用 `onSelect`。Menu、Popover 管理边界定位、Escape 与外部点击；Modal 管理焦点和背景交互。不要在业务组件里再安装 pointerdown/focusin 监听器。
 - 复合模型选择器的嵌入列表使用 ChoiceList/ChoiceItem；其页面切换仍属于业务逻辑，键盘选择处理集中在组件层。
 - `AnchoredPopover` 用于输入工具栏中互斥的业务浮层。组件层统一处理浮层之间切换、弹窗接管焦点与返回触发按钮。
+- 浮层宽度由 `AnchoredPopover` 统一控制：`xs` 160px 用于模式等短选项，`sm` 254px、`md` 320px、`lg` 358px 用于较丰富的内容。内部列表铺满容器，避免内外两套宽度产生空白。
 - 原生文件选择器、系统确认窗口以及 assistant-ui 的对话输入运行机制保留；它们不伪装成普通组件。
 
 ## 已迁移的界面

@@ -3,7 +3,7 @@ import { Dialog as RadixDialog, DropdownMenu, Popover as RadixPopover, ContextMe
 import { AppIcon } from "./icons";
 
 type Placement = { side?: "top" | "bottom" | "left" | "right"; align?: "start" | "center" | "end" };
-type PopupWidth = "sm" | "md" | "lg";
+type PopupWidth = "xs" | "sm" | "md" | "lg";
 type PopupProps = Placement & { label: string; trigger: ReactElement; children: ReactNode; open?: boolean; onOpenChange?: (open: boolean) => void; className?: string };
 
 // A menu can disappear while it opens a dialog or another picker. Returning

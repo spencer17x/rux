@@ -282,13 +282,22 @@ test("keeps composer controls within a narrow desktop pane and dismisses menus",
   await expect(page.getByRole("dialog", { name: "切换模型、推理强度和速度", exact: true })).toBeHidden();
 });
 
-test("pastes and drops images, retains their files, and sends without text", async () => {
+test("pastes and drops images, previews drafts and sent images, and retains them after restart", async ({}, testInfo) => {
   const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=";
   const picked = join(testRoot, "picked.png");
   writeFileSync(picked, Buffer.from(png, "base64"));
   await application.evaluate(({ dialog }, path) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [path] }); }, picked);
   await page.getByRole("button", { name: "添加文件", exact: true }).click();
   await expect(page.getByRole("button", { name: "移除附件 picked.png" })).toBeVisible();
+  const pickedPreview = page.getByRole("button", { name: "预览图片 picked.png", exact: true });
+  await expect.poll(async () => pickedPreview.locator("img").evaluate((image: HTMLImageElement) => image.naturalWidth)).toBe(1);
+  await pickedPreview.click();
+  const preview = page.getByRole("dialog", { name: "图片预览", exact: true });
+  await expect(preview).toBeVisible();
+  await expect.poll(async () => preview.getByRole("img").evaluate((image: HTMLImageElement) => image.naturalWidth)).toBe(1);
+  await page.keyboard.press("Escape");
+  await expect(preview).toBeHidden();
+  await expect(pickedPreview).toBeFocused();
   await page.getByRole("button", { name: "移除附件 picked.png" }).click();
   await page.getByRole("textbox", { name: "消息", exact: true }).evaluate((element, data) => {
     const file = new File([Uint8Array.from(atob(data), (char) => char.charCodeAt(0))], "pasted.png", { type: "image/png" });
@@ -296,12 +305,14 @@ test("pastes and drops images, retains their files, and sends without text", asy
     element.dispatchEvent(new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true }));
   }, png);
   await expect(page.getByRole("button", { name: "移除附件 pasted.png" })).toBeVisible();
+  await expect.poll(async () => page.getByRole("img", { name: "图片附件 pasted.png", exact: true }).evaluate((image: HTMLImageElement) => image.naturalWidth)).toBe(1);
   await page.locator(".composer").evaluate((element, data) => {
     const file = new File([Uint8Array.from(atob(data), (char) => char.charCodeAt(0))], "dropped.png", { type: "image/png" });
     const dataTransfer = new DataTransfer(); dataTransfer.items.add(file);
     element.dispatchEvent(new DragEvent("drop", { dataTransfer, bubbles: true, cancelable: true }));
   }, png);
   await expect(page.getByRole("button", { name: "移除附件 dropped.png" })).toBeVisible();
+  await expect.poll(async () => page.getByRole("img", { name: "图片附件 dropped.png", exact: true }).evaluate((image: HTMLImageElement) => image.naturalWidth)).toBe(1);
   await page.getByRole("button", { name: "移除附件 pasted.png" }).click();
   await expect(page.getByRole("button", { name: "移除附件 pasted.png" })).toHaveCount(0);
   await expect(page.getByRole("textbox", { name: "消息", exact: true })).toHaveValue("");
@@ -310,6 +321,9 @@ test("pastes and drops images, retains their files, and sends without text", asy
   await expect(page.getByText("RUX_E2E_AGENT_OK", { exact: true }).last()).toBeVisible();
   await expect(page.getByRole("button", { name: "移除附件 dropped.png" })).toHaveCount(0);
   await expect(page.getByLabel("消息附件")).toContainText("dropped.png");
+  await page.getByLabel("消息附件").getByRole("button", { name: "预览图片 dropped.png", exact: true }).click();
+  await expect.poll(async () => preview.getByRole("img").evaluate((image: HTMLImageElement) => image.naturalWidth)).toBe(1);
+  await page.getByRole("button", { name: "关闭图片预览", exact: true }).click();
   await expect.poll(async () => page.evaluate(async () => {
     const all = await window.rux.messages.list() as Record<string, Array<{ role: string; attachments?: string[] }>>;
     return Object.values(all).flat().find(message => message.role === "user")?.attachments?.[0] || "";
@@ -319,6 +333,21 @@ test("pastes and drops images, retains their files, and sends without text", asy
   await expect(page.getByRole("button", { name: "移除附件 picked.png" })).toBeVisible();
   await page.getByRole("textbox", { name: "消息", exact: true }).press("Enter");
   await expect(page.getByText("RUX_E2E_AGENT_OK", { exact: true })).toHaveCount(2);
+  await expect.poll(async () => page.evaluate(async () => {
+    const messages = await window.rux.messages.list() as Record<string, Array<{ attachments?: string[] }>>;
+    return Object.values(messages).flat().some((message) => message.attachments?.some((path) => path.endsWith("picked.png")));
+  })).toBe(true);
+  await application.close();
+  rmSync(picked);
+  await launchApplication();
+  await page.getByRole("button", { name: "预览图片 dropped.png", exact: true }).click();
+  await expect.poll(async () => page.getByRole("dialog", { name: "图片预览", exact: true }).getByRole("img").evaluate((image: HTMLImageElement) => image.naturalWidth)).toBe(1);
+  await page.keyboard.press("Escape");
+  // File-picker attachments can disappear outside Rux; keep an actionable error state.
+  await page.getByRole("button", { name: "预览图片 picked.png", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "图片预览", exact: true })).toContainText("图片文件不存在或无法读取，请重新添加");
+  await page.getByRole("button", { name: "关闭图片预览", exact: true }).click();
+  await page.screenshot({ path: testInfo.outputPath("attachment-preview-states.png") });
 });
 
 test("dismisses the account menu outside or with Escape and keeps settings usable", async () => {
@@ -397,17 +426,32 @@ test("commits model effort on release, keeps the picker open, and preserves outs
     return Boolean(menu && anchor && menu.y >= 8 && menu.y + menu.height <= anchor.y - 5);
   }).toBe(true);
   await page.screenshot({ path: testInfo.outputPath("model-picker-26903.png") });
-  const fastMode = picker.getByRole("button", { name: "快速模式", exact: true });
+  const fastMode = picker.getByRole("switch", { name: "快速模式", exact: true });
   await fastMode.click();
-  await expect(fastMode).toHaveAttribute("aria-pressed", "true");
+  await expect(fastMode).toHaveAttribute("aria-checked", "true");
   await picker.getByRole("button", { name: "恢复默认模型设置", exact: true }).click();
-  await expect(fastMode).toHaveAttribute("aria-pressed", "false");
+  await expect(fastMode).toHaveAttribute("aria-checked", "false");
   await expect.poll(async () => page.evaluate(async () => (await window.rux.settings.get()).reasoning)).toBe("medium");
   await expect(picker).toBeVisible();
+  await picker.getByRole("button", { name: "选择模型", exact: true }).click();
+  await picker.getByRole("menuitemradio", { name: "GPT-6 Astra", exact: true }).click();
+  await expect(range).toHaveAttribute("max", "5");
+  // The test Astra catalog has no speed tier; do not offer an unsupported toggle.
+  await expect(fastMode).toHaveCount(0);
+  await range.press("End");
+  await expect.poll(async () => page.evaluate(async () => (await window.rux.settings.get()).reasoning)).toBe("ultra");
+  await expect(picker.getByText("更快消耗使用额度", { exact: true })).toBeVisible();
+  await range.press("ArrowLeft");
+  await expect.poll(async () => page.evaluate(async () => (await window.rux.settings.get()).reasoning)).toBe("max");
+  await range.press("ArrowLeft");
+  await expect.poll(async () => page.evaluate(async () => (await window.rux.settings.get()).reasoning)).toBe("xhigh");
+  await expect(range).toHaveAttribute("aria-valuetext", "极高");
+  await page.screenshot({ path: testInfo.outputPath("model-picker-capsule-astra.png") });
   await page.getByRole("textbox", { name: "消息", exact: true }).click();
   await expect(picker).toBeHidden();
   await expect(page.getByRole("textbox", { name: "消息", exact: true })).toBeFocused();
   await trigger.click();
+  await expect(range).toHaveAttribute("aria-valuetext", "极高");
   await page.keyboard.press("Escape");
   await expect(trigger).toBeFocused();
 });
@@ -443,7 +487,7 @@ test("preserves each turn's model, effort and usage after switching models and r
   const firstSignature = (await signatures.first().textContent())!;
   await page.getByRole("button", { name: "切换模型、推理强度和速度", exact: true }).click();
   await page.getByRole("button", { name: "选择模型", exact: true }).click();
-  await page.getByRole("menuitemradio", { name: "6 Astra", exact: true }).click();
+  await page.getByRole("menuitemradio", { name: "GPT-6 Astra", exact: true }).click();
   await page.keyboard.press("Escape");
   await message.fill("Second metadata turn");
   await page.getByRole("button", { name: "发送", exact: true }).click();

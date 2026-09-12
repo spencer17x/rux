@@ -12,6 +12,27 @@ const noopOff = () => () => {};
 const previewListeners = new Set<(event: any) => void>();
 const previewRuns = new Map<string, number[]>();
 const emitPreview = (event: any) => { for (const listener of previewListeners) listener(event); };
+const previewImages = new Map<string, string>();
+function storePreviewImage(name: string, dataUrl: string): string {
+  const path = `/preview-attachments/${crypto.randomUUID()}/${name}`;
+  previewImages.set(path, dataUrl);
+  return path;
+}
+function choosePreviewFiles(): Promise<string[]> {
+  return new Promise((resolve, reject) => {
+    const input = document.createElement("input");
+    input.type = "file"; input.multiple = true;
+    input.oncancel = () => resolve([]);
+    input.onchange = () => {
+      Promise.all(Array.from(input.files || []).slice(0, 8).map(async (file) => {
+        if (file.size > 10 * 1024 * 1024) throw new Error("单个预览附件不能超过 10 MB");
+        const dataUrl = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(new Error("无法读取图片")); reader.readAsDataURL(file); });
+        return storePreviewImage(file.name, dataUrl);
+      })).then(resolve, reject);
+    };
+    input.click();
+  });
+}
 
 export function installWebMock(): void {
   if (window.rux) return;
@@ -56,6 +77,6 @@ export function installWebMock(): void {
     git: { status: async () => previewGitState, diff: async () => "", branches: async () => ["main"], switchBranch: async () => previewGitState, compare: async () => previewGitState, compareDiff: async () => "", remote: async () => "", instructions: async () => ({ files: [], stagedPaths: [] }), commitPush: async () => previewGitState, stage: async () => previewGitState, discard: async () => previewGitState },
     files: { list: async () => [], open: async () => ({ opened: true }) },
     terminal: { start: async () => ({ started: true }), write: async () => ({ written: true }), resize: async () => ({ resized: true }), stop: async () => ({ stopped: true }), onData: noopOff },
-    system: { openPath: async () => ({ opened: true }), chooseFiles: async () => [], copy: async () => ({ copied: true }), openExternal: async () => ({ opened: true }), openMessageTarget: async () => ({ opened: true }), showMessageContextMenu: async () => ({ shown: true }), info: async () => ({ appVersion: "preview", electronVersion: "preview", chromeVersion: "preview", platform: "darwin", arch: "arm64", codexVersion: "preview" }) },
+    system: { openPath: async () => ({ opened: true }), chooseFiles: choosePreviewFiles, importImage: async (input: { name: string; mimeType: string; base64: string }) => storePreviewImage(input.name, `data:${input.mimeType};base64,${input.base64}`), previewImage: async ({ path }: { path: string }) => { const image = previewImages.get(path); if (!image) throw new Error("预览图片已失效，请重新添加"); return image; }, copy: async () => ({ copied: true }), openExternal: async () => ({ opened: true }), openMessageTarget: async () => ({ opened: true }), showMessageContextMenu: async () => ({ shown: true }), info: async () => ({ appVersion: "preview", electronVersion: "preview", chromeVersion: "preview", platform: "darwin", arch: "arm64", codexVersion: "preview" }) },
   } as unknown as RuxApi;
 }

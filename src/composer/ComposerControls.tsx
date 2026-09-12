@@ -1,6 +1,6 @@
-import { Button, Slider, Modal, ChoiceList, ChoiceItem } from "../ui";
+import { AppIcon, Button, SteppedSlider, Switch, Modal, ChoiceList, ChoiceItem } from "../ui";
 import { useEffect, useId, useRef, useState } from "react";
-import { ArrowCounterClockwise, CaretDown, CaretLeft, CaretRight, Lightning, Check, CircleNotch, FolderOpen, Globe, TerminalWindow, WarningCircle } from "../ui/icons";
+import { CaretDown, CaretLeft, CaretRight, Lightning, Check, CircleNotch, FolderOpen, Globe, TerminalWindow, WarningCircle } from "../ui/icons";
 import { navigateMenu } from "../components/menuKeyboard";
 import type { AuthState } from "../renderer/types";
 import { userFacingError } from "../renderer/errors";
@@ -58,6 +58,7 @@ export function ModelPopover({ settings, models, loading, error, serviceTier, on
   const dragging = useRef(false);
   const ticksId = useId();
   const hintId = useId();
+  const speedId = useId();
   const selectedTier = tiers.find((tier) => tier.id === serviceTier);
   const previewEffort = efforts[previewIndex]?.reasoningEffort || settings.reasoning;
   const effortLabel = reasoningLabels[previewEffort] || previewEffort;
@@ -96,29 +97,29 @@ export function ModelPopover({ settings, models, loading, error, serviceTier, on
     else changeView("speed");
   };
 
-  return <div ref={popoverRef} className="model-popover model-picker" role="dialog" aria-label="切换模型、推理强度和速度" aria-busy={busy} data-high-effort={previewEffort === "max" || previewEffort === "ultra"} onKeyDown={(event) => {
+  return <div ref={popoverRef} className="model-popover model-picker" role="dialog" aria-label="切换模型、推理强度和速度" aria-busy={busy} onKeyDown={(event) => {
     if (event.key === "ArrowLeft" && view !== "power") { event.preventDefault(); event.stopPropagation(); returnToPower(); return; }
     navigateMenu(event);
   }}>
     {view === "power" ? <>
       <div className="model-picker-header">
-        {tiers.length > 0 && <Button variant="plain" type="button" className="model-picker-speed" aria-label={tiers.length === 1 ? "快速模式" : "选择速度"} aria-pressed={tiers.length === 1 ? Boolean(serviceTier) : undefined} title={`速度：${speedLabel}${serviceTier ? "，用量更多" : ""}`} disabled={busy || loading} onClick={toggleSpeed}><Lightning size="sm" variant={serviceTier ? "solid" : "outline"} /></Button>}
-        <Button variant="plain" ref={modelButtonRef} type="button" className="model-picker-model" aria-label="选择模型" aria-haspopup="menu" disabled={busy || loading || !models.length} onClick={() => changeView("models")} onKeyDown={(event) => { if (event.key === "ArrowRight") { event.preventDefault(); changeView("models"); } }}><span className="model-picker-current-effort">{effortLabel}<CaretRight size="xs" /></span><small>{compactModelName(modelDisplayName(settings, models))}</small></Button>
-        {onReset && <Button variant="plain" type="button" className="model-picker-reset" aria-label="恢复默认模型设置" title="恢复默认模型设置" disabled={busy || loading || !models.length} onClick={() => void apply(onReset)}><ArrowCounterClockwise size="sm" /></Button>}
+        <Button variant="plain" ref={modelButtonRef} type="button" className="model-picker-model" aria-label="选择模型" aria-haspopup="menu" disabled={busy || loading || !models.length} onClick={() => changeView("models")} onKeyDown={(event) => { if (event.key === "ArrowRight") { event.preventDefault(); changeView("models"); } }}><AppIcon name="cpu" size="md" /><strong title={modelDisplayName(settings, models)}>{modelDisplayName(settings, models)}</strong><span className="model-picker-change">切换<CaretRight size="sm" /></span></Button>
       </div>
       {loading ? <div className="picker-state" role="status"><CircleNotch size="sm" className="spin" />正在读取 Agent 模型…</div> : error ? <div className="picker-state error-text" role="alert">{userFacingError(error)}</div> : !current ? <div className="picker-state" role="status">暂无可用模型，请在设置中检查账户与连接。</div> : efforts.length > 1 ? <div className="model-picker-power">
-        <label className="sr-only" htmlFor={ticksId}>推理强度</label>
-        <Slider ref={rangeRef} data-autofocus id={ticksId}  min={0} max={efforts.length - 1} step={1} value={Math.min(previewIndex, efforts.length - 1)} disabled={busy} aria-valuetext={effortLabel} aria-describedby={hintId} onPointerDown={() => { dragging.current = true; }} onChange={(event) => { const index = Number(event.currentTarget.value); previewRef.current = index; setPreviewIndex(index); }} onPointerUp={commitEffort} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); event.stopPropagation(); commitEffort(); onClose?.(); } }} onPointerCancel={() => { dragging.current = false; previewRef.current = selectedIndex; setPreviewIndex(selectedIndex); }} onKeyUp={(event) => { if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"].includes(event.key)) commitEffort(); }} onBlur={() => { if (!dragging.current) commitEffort(); }} />
-        <div className="model-picker-ticks" aria-hidden="true">{efforts.map((effort, index) => <i key={effort.reasoningEffort} data-selected={index === previewIndex} />)}</div>
-        <div className="model-picker-range-labels"><span>{reasoningLabels[efforts[0].reasoningEffort]}</span><span>{reasoningLabels[efforts[efforts.length - 1].reasoningEffort]}</span></div>
+        <div className="model-picker-power-heading"><label htmlFor={ticksId}>思考强度</label><span>{effortLabel}</span></div>
+        <SteppedSlider ref={rangeRef} data-autofocus id={ticksId} labels={efforts.map((effort) => reasoningLabels[effort.reasoningEffort] || effort.reasoningEffort)} value={Math.min(previewIndex, efforts.length - 1)} disabled={busy} aria-label="推理强度" aria-valuetext={effortLabel} aria-describedby={hintId} onPointerDown={() => { dragging.current = true; }} onChange={(event) => { const index = Number(event.currentTarget.value); previewRef.current = index; setPreviewIndex(index); }} onPointerUp={commitEffort} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); event.stopPropagation(); commitEffort(); onClose?.(); } }} onPointerCancel={() => { dragging.current = false; previewRef.current = selectedIndex; setPreviewIndex(selectedIndex); }} onKeyUp={(event) => { if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"].includes(event.key)) commitEffort(); }} onBlur={() => { if (!dragging.current) commitEffort(); }} />
         <span id={hintId} className="sr-only">使用左右方向键调整当前模型的推理强度；拖动时预览，松开后保存。</span>
       </div> : <p className="model-picker-no-efforts">该模型没有可调的推理强度</p>}
-      {previewEffort === "ultra" && <p className="model-picker-usage">更快消耗使用额度</p>}
-      <div className="model-picker-footer"><Button variant="plain" type="button" disabled={busy || loading || !models.length} aria-label="浏览全部模型" onClick={() => changeView("models")}>全部模型<CaretRight size="xs" /></Button>{busy && <CircleNotch size="xs" className="spin" aria-label="正在保存" />}</div>
+      {!loading && !error && current && previewEffort === "ultra" && <p className="model-picker-usage">更快消耗使用额度</p>}
+      {(tiers.length > 0 || onReset) && <div className="model-picker-footer">
+        {tiers.length === 1 ? <div className="model-picker-speed"><label htmlFor={speedId}><Lightning size="md" />{tiers[0].id === "priority" ? "快速模式" : tiers[0].name}</label><Switch id={speedId} checked={Boolean(selectedTier)} disabled={busy || loading || Boolean(error)} title={tiers[0].description} onCheckedChange={(checked) => void apply(() => onSelectServiceTier(checked ? tiers[0].id : null))} /></div> : tiers.length > 1 ? <Button variant="plain" type="button" className="model-picker-speed-choice" aria-label="选择速度" disabled={busy || loading || Boolean(error)} onClick={toggleSpeed}><Lightning size="md" />{speedLabel}<CaretRight size="xs" /></Button> : null}
+        {busy && <CircleNotch size="xs" className="spin model-picker-saving" aria-label="正在保存" />}
+        {onReset && <Button variant="plain" type="button" className="model-picker-reset" aria-label="恢复默认模型设置" disabled={busy || loading || !models.length} onClick={() => void apply(onReset)}>恢复默认</Button>}
+      </div>}
     </> : <>
       <div className="model-picker-list-heading"><Button variant="plain" type="button" aria-label="返回推理强度" onClick={returnToPower}><CaretLeft size="sm" /></Button><strong>{view === "models" ? "选择模型" : "速度"}</strong></div>
       <ChoiceList className="model-picker-list" aria-label={view === "models" ? "模型" : "速度"}>
-        {view === "models" ? models.map((model) => <ChoiceItem checked={current?.model === model.model} className="model-picker-option" key={model.id} disabled={busy} onClick={() => void apply(() => onSelectModel(model), true)}><span>{compactModelName(model.displayName)}{model.isDefault && <small>推荐</small>}</span>{current?.model === model.model && <Check size="sm" />}</ChoiceItem>) : [{ id: "", name: "标准", description: "默认速度" }, ...tiers].map((tier) => <ChoiceItem checked={(serviceTier || "") === tier.id} className="model-picker-option" key={tier.id} disabled={busy} onClick={() => void apply(() => onSelectServiceTier(tier.id || null), true)}><span>{tier.id === "priority" ? "快速" : tier.name}<small>{tier.description}</small></span>{(serviceTier || "") === tier.id && <Check size="sm" />}</ChoiceItem>)}
+        {view === "models" ? models.map((model) => <ChoiceItem checked={current?.model === model.model} className="model-picker-option" key={model.id} disabled={busy} onClick={() => void apply(() => onSelectModel(model), true)}><span>{model.displayName}{model.isDefault && <small>推荐</small>}</span>{current?.model === model.model && <Check size="sm" />}</ChoiceItem>) : [{ id: "", name: "标准", description: "默认速度" }, ...tiers].map((tier) => <ChoiceItem checked={(serviceTier || "") === tier.id} className="model-picker-option" key={tier.id} disabled={busy} onClick={() => void apply(() => onSelectServiceTier(tier.id || null), true)}><span>{tier.id === "priority" ? "快速" : tier.name}<small>{tier.description}</small></span>{(serviceTier || "") === tier.id && <Check size="sm" />}</ChoiceItem>)}
       </ChoiceList>
     </>}
     {saveError && <p className="picker-state error-text" role="alert">{saveError}</p>}

@@ -13,6 +13,23 @@ export const Slider = forwardRef<HTMLInputElement, Omit<InputHTMLAttributes<HTML
   return <input ref={ref} {...props} type="range" className={`ui-slider ${className}`} />;
 });
 
+type SteppedSliderProps = Omit<InputHTMLAttributes<HTMLInputElement>, "type" | "value" | "defaultValue" | "min" | "max" | "step"> & { value: number; labels: readonly string[] };
+/** Native range behavior with a capsule track and labels aligned to thumb centers. */
+export const SteppedSlider = forwardRef<HTMLInputElement, SteppedSliderProps>(function SteppedSlider({ value, labels, disabled, className = "", ...props }, ref) {
+  const max = Math.max(1, labels.length - 1);
+  const index = Math.max(0, Math.min(max, value));
+  const progress = index / max;
+  const unavailable = disabled || labels.length < 2;
+  return <div className={`ui-stepped-slider ${className}`} data-disabled={unavailable || undefined}>
+    <div className="ui-stepped-slider-control">
+      <span className="ui-stepped-slider-track" aria-hidden="true"><span className="ui-stepped-slider-fill" style={{ width: `calc(${progress * 100}% + ${14 - 28 * progress}px)` }} /></span>
+      <span className="ui-stepped-slider-stops" aria-hidden="true">{labels.map((label, stop) => <span key={`${stop}-${label}`} data-filled={stop <= index} style={{ left: `${stop / max * 100}%` }} />)}</span>
+      <Slider ref={ref} {...props} className="ui-stepped-slider-input" min={0} max={max} step={1} value={index} disabled={unavailable} aria-valuetext={props["aria-valuetext"] || labels[index]} />
+    </div>
+    <div className="ui-stepped-slider-labels" aria-hidden="true">{labels.map((label, stop) => <span key={`${stop}-${label}`} data-selected={stop === index} style={{ left: `${stop / max * 100}%` }}>{label}</span>)}</div>
+  </div>;
+});
+
 type SelectOption = { value: string; label: string; disabled?: boolean };
 type SelectProps = { value: string; onValueChange: (value: string) => void; options: SelectOption[]; placeholder?: string; disabled?: boolean; id?: string; name?: string; "aria-label"?: string; "aria-labelledby"?: string; className?: string; size?: ControlSize };
 export function Select({ value, onValueChange, options, placeholder = "请选择", disabled, id, name, className = "", size = "md", ...aria }: SelectProps) {
