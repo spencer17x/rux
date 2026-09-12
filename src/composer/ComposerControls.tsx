@@ -1,5 +1,6 @@
+import { Button, Slider, Modal, ChoiceList, ChoiceItem } from "../ui";
 import { useEffect, useId, useRef, useState } from "react";
-import { ArrowCounterClockwise, CaretDown, CaretLeft, CaretRight, Lightning, Check, CircleNotch, FolderOpen, Globe, TerminalWindow, WarningCircle } from "@phosphor-icons/react";
+import { ArrowCounterClockwise, CaretDown, CaretLeft, CaretRight, Lightning, Check, CircleNotch, FolderOpen, Globe, TerminalWindow, WarningCircle } from "../ui/icons";
 import { navigateMenu } from "../components/menuKeyboard";
 import type { AuthState } from "../renderer/types";
 import { userFacingError } from "../renderer/errors";
@@ -101,24 +102,24 @@ export function ModelPopover({ settings, models, loading, error, serviceTier, on
   }}>
     {view === "power" ? <>
       <div className="model-picker-header">
-        {tiers.length > 0 && <button type="button" className="model-picker-speed" aria-label={tiers.length === 1 ? "快速模式" : "选择速度"} aria-pressed={tiers.length === 1 ? Boolean(serviceTier) : undefined} title={`速度：${speedLabel}${serviceTier ? "，用量更多" : ""}`} disabled={busy || loading} onClick={toggleSpeed}><Lightning size={16} weight={serviceTier ? "fill" : "regular"} /></button>}
-        <button ref={modelButtonRef} type="button" className="model-picker-model" aria-label="选择模型" aria-haspopup="menu" disabled={busy || loading || !models.length} onClick={() => changeView("models")} onKeyDown={(event) => { if (event.key === "ArrowRight") { event.preventDefault(); changeView("models"); } }}><span className="model-picker-current-effort">{effortLabel}<CaretRight size={13} /></span><small>{compactModelName(modelDisplayName(settings, models))}</small></button>
-        {onReset && <button type="button" className="model-picker-reset" aria-label="恢复默认模型设置" title="恢复默认模型设置" disabled={busy || loading || !models.length} onClick={() => void apply(onReset)}><ArrowCounterClockwise size={16} /></button>}
+        {tiers.length > 0 && <Button variant="plain" type="button" className="model-picker-speed" aria-label={tiers.length === 1 ? "快速模式" : "选择速度"} aria-pressed={tiers.length === 1 ? Boolean(serviceTier) : undefined} title={`速度：${speedLabel}${serviceTier ? "，用量更多" : ""}`} disabled={busy || loading} onClick={toggleSpeed}><Lightning size="sm" variant={serviceTier ? "solid" : "outline"} /></Button>}
+        <Button variant="plain" ref={modelButtonRef} type="button" className="model-picker-model" aria-label="选择模型" aria-haspopup="menu" disabled={busy || loading || !models.length} onClick={() => changeView("models")} onKeyDown={(event) => { if (event.key === "ArrowRight") { event.preventDefault(); changeView("models"); } }}><span className="model-picker-current-effort">{effortLabel}<CaretRight size="xs" /></span><small>{compactModelName(modelDisplayName(settings, models))}</small></Button>
+        {onReset && <Button variant="plain" type="button" className="model-picker-reset" aria-label="恢复默认模型设置" title="恢复默认模型设置" disabled={busy || loading || !models.length} onClick={() => void apply(onReset)}><ArrowCounterClockwise size="sm" /></Button>}
       </div>
-      {loading ? <div className="picker-state" role="status"><CircleNotch size={16} className="spin" />正在读取 Agent 模型…</div> : error ? <div className="picker-state error-text" role="alert">{userFacingError(error)}</div> : !current ? <div className="picker-state" role="status">暂无可用模型，请在设置中检查账户与连接。</div> : efforts.length > 1 ? <div className="model-picker-power">
+      {loading ? <div className="picker-state" role="status"><CircleNotch size="sm" className="spin" />正在读取 Agent 模型…</div> : error ? <div className="picker-state error-text" role="alert">{userFacingError(error)}</div> : !current ? <div className="picker-state" role="status">暂无可用模型，请在设置中检查账户与连接。</div> : efforts.length > 1 ? <div className="model-picker-power">
         <label className="sr-only" htmlFor={ticksId}>推理强度</label>
-        <input ref={rangeRef} data-autofocus id={ticksId} type="range" min={0} max={efforts.length - 1} step={1} value={Math.min(previewIndex, efforts.length - 1)} disabled={busy} aria-valuetext={effortLabel} aria-describedby={hintId} onPointerDown={() => { dragging.current = true; }} onChange={(event) => { const index = Number(event.currentTarget.value); previewRef.current = index; setPreviewIndex(index); }} onPointerUp={commitEffort} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); event.stopPropagation(); commitEffort(); onClose?.(); } }} onPointerCancel={() => { dragging.current = false; previewRef.current = selectedIndex; setPreviewIndex(selectedIndex); }} onKeyUp={(event) => { if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"].includes(event.key)) commitEffort(); }} onBlur={() => { if (!dragging.current) commitEffort(); }} />
+        <Slider ref={rangeRef} data-autofocus id={ticksId}  min={0} max={efforts.length - 1} step={1} value={Math.min(previewIndex, efforts.length - 1)} disabled={busy} aria-valuetext={effortLabel} aria-describedby={hintId} onPointerDown={() => { dragging.current = true; }} onChange={(event) => { const index = Number(event.currentTarget.value); previewRef.current = index; setPreviewIndex(index); }} onPointerUp={commitEffort} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); event.stopPropagation(); commitEffort(); onClose?.(); } }} onPointerCancel={() => { dragging.current = false; previewRef.current = selectedIndex; setPreviewIndex(selectedIndex); }} onKeyUp={(event) => { if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"].includes(event.key)) commitEffort(); }} onBlur={() => { if (!dragging.current) commitEffort(); }} />
         <div className="model-picker-ticks" aria-hidden="true">{efforts.map((effort, index) => <i key={effort.reasoningEffort} data-selected={index === previewIndex} />)}</div>
         <div className="model-picker-range-labels"><span>{reasoningLabels[efforts[0].reasoningEffort]}</span><span>{reasoningLabels[efforts[efforts.length - 1].reasoningEffort]}</span></div>
         <span id={hintId} className="sr-only">使用左右方向键调整当前模型的推理强度；拖动时预览，松开后保存。</span>
       </div> : <p className="model-picker-no-efforts">该模型没有可调的推理强度</p>}
       {previewEffort === "ultra" && <p className="model-picker-usage">更快消耗使用额度</p>}
-      <div className="model-picker-footer"><button type="button" disabled={busy || loading || !models.length} aria-label="浏览全部模型" onClick={() => changeView("models")}>全部模型<CaretRight size={13} /></button>{busy && <CircleNotch size={13} className="spin" aria-label="正在保存" />}</div>
+      <div className="model-picker-footer"><Button variant="plain" type="button" disabled={busy || loading || !models.length} aria-label="浏览全部模型" onClick={() => changeView("models")}>全部模型<CaretRight size="xs" /></Button>{busy && <CircleNotch size="xs" className="spin" aria-label="正在保存" />}</div>
     </> : <>
-      <div className="model-picker-list-heading"><button type="button" aria-label="返回推理强度" onClick={returnToPower}><CaretLeft size={15} /></button><strong>{view === "models" ? "选择模型" : "速度"}</strong></div>
-      <div className="model-picker-list" role="menu" aria-label={view === "models" ? "模型" : "速度"} onKeyDown={navigateMenu}>
-        {view === "models" ? models.map((model) => <button type="button" role="menuitemradio" aria-checked={current?.model === model.model} className="model-picker-option" key={model.id} disabled={busy} onClick={() => void apply(() => onSelectModel(model), true)}><span>{compactModelName(model.displayName)}{model.isDefault && <small>推荐</small>}</span>{current?.model === model.model && <Check size={16} />}</button>) : [{ id: "", name: "标准", description: "默认速度" }, ...tiers].map((tier) => <button type="button" role="menuitemradio" aria-checked={(serviceTier || "") === tier.id} className="model-picker-option" key={tier.id} disabled={busy} onClick={() => void apply(() => onSelectServiceTier(tier.id || null), true)}><span>{tier.id === "priority" ? "快速" : tier.name}<small>{tier.description}</small></span>{(serviceTier || "") === tier.id && <Check size={16} />}</button>)}
-      </div>
+      <div className="model-picker-list-heading"><Button variant="plain" type="button" aria-label="返回推理强度" onClick={returnToPower}><CaretLeft size="sm" /></Button><strong>{view === "models" ? "选择模型" : "速度"}</strong></div>
+      <ChoiceList className="model-picker-list" aria-label={view === "models" ? "模型" : "速度"}>
+        {view === "models" ? models.map((model) => <ChoiceItem checked={current?.model === model.model} className="model-picker-option" key={model.id} disabled={busy} onClick={() => void apply(() => onSelectModel(model), true)}><span>{compactModelName(model.displayName)}{model.isDefault && <small>推荐</small>}</span>{current?.model === model.model && <Check size="sm" />}</ChoiceItem>) : [{ id: "", name: "标准", description: "默认速度" }, ...tiers].map((tier) => <ChoiceItem checked={(serviceTier || "") === tier.id} className="model-picker-option" key={tier.id} disabled={busy} onClick={() => void apply(() => onSelectServiceTier(tier.id || null), true)}><span>{tier.id === "priority" ? "快速" : tier.name}<small>{tier.description}</small></span>{(serviceTier || "") === tier.id && <Check size="sm" />}</ChoiceItem>)}
+      </ChoiceList>
     </>}
     {saveError && <p className="picker-state error-text" role="alert">{saveError}</p>}
   </div>;
@@ -130,31 +131,21 @@ export function PermissionPopover({ selectedValue, onSelect, onLearnMore, agentI
     : option.value === "workspace-write"
       ? { ...option, description: "Pi RPC 暂不支持逐次审批，请使用只读或完整访问" }
       : option) : permissionOptions;
-  return <span className="scope-popover permission-popover" onKeyDown={navigateMenu} role="dialog" aria-label="操作批准方式"><span className="permission-popover-heading"><strong>应如何批准 Rux 操作？</strong><button type="button" onClick={onLearnMore}>了解更多</button></span>{options.map(({ value, title, description }) => {
+  return <span className="scope-popover permission-popover" onKeyDown={navigateMenu} role="dialog" aria-label="操作批准方式"><span className="permission-popover-heading"><strong>应如何批准 Rux 操作？</strong><Button variant="plain" type="button" onClick={onLearnMore}>了解更多</Button></span>{options.map(({ value, title, description }) => {
     const disabled = agentId === "pi" && value === "workspace-write";
-    return <button type="button" data-menu-item key={value} disabled={disabled} aria-disabled={disabled} aria-pressed={selectedValue === value} className={`permission-option ${value === "danger-full-access" ? "is-danger" : ""} ${selectedValue === value ? "is-selected" : ""}`} onClick={() => onSelect(value)}><PermissionModeIcon mode={value as PermissionMode} size={20} /><span><strong>{title}</strong><small>{description}</small></span>{selectedValue === value && <Check size={18} weight="bold" />}</button>;
+    return <Button variant="plain" type="button" data-menu-item key={value} disabled={disabled} aria-disabled={disabled} aria-pressed={selectedValue === value} className={`permission-option ${value === "danger-full-access" ? "is-danger" : ""} ${selectedValue === value ? "is-selected" : ""}`} onClick={() => onSelect(value)}><PermissionModeIcon mode={value as PermissionMode} size="md" /><span><strong>{title}</strong><small>{description}</small></span>{selectedValue === value && <Check size="md" variant="strong" />}</Button>;
   })}</span>;
 }
 
 export function FullAccessModal({ onCancel, onConfirm, onLearnMore }: { onCancel: () => void; onConfirm: () => Promise<void>; onLearnMore: () => void }) {
   const [busy, setBusy] = useState(false);
-  const backdropRef = useRef<HTMLDivElement>(null);
-  const dialogRef = useRef<HTMLElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
-  useEffect(() => {
-    const previousFocus = document.activeElement as HTMLElement | null;
-    const backdrop = backdropRef.current;
-    const siblings = backdrop?.parentElement ? [...backdrop.parentElement.children].filter((element) => element !== backdrop) as HTMLElement[] : [];
-    for (const sibling of siblings) { sibling.inert = true; sibling.setAttribute("aria-hidden", "true"); }
-    cancelRef.current?.focus();
-    return () => { for (const sibling of siblings) { sibling.inert = false; sibling.removeAttribute("aria-hidden"); } requestAnimationFrame(() => previousFocus?.focus()); };
-  }, []);
   const confirm = async () => { if (busy) return; setBusy(true); try { await onConfirm(); } finally { setBusy(false); } };
-  return <div ref={backdropRef} className="modal-backdrop full-access-backdrop" role="presentation"><section ref={dialogRef} className="modal full-access-modal" role="alertdialog" aria-modal="true" aria-labelledby="full-access-title" onKeyDown={(event) => { if (event.key === "Escape" && !busy) { event.preventDefault(); onCancel(); return; } if (event.key !== "Tab") return; const focusable = [...(dialogRef.current?.querySelectorAll<HTMLElement>("button:not(:disabled)") || [])]; const first = focusable[0]; const last = focusable[focusable.length - 1]; if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); } else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); } }}>
-    <div className="full-access-title"><WarningCircle size={24} /><h2 id="full-access-title">要开启完整访问权限吗？</h2></div>
+  return <Modal alert label="要开启完整访问权限吗？" onClose={onCancel} busy={busy} initialFocusRef={cancelRef} className="full-access-modal">
+    <div className="full-access-title"><WarningCircle size="lg" /><h2 id="full-access-title">要开启完整访问权限吗？</h2></div>
     <p className="full-access-intro">Rux 将跳过逐次操作批准，并可在当前系统账户及操作系统已授予 Rux 的权限范围内运行命令、使用互联网，以及创建和编辑文件。这包括但不限于：</p>
-    <div className="full-access-capabilities"><div><FolderOpen size={25} weight="fill" /><span><strong>文件和文件夹</strong><small>读取、创建、修改、上传或删除操作系统允许访问位置的文件</small></span></div><div><TerminalWindow size={25} weight="fill" /><span><strong>终端命令</strong><small>运行命令、安装软件和更改当前账户可修改的系统设置</small></span></div><div><Globe size={26} weight="fill" /><span><strong>互联网和已连接的应用</strong><small>访问网站、发送数据并使用已启用的插件或连接</small></span></div></div>
-    <p className="full-access-risk">这会带来敏感数据丢失或泄露、提示注入等风险。你可以随时将其关闭。<button type="button" onClick={onLearnMore}>了解更多</button></p>
-    <div className="modal-footer full-access-actions"><button ref={cancelRef} type="button" className="secondary-button" disabled={busy} onClick={onCancel}>取消</button><button type="button" className="full-access-confirm" disabled={busy} onClick={() => void confirm()}><WarningCircle size={17} />{busy ? "正在启用…" : "确认"}</button></div>
-  </section></div>;
+    <div className="full-access-capabilities"><div><FolderOpen size="lg" variant="solid" /><span><strong>文件和文件夹</strong><small>读取、创建、修改、上传或删除操作系统允许访问位置的文件</small></span></div><div><TerminalWindow size="lg" variant="solid" /><span><strong>终端命令</strong><small>运行命令、安装软件和更改当前账户可修改的系统设置</small></span></div><div><Globe size="lg" variant="solid" /><span><strong>互联网和已连接的应用</strong><small>访问网站、发送数据并使用已启用的插件或连接</small></span></div></div>
+    <p className="full-access-risk">这会带来敏感数据丢失或泄露、提示注入等风险。你可以随时将其关闭。<Button variant="plain" type="button" onClick={onLearnMore}>了解更多</Button></p>
+    <div className="modal-footer full-access-actions"><Button variant="secondary" ref={cancelRef} type="button" className="secondary-button" disabled={busy} onClick={onCancel}>取消</Button><Button variant="plain" type="button" className="full-access-confirm" disabled={busy} onClick={() => void confirm()}><WarningCircle size="sm" />{busy ? "正在启用…" : "确认"}</Button></div>
+  </Modal>;
 }

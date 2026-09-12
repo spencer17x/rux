@@ -8,6 +8,15 @@ const workspace: StoredWorkspace = {
 };
 
 describe("NativeHistoryService", () => {
+  it("rehydrates per-turn metadata without applying the thread's latest model to old turns", async () => {
+    const codex = { readThread: async () => ({ model: "gpt-6-astra", reasoningEffort: "xhigh", turns: ["old", "new"].map((id) => ({ id, status: "completed", durationMs: 1000, items: [{ type: "agentMessage", id: `${id}-text`, text: `native ${id}` }] })) }) };
+    const service = new NativeHistoryService(codex as any, {} as any, {} as any);
+    const loaded = await service.load(workspace, {}, { native: [{ recordId: "local-a", nativeTurnId: "old", model: "gpt-5.6-sol", reasoning: "high", elapsedMs: 18400, usage: { totalTokens: 6320 } }] });
+    const messages = loaded.native as any[];
+    expect(messages[0]).toMatchObject({ parts: [{ text: "native old" }], turnInfo: { model: "gpt-5.6-sol", reasoning: "high", elapsedMs: 18400, usage: { totalTokens: 6320 } } });
+    expect(messages[1].turnInfo.model).toBeUndefined();
+    expect(messages[1].turnInfo.elapsedMs).toBe(1000);
+  });
   it("loads a bound thread from its native transcript", async () => {
     const codex = { readThread: async () => ({ turns: [{ id: "turn-1", status: "completed", items: [{ type: "userMessage", id: "user-1", content: [{ type: "text", text: "hello" }] }, { type: "agentMessage", id: "agent-1", text: "world" }] }] }) };
     const service = new NativeHistoryService(codex as any, { readSession: async () => [] } as any, { readSession: async () => [] } as any);

@@ -4,6 +4,14 @@ import { adjacentStickyTurn, completedStickyTurns, messageExportText, normalized
 const runningMessage = (): RuxMessage => ({ id: "assistant-1", role: "assistant", parts: [], status: "running" });
 
 describe("canonical message reducer", () => {
+  it("keeps a historical model snapshot and persists the final usage and duration", () => {
+    const original: RuxMessage = { ...runningMessage(), agentId: "codex", createdAt: "2026-09-11T10:00:00Z", turnInfo: { agentId: "codex", model: "gpt-5.6-sol", reasoning: "high", startedAt: Date.parse("2026-09-11T10:00:00Z") } };
+    const finished = reduceStreamEvent(original, { type: "turn-completed", status: "completed", turnId: "native-turn", turnInfo: { elapsedMs: 18400, usage: { totalTokens: 6320 } } });
+    const restored = normalizedMessages(persistentMessages({ thread: [finished] })).thread[0];
+    expect(restored.turnInfo).toMatchObject({ model: "gpt-5.6-sol", reasoning: "high", nativeTurnId: "native-turn", elapsedMs: 18400, usage: { totalTokens: 6320 } });
+    const lateUsage = reduceStreamEvent(restored, { type: "turn-metadata", turnInfo: { usage: { totalTokens: 6400 } } });
+    expect(lateUsage.turnInfo).toMatchObject({ model: "gpt-5.6-sol", elapsedMs: 18400, usage: { totalTokens: 6400 } });
+  });
   it("collects text deltas and completes a turn", () => {
     const streamed = reduceStreamEvent(runningMessage(), { type: "text-delta", itemId: "text-1", delta: "Hello" });
     const completed = reduceStreamEvent(streamed, { type: "turn-completed", status: "completed" });

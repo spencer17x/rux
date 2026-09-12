@@ -27,6 +27,12 @@ describe("AgentSendService", () => {
     expect(fetchMock).toHaveBeenCalledWith("https://example.test/v1/responses", expect.objectContaining({ method: "POST" }));
   });
 
+  it("reads standard Responses output and retains actual model and token usage", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ model: "gpt-6-astra", output: [{ type: "message", content: [{ type: "output_text", text: "done" }] }], usage: { input_tokens: 900, output_tokens: 100, total_tokens: 1000, input_tokens_details: { cached_tokens: 500 }, output_tokens_details: { reasoning_tokens: 40 } } }) })));
+    const { instance, settings } = service();
+    await expect(instance.custom({ prompt: "hello" }, settings as any)).resolves.toMatchObject({ text: "done", model: "gpt-6-astra", usage: { inputTokens: 900, outputTokens: 100, totalTokens: 1000, cachedInputTokens: 500, reasoningOutputTokens: 40 } });
+  });
+
   it("includes explicitly selected text files in custom-provider context", async () => {
     const root = mkdtempSync(join(tmpdir(), "rux-custom-context-")); temporary.push(root); const file = join(root, "context.txt"); writeFileSync(file, "selected context");
     const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => ({ ok: true, json: async () => ({ output_text: "custom" }) })); vi.stubGlobal("fetch", fetchMock);

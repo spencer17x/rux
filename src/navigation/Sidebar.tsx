@@ -1,9 +1,9 @@
-import { useDeferredValue, useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
-import { CaretDown, ChatCircle, CircleNotch, DotsThree, Folder, FolderOpen, GearSix, MagnifyingGlass, Paperclip, PencilSimple, Plus, Trash, X } from "@phosphor-icons/react";
-import IconButton from "../components/IconButton";
+import { useDeferredValue, useEffect, useState } from "react";
+import { Button, Input, NavItem, IconButton, Menu, MenuItem, MenuSeparator, ContextActions, ContextAction, Popover } from "../ui";
+import { CaretDown, ChatCircle, CircleNotch, Folder, FolderOpen, GearSix, MagnifyingGlass, Paperclip, PencilSimple, Plus, Trash } from "../ui/icons";
 import SidebarResizeHandle, { readSidebarWidth, SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH, SIDEBAR_WIDTH_KEY } from "./SidebarResizeHandle";
 import type { ActiveThread, AuthState, ProjectRecord, ThreadRecord, WorkspaceState } from "../renderer/types";
+import ruxMark from "../assets/rux-mark.png";
 
 type Props = {
   reservedPanelWidth?: number;
@@ -16,22 +16,46 @@ type Props = {
   onDeleteThread: (thread: ActiveThread) => void;
 };
 
+function ThreadActions({ onRename, onDelete, context = false }: { onRename: () => void; onDelete: () => void; context?: boolean }) {
+  const Item = context ? ContextAction : MenuItem;
+  return <><Item onSelect={onRename}><PencilSimple />重命名会话</Item><Item danger onSelect={onDelete}><Trash />删除会话</Item></>;
+}
+
 function ThreadRow({ thread, active, child = false, running = false, onSelect, onRename, onDelete }: { thread: ThreadRecord; active: boolean; child?: boolean; running?: boolean; onSelect: () => void; onRename: () => void; onDelete: () => void }) {
   const [menuOpen, setMenuOpen] = useState(false);
-  const scopeRef = useRef<HTMLDivElement | null>(null);
-  const triggerRef = useRef<HTMLButtonElement | null>(null);
-  useEffect(() => {
-    if (!menuOpen) return undefined;
-    const onPointerDown = (event: PointerEvent) => { if (event.target instanceof Node && !scopeRef.current?.contains(event.target)) setMenuOpen(false); };
-    const onKeyDown = (event: KeyboardEvent) => { if (event.key === "Escape") { event.preventDefault(); setMenuOpen(false); requestAnimationFrame(() => triggerRef.current?.focus()); } };
-    document.addEventListener("pointerdown", onPointerDown); document.addEventListener("keydown", onKeyDown);
-    return () => { document.removeEventListener("pointerdown", onPointerDown); document.removeEventListener("keydown", onKeyDown); };
-  }, [menuOpen]);
-  return <div ref={scopeRef} className={`thread-row-wrap ${child ? "is-child" : ""} ${running ? "is-running" : ""}`} onContextMenu={(event) => { event.preventDefault(); setMenuOpen(true); }}>
-    <button type="button" className={`sidebar-row ${child ? "child-row" : ""} ${active ? "is-selected" : ""}`} title="双击重命名会话" onClick={onSelect} onDoubleClick={(event) => { event.preventDefault(); onRename(); }}><ChatCircle size={16} /><span>{thread.title}</span></button>
-    {running && <span className="thread-running-indicator" role="status" aria-label={`${thread.title} 正在响应`}><CircleNotch size={16} className="spin" /></span>}
-    <IconButton ref={triggerRef} label={`会话操作 ${thread.title}`} className="thread-action-button" active={menuOpen} onClick={(event) => { event.stopPropagation(); setMenuOpen((open) => !open); }}><DotsThree size={16} /></IconButton>
-    {menuOpen && <div className="thread-action-popover" role="menu"><button type="button" role="menuitem" onClick={() => { setMenuOpen(false); onRename(); }}><PencilSimple size={15} />重命名会话</button><button type="button" role="menuitem" className="danger-text" onClick={() => { setMenuOpen(false); onDelete(); }}><Trash size={15} />删除会话</button></div>}
+  const row = <div className={`thread-row-wrap ${child ? "is-child" : ""} ${running ? "is-running" : ""}`}>
+    <NavItem size="lg" active={active} className={`sidebar-row ${child ? "child-row" : ""} ${active ? "is-selected" : ""}`} title="双击重命名会话" onClick={onSelect} onDoubleClick={(event) => { event.preventDefault(); onRename(); }}><ChatCircle /><span>{thread.title}</span></NavItem>
+    {running && <span className="thread-running-indicator" role="status" aria-label={`${thread.title} 正在响应`}><CircleNotch className="ui-spin" /></span>}
+    <Menu label={`会话操作 ${thread.title}`} open={menuOpen} onOpenChange={setMenuOpen} trigger={<IconButton label={`会话操作 ${thread.title}`} icon="more" className="thread-action-button" active={menuOpen} />}><ThreadActions onRename={onRename} onDelete={onDelete} /></Menu>
+  </div>;
+  return <ContextActions label={`会话操作 ${thread.title}`} trigger={row}><ThreadActions context onRename={onRename} onDelete={onDelete} /></ContextActions>;
+}
+
+function ProjectActions({ project, actions, context = false }: { project: ProjectRecord; actions: Props; context?: boolean }) {
+  const Item = context ? ContextAction : MenuItem;
+  return <>
+    <Item onSelect={() => actions.onNewProjectThread(project)}><PencilSimple />新建会话</Item>
+    {!context && <MenuSeparator />}
+    <Item onSelect={() => actions.onOpenProjectPath(project)}><FolderOpen />在文件管理器中打开</Item>
+    <Item onSelect={() => actions.onCopyProjectPath(project)}><Paperclip />复制项目路径</Item>
+    {!context && <MenuSeparator />}
+    <Item danger onSelect={() => actions.onRemoveProject(project)}><Trash />移除项目</Item>
+  </>;
+}
+
+function ProjectNode({ project, actions, query }: { project: ProjectRecord; actions: Props; query: string }) {
+  const [open, setOpen] = useState(false);
+  const expanded = Boolean(query) || actions.expandedProjects.includes(project.id);
+  const active = actions.activeThread?.type === "project" && actions.activeThread.projectId === project.id;
+  return <div className={`project-node ${expanded ? "is-expanded" : ""} ${active ? "has-active-thread" : ""} ${open ? "is-menu-open" : ""}`}>
+    <ContextActions label={`项目操作 ${project.name}`} trigger={<div className="project-row-wrap">
+      <NavItem size="lg" className="project-row" aria-expanded={expanded} onClick={() => actions.onToggleProject(project.id)}>{expanded ? <FolderOpen /> : <Folder />}<span>{project.name}</span></NavItem>
+      <div className="project-row-actions"><Menu label={`项目操作 ${project.name}`} open={open} onOpenChange={setOpen} align="start" trigger={<IconButton label={`项目操作 ${project.name}`} icon="more" className="project-action-button" active={open} />}><ProjectActions project={project} actions={actions} /></Menu><IconButton label={`新建项目会话 ${project.name}`} icon="edit" className="project-new-thread-button" onClick={() => actions.onNewProjectThread(project)} /></div>
+    </div>}><ProjectActions context project={project} actions={actions} /></ContextActions>
+    {expanded && <div className="thread-children">{project.threads.map((thread) => {
+      const target: ActiveThread = { type: "project", projectId: project.id, projectName: project.name, projectPath: project.path, ...thread };
+      return <ThreadRow key={thread.id} child thread={thread} running={actions.runningThreadIds.has(thread.id)} active={actions.activeThread?.type === "project" && actions.activeThread.id === thread.id} onSelect={() => actions.onSelectProjectThread(project, thread)} onRename={() => actions.onRenameThread(target)} onDelete={() => actions.onDeleteThread(target)} />;
+    })}</div>}
   </div>;
 }
 
@@ -44,59 +68,29 @@ export default function Sidebar(props: Props) {
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [profileOpen, setProfileOpen] = useState(false);
-  const profileTrigger = useRef<HTMLButtonElement>(null);
-  const profilePopover = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!profileOpen) return;
-    const closeOutside = (event: Event) => {
-      const target = event.target;
-      if (target instanceof Node && !profileTrigger.current?.contains(target) && !profilePopover.current?.contains(target)) setProfileOpen(false);
-    };
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      event.preventDefault();
-      setProfileOpen(false);
-      profileTrigger.current?.focus();
-    };
-    document.addEventListener("pointerdown", closeOutside, true);
-    document.addEventListener("focusin", closeOutside);
-    document.addEventListener("keydown", closeOnEscape);
-    return () => {
-      document.removeEventListener("pointerdown", closeOutside, true);
-      document.removeEventListener("focusin", closeOutside);
-      document.removeEventListener("keydown", closeOnEscape);
-    };
-  }, [profileOpen]);
-  const [projectMenuId, setProjectMenuId] = useState<string | null>(null);
-  const [projectMenuPosition, setProjectMenuPosition] = useState<{ top: number; left: number } | null>(null);
-  const projectMenuTriggers = useRef<Record<string, HTMLButtonElement | null>>({});
-  useEffect(() => {
-    if (!projectMenuId) return undefined;
-    const close = (restoreFocus = false) => { const trigger = projectMenuTriggers.current[projectMenuId]; setProjectMenuId(null); setProjectMenuPosition(null); if (restoreFocus) requestAnimationFrame(() => trigger?.focus()); };
-    const onPointerDown = (event: PointerEvent) => { const target = event.target; if (!(target instanceof Element) || !target.closest(`[data-project-menu-scope="${projectMenuId}"]`)) close(); };
-    const onKeyDown = (event: KeyboardEvent) => { if (event.key === "Escape") { event.preventDefault(); close(true); } };
-    document.addEventListener("pointerdown", onPointerDown);
-    document.addEventListener("keydown", onKeyDown);
-    return () => { document.removeEventListener("pointerdown", onPointerDown); document.removeEventListener("keydown", onKeyDown); };
-  }, [projectMenuId]);
   const query = useDeferredValue(searchQuery.trim().toLocaleLowerCase());
   const standaloneThreads = props.workspace.standaloneThreads.filter((thread) => !query || thread.title.toLocaleLowerCase().includes(query));
-  const projects = props.workspace.projects.map((project) => ({ ...project, threads: project.threads.filter((thread) => !query || project.name.toLocaleLowerCase().includes(query) || thread.title.toLocaleLowerCase().includes(query)) })).filter((project) => !query || project.name.toLocaleLowerCase().includes(query) || project.threads.length);
+  const projects = props.workspace.projects.flatMap((project) => {
+    if (!query || project.name.toLocaleLowerCase().includes(query)) return [project];
+    const threads = project.threads.filter((thread) => thread.title.toLocaleLowerCase().includes(query));
+    return threads.length ? [{ ...project, threads }] : [];
+  });
   const email = props.auth.account?.email || "";
   const accountName = email ? email.split("@")[0] : "Rux User";
   return <aside className="sidebar" aria-label="Rux 导航" style={{ flexBasis: sidebarWidth, width: sidebarWidth }}>
-    <div className="sidebar-brand-row"><strong className="brand">Rux</strong><div className="sidebar-actions"><IconButton label="搜索" active={searchOpen} onClick={() => { setSearchOpen((open) => !open); setProfileOpen(false); }}><MagnifyingGlass size={18} /></IconButton></div></div>
-    {searchOpen && <label className="sidebar-search"><MagnifyingGlass size={16} /><input aria-label="搜索项目和会话" autoFocus value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} /><IconButton label="清除搜索" onClick={() => setSearchQuery("")}><X size={14} /></IconButton></label>}
-
-    <button type="button" className="sidebar-new-chat" aria-label="新建独立会话" onClick={props.onNewStandalone}><PencilSimple size={17} /><span>新建会话</span></button>
-    <nav className="sidebar-scroll">{query && !standaloneThreads.length && !projects.length && <p className="sidebar-empty" role="status">未找到匹配的项目或会话</p>}<section className="sidebar-section"><div className="section-heading"><span>独立会话</span></div><div className="sidebar-list">{standaloneThreads.map((thread) => { const target: ActiveThread = { type: "standalone", ...thread }; return <ThreadRow key={thread.id} thread={thread} running={props.runningThreadIds.has(thread.id)} active={props.activeThread?.type === "standalone" && props.activeThread.id === thread.id} onSelect={() => props.onSelectStandalone(thread)} onRename={() => props.onRenameThread(target)} onDelete={() => props.onDeleteThread(target)} />; })}</div></section>
-      <div className="section-divider" />
-      <section className="sidebar-section project-section"><div className="section-heading"><span>项目</span><IconButton label="添加项目" onClick={(event) => props.onAddProject(event.currentTarget)}><Plus size={17} /></IconButton></div><div className="project-tree">{projects.map((project) => { const expanded = Boolean(query) || props.expandedProjects.includes(project.id); const activeProject = props.activeThread?.type === "project" && props.activeThread.projectId === project.id; return <div className={`project-node ${expanded ? "is-expanded" : ""} ${activeProject ? "has-active-thread" : ""} ${projectMenuId === project.id ? "is-menu-open" : ""}`} data-project-menu-scope={project.id} key={project.id}><div className="project-row-wrap"><button type="button" className="project-row" aria-expanded={expanded} onClick={() => { props.onToggleProject(project.id); setProjectMenuId(null); setProjectMenuPosition(null); }} onContextMenu={(event) => { event.preventDefault(); setProjectMenuId(project.id); setProjectMenuPosition({ top: event.clientY + 4, left: event.clientX - 8 }); }}>{expanded ? <FolderOpen size={18} /> : <Folder size={18} />}<span>{project.name}</span></button><div className="project-row-actions"><IconButton ref={(element) => { projectMenuTriggers.current[project.id] = element; }} label={`项目操作 ${project.name}`} className="project-action-button" active={projectMenuId === project.id} onClick={(event) => { event.stopPropagation(); if (projectMenuId === project.id) { setProjectMenuId(null); setProjectMenuPosition(null); } else { const rect = event.currentTarget.getBoundingClientRect(); setProjectMenuId(project.id); setProjectMenuPosition({ top: rect.bottom + 4, left: rect.left - 6 }); } }}><DotsThree size={17} /></IconButton><IconButton label={`新建项目会话 ${project.name}`} className="project-new-thread-button" onClick={(event) => { event.stopPropagation(); props.onNewProjectThread(project); }}><PencilSimple size={17} /></IconButton></div></div>
-        {projectMenuId === project.id && projectMenuPosition && createPortal(<div className="project-action-popover" data-project-menu-scope={project.id} role="menu" style={projectMenuPosition}><button type="button" onClick={() => { setProjectMenuId(null); setProjectMenuPosition(null); props.onNewProjectThread(project); }}><PencilSimple size={17} />新建会话</button><div className="project-menu-separator" /><button type="button" onClick={() => { setProjectMenuId(null); setProjectMenuPosition(null); props.onOpenProjectPath(project); }}><FolderOpen size={17} />在文件管理器中打开</button><button type="button" onClick={() => { setProjectMenuId(null); setProjectMenuPosition(null); props.onCopyProjectPath(project); }}><Paperclip size={17} />复制项目路径</button><div className="project-menu-separator" /><button type="button" className="danger-text" onClick={() => { setProjectMenuId(null); setProjectMenuPosition(null); props.onRemoveProject(project); }}><Trash size={17} />移除项目</button></div>, document.body)}
-        {expanded && <div className="thread-children">{project.threads.map((thread) => { const target: ActiveThread = { type: "project", projectId: project.id, projectName: project.name, projectPath: project.path, ...thread }; return <ThreadRow key={thread.id} thread={thread} child running={props.runningThreadIds.has(thread.id)} active={props.activeThread?.type === "project" && props.activeThread.id === thread.id} onSelect={() => props.onSelectProjectThread(project, thread)} onRename={() => props.onRenameThread(target)} onDelete={() => props.onDeleteThread(target)} />; })}</div>}
-      </div>; })}</div></section></nav>
-    {profileOpen && <div ref={profilePopover} id="sidebar-account-popover" className="sidebar-popover profile-popover"><strong>{accountName}</strong><small>{email || (props.auth.connected ? "Codex 已连接" : "Codex 未登录")}</small><button type="button" onClick={() => { setProfileOpen(false); props.onOpenSettings(); }}><GearSix size={16} />设置</button></div>}
-    <button ref={profileTrigger} type="button" className="profile-row" onClick={() => { setProfileOpen((open) => !open); setSearchOpen(false); }} aria-controls={profileOpen ? "sidebar-account-popover" : undefined} aria-expanded={profileOpen}><span className="avatar avatar-small">{accountName.slice(0, 1).toUpperCase()}</span><span>{accountName}</span><CaretDown size={15} /></button>
-    <SidebarResizeHandle width={sidebarWidth} maximum={maximumWidth} onChange={setPreferredWidth} onCommit={(width) => { try { localStorage.setItem(SIDEBAR_WIDTH_KEY, String(width)); } catch { /* Width still applies for this window. */ } }} />
+    <div className="sidebar-brand-row"><strong className="brand"><img src={ruxMark} alt="" />Rux</strong><div className="sidebar-actions"><IconButton label="搜索" icon="search" active={searchOpen} onClick={() => { setSearchOpen((open) => !open); setProfileOpen(false); }} /></div></div>
+    {searchOpen && <label className="sidebar-search"><MagnifyingGlass /><Input size="sm" aria-label="搜索项目和会话" autoFocus value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} /><IconButton label="清除搜索" icon="close" onClick={() => setSearchQuery("")} /></label>}
+    <Button variant="secondary" size="lg" className="sidebar-new-chat" aria-label="新建独立会话" onClick={props.onNewStandalone}><Plus size="md" /><span>新建会话</span><kbd>⌘ N</kbd></Button>
+    <nav className="sidebar-scroll">
+      {query && !standaloneThreads.length && !projects.length && <p className="sidebar-empty" role="status">未找到匹配的项目或会话</p>}
+      <section className="sidebar-section project-section"><div className="section-heading"><span>项目</span><IconButton label="添加项目" icon="add" onClick={(event) => props.onAddProject(event.currentTarget)} /></div><div className="project-tree">{projects.map((project) => <ProjectNode key={project.id} project={project} actions={props} query={query} />)}</div></section>
+      {standaloneThreads.length > 0 && <><div className="section-divider" /><section className="sidebar-section"><div className="section-heading"><span>独立会话</span></div><div className="sidebar-list">{standaloneThreads.map((thread) => {
+        const target: ActiveThread = { type: "standalone", ...thread };
+        return <ThreadRow key={thread.id} thread={thread} running={props.runningThreadIds.has(thread.id)} active={props.activeThread?.type === "standalone" && props.activeThread.id === thread.id} onSelect={() => props.onSelectStandalone(thread)} onRename={() => props.onRenameThread(target)} onDelete={() => props.onDeleteThread(target)} />;
+      })}</div></section></>}
+    </nav>
+    <Popover label="账户" open={profileOpen} onOpenChange={(open) => { setProfileOpen(open); if (open) setSearchOpen(false); }} align="start" className="profile-popover" trigger={<Button variant="plain" className="profile-row"><span className="avatar avatar-small">{accountName.slice(0, 1).toUpperCase()}</span><span>{accountName}</span><CaretDown size="xs" /></Button>}><strong>{accountName}</strong><small>{email || (props.auth.connected ? "Codex 已连接" : "Codex 未登录")}</small><Button variant="ghost" onClick={() => { setProfileOpen(false); props.onOpenSettings(); }}><GearSix />设置</Button></Popover>
+    <Button variant="plain" className="sidebar-settings" aria-label="打开设置" onClick={props.onOpenSettings}><GearSix />设置</Button>
+    <SidebarResizeHandle width={sidebarWidth} maximum={maximumWidth} onChange={setPreferredWidth} onCommit={(width) => { try { localStorage.setItem(SIDEBAR_WIDTH_KEY, String(width)); } catch { /* Applies to this window even if storage is unavailable. */ } }} />
   </aside>;
 }

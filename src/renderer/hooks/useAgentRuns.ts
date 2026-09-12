@@ -10,7 +10,7 @@ type RunContext = { runId: string; localThreadId: string; assistantMessageId: st
 
 type Input = {
   api: RuxApi; activeThread: ActiveThread | null; activeProjectId?: string; selectedAgent: AgentId; agentMode: string;
-  preference: { model: string; reasoning: Reasoning; serviceTier: string | null }; settings: ComposerSettings; attachments: string[]; webSearch: boolean; agents: AgentDefinition[];
+  preference: { model: string; reasoning: Reasoning; serviceTier: string | null }; modelLabel?: string; settings: ComposerSettings; attachments: string[]; webSearch: boolean; agents: AgentDefinition[];
   setMessages: Dispatch<SetStateAction<MessageStore>>; setAttachments: Dispatch<SetStateAction<string[]>>; setComposerValue: Dispatch<SetStateAction<string>>;
   setActiveThread: Dispatch<SetStateAction<ActiveThread | null>>; reloadWorkspace: () => Promise<WorkspaceState>; refreshGit: (projectId?: string) => Promise<void>; notify: (message: string) => void;
   onDraftPersisted?: (draftId: string) => void;
@@ -19,6 +19,7 @@ type Input = {
 export function useAgentRuns(input: Input) {
   const [runningThreadIds, setRunningThreadIds] = useState<Set<string>>(() => new Set());
   const contexts = useRef<Map<string, RunContext>>(new Map());
+  const completedContexts = useRef<Map<string, RunContext>>(new Map());
   const startingThreads = useRef(new Map<string, { projectId?: string }>());
   const streamQueue = useRef<Array<{ context: RunContext; event: AgentEvent }>>([]);
   const streamTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -39,7 +40,9 @@ export function useAgentRuns(input: Input) {
   }, [input.setMessages]);
   useEffect(() => () => { clearTimeout(streamTimer.current); }, []);
   useEffect(() => input.api.agent.onEvent((rawEvent) => {
-    const event = rawEvent as AgentEvent; const context = contexts.current.get(event.runId); if (!context) return;
+    const event = rawEvent as AgentEvent;
+    const context = contexts.current.get(event.runId) || (event.type === "turn-metadata" ? completedContexts.current.get(event.runId) : undefined);
+    if (!context) return;
     if (event.type === "thread-started" && event.threadId) {
       context.threadId = event.threadId;
       input.api.threads.update({ type: context.type, projectId: context.projectId, threadId: context.localThreadId, agentId: context.agentId, nativeSessionId: event.threadId, agentMode: context.agentMode, codexThreadId: context.agentId === "codex" ? event.threadId : undefined, title: context.shouldRename ? context.prompt.slice(0, 28) : undefined }).then((updated) => {
@@ -52,6 +55,8 @@ export function useAgentRuns(input: Input) {
     streamTimer.current ??= setTimeout(flushStream, 16);
     if (event.type === "turn-completed" || event.type === "error") {
       flushStream();
+      completedContexts.current.set(event.runId, context);
+      if (completedContexts.current.size > 100) completedContexts.current.delete(completedContexts.current.keys().next().value!);
       contexts.current.delete(event.runId); setRunningThreadIds((current) => { const next = new Set(current); next.delete(context.localThreadId); return next; }); if (context.projectId) void input.refreshGit(context.projectId);
     }
   }), [input.api, input.notify, input.refreshGit, input.reloadWorkspace, input.setActiveThread, flushStream]);
@@ -83,7 +88,8 @@ export function useAgentRuns(input: Input) {
     }
     const runId = crypto.randomUUID();
     const userMessage: RuxMessage = { id: crypto.randomUUID(), role: "user", text: prompt, parts: [{ type: "text", text: prompt }], attachments: [...input.attachments], createdAt: new Date().toISOString(), agentId: input.selectedAgent };
-    const assistantMessage: RuxMessage = { id: crypto.randomUUID(), role: "assistant", text: "", parts: [], status: "running", createdAt: new Date().toISOString(), agentId: input.selectedAgent };
+    const assistantId = crypto.randomUUID();
+    const assistantMessage: RuxMessage = { id: assistantId, role: "assistant", text: "", parts: [], status: "running", createdAt: new Date().toISOString(), agentId: input.selectedAgent, turnInfo: { recordId: assistantId, agentId: input.selectedAgent === "codex" && input.settings.provider === "custom" ? "api" : input.selectedAgent, model: input.preference.model, modelLabel: input.modelLabel, reasoning: input.preference.reasoning, mode: input.agentMode, startedAt: Date.now() } };
     const nativeSessionId = targetThread.nativeSessionId || (input.selectedAgent === "codex" ? targetThread.codexThreadId : "") || "";
     const context: RunContext = { runId, localThreadId: targetThread.id, assistantMessageId: assistantMessage.id, type: targetThread.type, projectId: targetThread.projectId, prompt, shouldRename: targetThread.title.startsWith("未命名") || targetThread.title === "项目会话", agentId: input.selectedAgent, agentMode: input.agentMode, threadId: nativeSessionId, turnId: "" };
     contexts.current.set(runId, context);

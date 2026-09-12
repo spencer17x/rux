@@ -1,0 +1,30 @@
+.ui-gallery { max-width: 1180px; margin: 0 auto; padding: 32px; color: var(--text); font-size: 14px; }
+body:has(.ui-gallery) { overflow: auto; background: var(--surface); }
+.ui-gallery-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; }
+.ui-gallery-header h1 { margin: 3px 0 8px; font-size: 28px; }
+.ui-gallery-header p { margin: 0; color: var(--subtle); font-size: 12px; }
+.ui-gallery-header span, .ui-gallery section > p { color: var(--muted); }
+.ui-gallery-header a { color: var(--signature-muted); font-size: 13px; }
+.ui-gallery h2 { margin: 0 0 10px; font-size: 17px; font-weight: 600; }
+.ui-gallery-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; padding-top: 28px; }
+.ui-gallery-grid section { min-width: 0; padding: 22px; border: 1px solid var(--border); border-radius: var(--rux-radius-panel); }
+.ui-gallery section p { line-height: 22px; }
+.ui-gallery-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 16px 0; }
+.ui-gallery-fields { display: grid; gap: 14px; }
+.ui-gallery-fields label, .ui-gallery-slider { display: grid; gap: 7px; font-size: 13px; }
+.ui-gallery-setting { display: flex; align-items: center; justify-content: space-between; min-height: 42px; margin: 8px 0; }
+.ui-gallery-slider { margin-top: 24px; }
+.ui-gallery-status { margin: 20px 0; color: var(--signature-muted); }
+.ui-gallery-popover { width: 250px; font-size: 13px; }
+.ui-gallery-popover p { color: var(--muted); line-height: 20px; }
+.ui-gallery-modal { padding: 20px; }
+.ui-gallery-icon-controls { padding-top: 28px; }
+.ui-gallery-icon-controls .ui-select { width: 160px; }
+.ui-gallery-icons { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 12px; margin-top: 22px; }
+.ui-gallery-icon { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; min-height: 100px; padding: 16px 8px; border: 1px solid var(--border); border-radius: var(--rux-radius-control); }
+.ui-gallery-icon code { font-size: 11px; }
+.ui-gallery-tokens { margin: 24px 0; max-width: 700px; }
+.ui-gallery-tokens > div { display: flex; justify-content: space-between; gap: 24px; padding: 12px 0; border-bottom: 1px solid var(--border); font: 13px ui-monospace, monospace; }
+.ui-gallery-tokens dd { margin: 0; color: var(--muted); }
+.ui-gallery .ui-tab-panel > section { margin-top: 28px; }
+@media (max-width: 760px) { .ui-gallery { padding: 20px; } .ui-gallery-grid { grid-template-columns: 1fr; } }

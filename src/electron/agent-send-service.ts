@@ -4,6 +4,7 @@ import type { RunProcess } from "./ipc-types";
 import type { ReasoningEffort, RuxSettings, SandboxMode, SettingsStore } from "./settings-store";
 import type { WorkspaceStore } from "./workspace-store";
 import { codexBufferedPermissionArgs } from "./agents/codex-permissions";
+import { responsesUsage, type TokenUsage } from "../shared/turn-info";
 
 export type BufferedSendInput = { projectId?: string; prompt: string; model?: string; reasoning?: ReasoningEffort; sandboxMode?: SandboxMode; images?: string[]; webSearch?: boolean; threadId?: string };
 export type CustomSendInput = { prompt: string; model?: string; reasoning?: ReasoningEffort; images?: string[]; signal?: AbortSignal };
@@ -22,7 +23,7 @@ export class AgentSendService {
     const result = await this.runProcess(this.codexExecutable(), args, { cwd, timeoutMs: 10 * 60_000, env: this.codexEnvironment() }); if (result.code !== 0) throw new Error(result.stderr.trim() || "Codex 执行失败"); const parsed = this.parseOutput(result.stdout); if (!parsed.text) throw new Error("Codex 未返回可显示的消息"); return { ...parsed, diagnostics: result.stderr.trim() };
   }
 
-  async custom(input: CustomSendInput, override?: RuxSettings): Promise<{ text: string }> {
+  async custom(input: CustomSendInput, override?: RuxSettings): Promise<{ text: string; model?: string; usage?: TokenUsage }> {
     const settings = override ?? await this.settingsStore.load(); const apiKey = this.settingsStore.decryptApiKey(settings); if (!apiKey) throw new Error("请先保存 API key"); const model = (input.model || settings.model).trim(); if (!model || model === "default") throw new Error("请选择模型");
     const content: Array<Record<string, string>> = [{ type: "input_text", text: input.prompt }];
     for (const path of (input.images || []).slice(0, 8)) {
@@ -34,7 +35,13 @@ export class AgentSendService {
     }
     const requestInput: unknown = content.length === 1 ? input.prompt : [{ role: "user", content }];
     const timeoutSignal = AbortSignal.timeout(120_000); const signal = input.signal ? AbortSignal.any([input.signal, timeoutSignal]) : timeoutSignal;
-    const response = await fetch(`${settings.baseUrl.replace(/\/+$/, "")}/responses`, { method: "POST", headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ model, input: requestInput, reasoning: { effort: input.reasoning ?? settings.reasoning }, store: false }), signal }); const body = await response.json() as { output_text?: string; error?: { message?: string } }; if (!response.ok) throw new Error(body.error?.message || `服务返回 ${response.status}`); if (!body.output_text) throw new Error("服务未返回文本"); return { text: body.output_text };
+    const response = await fetch(`${settings.baseUrl.replace(/\/+$/, "")}/responses`, { method: "POST", headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ model, input: requestInput, reasoning: { effort: input.reasoning ?? settings.reasoning }, store: false }), signal });
+    const body = await response.json() as { model?: string; usage?: unknown; output_text?: string; output?: Array<{ type?: string; content?: Array<{ type?: string; text?: string }> }>; error?: { message?: string } };
+    if (!response.ok) throw new Error(body.error?.message || `服务返回 ${response.status}`);
+    const text = body.output_text || (body.output || []).filter((item) => item.type === "message").flatMap((item) => (item.content || []).filter((part) => part.type === "output_text").map((part) => part.text || "")).join("\n");
+    if (!text) throw new Error("服务未返回文本");
+    const usage = responsesUsage(body.usage);
+    return { text, ...(body.model ? { model: body.model } : {}), ...(usage ? { usage } : {}) };
   }
 
   private async exists(path: string): Promise<boolean> { try { await access(path); return true; } catch { return false; } }

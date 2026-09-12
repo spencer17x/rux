@@ -6,7 +6,7 @@ import {
   SlidersHorizontal,
   TerminalWindow,
   type Icon,
-} from "@phosphor-icons/react";
+} from "../ui/icons";
 import type { WorkspaceToolId } from "../renderer/types";
 
 export type WorkspaceToolDefinition = {

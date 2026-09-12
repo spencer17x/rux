@@ -34,9 +34,14 @@ describe("StateDatabase", () => {
     const state = database();
     state.saveWorkspace({ projects: [], standaloneThreads: [{ id: "thread-1", title: "Chat" }] });
     state.saveMessages({ "thread-1": [{ id: "message-1", role: "user", text: "hello" }] });
+    state.saveTurnInfo({ "thread-1": [{ id: "assistant", role: "assistant", turnInfo: { agentId: "codex", nativeTurnId: "turn", model: "gpt-6-astra", usage: { totalTokens: 123 }, secret: "discard" } }] });
+    state.saveMessages({});
+    expect(state.loadTurnInfo()["thread-1"]).toEqual([{ recordId: "assistant", agentId: "codex", nativeTurnId: "turn", model: "gpt-6-astra", usage: { totalTokens: 123 } }]);
+    state.saveMessages({ "thread-1": [{ id: "message-1", role: "user", text: "hello" }] });
     expect(state.loadMessages()["thread-1"]).toHaveLength(1);
     state.saveWorkspace({ projects: [], standaloneThreads: [] });
     expect(state.loadMessages()).toEqual({});
+    expect(state.loadTurnInfo()).toEqual({});
     state.close();
   });
 });

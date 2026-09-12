@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { sanitizeTurnInfo, type TurnInfo } from "../shared/turn-info";
 
 export type StoredThread = {
   id: string;
@@ -65,6 +66,12 @@ export class StateDatabase {
         thread_id TEXT PRIMARY KEY REFERENCES threads(id) ON DELETE CASCADE,
         data_json TEXT NOT NULL,
         updated_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS turn_metadata (
+        thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+        message_id TEXT NOT NULL,
+        data_json TEXT NOT NULL,
+        PRIMARY KEY (thread_id, message_id)
       );
     `);
   }
@@ -138,6 +145,35 @@ export class StateDatabase {
         if (existingThreads.has(threadId)) upsert.run(threadId, JSON.stringify(threadMessages), Date.now());
       }
       for (const row of this.database.prepare("SELECT thread_id FROM messages").all() as Array<{ thread_id: string }>) if (!(row.thread_id in messages)) remove.run(row.thread_id);
+    });
+  }
+
+  loadTurnInfo(): Record<string, TurnInfo[]> {
+    const result: Record<string, TurnInfo[]> = {};
+    for (const row of this.database.prepare("SELECT thread_id, data_json FROM turn_metadata").all() as Array<{ thread_id: string; data_json: string }>) {
+      try {
+        const info = sanitizeTurnInfo(JSON.parse(row.data_json));
+        if (info) (result[row.thread_id] ??= []).push(info);
+      } catch { /* One damaged run record must not hide the transcript. */ }
+    }
+    return result;
+  }
+
+  saveTurnInfo(messages: Record<string, unknown[]>): void {
+    const existing = new Set((this.database.prepare("SELECT id FROM threads").all() as Array<{ id: string }>).map((row) => row.id));
+    const upsert = this.database.prepare("INSERT INTO turn_metadata(thread_id, message_id, data_json) VALUES (?, ?, ?) ON CONFLICT(thread_id, message_id) DO UPDATE SET data_json = excluded.data_json");
+    this.transaction(() => {
+      for (const [threadId, entries] of Object.entries(messages)) {
+        if (!existing.has(threadId)) continue;
+        for (const entry of entries) {
+          if (!entry || typeof entry !== "object") continue;
+          const message = entry as Record<string, unknown>;
+          const info = sanitizeTurnInfo(message.turnInfo);
+          if (message.role !== "assistant" || !info || typeof message.id !== "string") continue;
+          info.recordId ||= message.id.slice(0, 300);
+          upsert.run(threadId, info.recordId, JSON.stringify(info));
+        }
+      }
     });
   }
 

@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
-import { CircleNotch } from "@phosphor-icons/react";
+import { CircleNotch } from "../ui/icons";
 import "@xterm/xterm/css/xterm.css";
 
 export type TerminalChunk = { sequence: number; data: string };
@@ -101,5 +101,5 @@ export default function RuxTerminal({ starting = false, output, onInput, onResiz
   }, [output]);
 
   const accessibleOutput = terminalAccessibleText(output);
-  return <section className="terminal-panel"><div className="xterm-container" ref={containerRef} aria-label="项目终端" />{starting && <div className="terminal-starting-state" role="status" aria-live="polite"><CircleNotch size={15} className="spin" />正在启动终端…</div>}<pre className="sr-only" aria-live="polite" aria-label="终端输出">{accessibleOutput}</pre></section>;
+  return <section className="terminal-panel"><div className="xterm-container" ref={containerRef} aria-label="项目终端" />{starting && <div className="terminal-starting-state" role="status" aria-live="polite"><CircleNotch size="sm" className="spin" />正在启动终端…</div>}<pre className="sr-only" aria-live="polite" aria-label="终端输出">{accessibleOutput}</pre></section>;
 }

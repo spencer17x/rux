@@ -31,6 +31,7 @@ test.afterEach(async () => {
 
 test("creates the initial standalone conversation and opens typed settings", async () => {
   await expect(page.locator("aside.sidebar")).toBeVisible();
+  await expect(page.getByRole("button", { name: "发送", exact: true })).toBeDisabled();
   const sidebarToggle = page.getByRole("button", { name: "切换左侧面板" });
   await expect(sidebarToggle).toHaveAttribute("aria-pressed", "true");
   await sidebarToggle.click();
@@ -51,8 +52,9 @@ test("creates the initial standalone conversation and opens typed settings", asy
   await expect(page.getByText("RUX_E2E_AGENT_OK", { exact: true }).last()).toBeVisible();
   await expect(page.getByText("进行中", { exact: true })).toBeHidden();
   await expect(page.getByText("Rux 正在继续处理", { exact: true })).toBeHidden();
-  await expect(page.getByText("已完成", { exact: true }).last()).toBeVisible();
-  await page.getByRole("button", { name: "复制会话内容" }).click();
+  await expect(page.getByLabel("本轮状态：已完成", { exact: true }).last()).toBeVisible();
+  await page.getByRole("button", { name: "更多", exact: true }).click();
+  await page.getByRole("menuitem", { name: "复制会话内容" }).click();
   await expect(page.getByRole("status")).toContainText("会话内容已复制");
   await page.getByRole("button", { name: /会话操作 未命名会话/ }).click();
   await page.getByRole("menuitem", { name: "重命名会话" }).click();
@@ -62,14 +64,14 @@ test("creates the initial standalone conversation and opens typed settings", asy
   await expect(page.getByRole("button", { name: "E2E renamed", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "添加项目" }).click();
   await expect(page.getByRole("dialog", { name: "添加项目" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "设置" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "设置", exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: /新建项目 创建空项目/ }).click();
   await page.getByRole("button", { name: "继续" }).click();
   await expect(page.getByRole("textbox", { name: "项目名称" })).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog", { name: "添加项目" })).toBeHidden();
   await expect(page.getByRole("button", { name: "添加项目" })).toBeFocused();
-  await page.getByRole("button", { name: "设置" }).click();
+  await page.getByRole("button", { name: "设置", exact: true }).click();
   await expect(page.getByRole("heading", { name: "模型与连接" })).toBeVisible();
   await page.getByRole("button", { name: "常规" }).click();
   await expect(page.getByRole("heading", { name: "账户" })).toBeVisible();
@@ -80,11 +82,11 @@ test("creates the initial standalone conversation and opens typed settings", asy
   await page.getByRole("button", { name: "保存对话设置" }).click();
   await expect(page.locator(".settings-status")).toContainText("已保存");
   await page.getByRole("button", { name: "权限", exact: true }).click();
-  await page.getByRole("button", { name: "完全访问", exact: true }).click();
+  await page.getByRole("radio", { name: "完全访问", exact: true }).click();
   await page.getByRole("button", { name: "保存权限", exact: true }).click();
   await expect(page.getByRole("alertdialog", { name: "要开启完整访问权限吗？" })).toBeVisible();
   await page.getByRole("button", { name: "取消", exact: true }).click();
-  await page.getByRole("button", { name: "帮我批准", exact: true }).click();
+  await page.getByRole("radio", { name: "帮我批准", exact: true }).click();
   await page.getByRole("button", { name: "保存权限", exact: true }).click();
   await page.getByRole("button", { name: "返回 Rux" }).click();
   await page.getByRole("button", { name: "操作批准方式" }).click();
@@ -130,7 +132,7 @@ test("creates the initial standalone conversation and opens typed settings", asy
 test("deletes a conversation from the sidebar action menu", async () => {
   await page.getByRole("textbox", { name: "消息" }).fill("Create deletable standalone");
   await page.getByRole("button", { name: "发送" }).click();
-  await expect(page.getByText("RUX_E2E_AGENT_OK", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("本轮状态：已完成", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: /会话操作 未命名会话/ }).last().click();
   await page.getByRole("menuitem", { name: "重命名会话" }).click();
   await page.getByRole("textbox", { name: "会话名称" }).fill("Delete me");
@@ -148,7 +150,7 @@ test("keeps unsent standalone drafts isolated and restores them after restart", 
   await page.getByRole("textbox", { name: "消息" }).fill("Persisted conversation");
   await page.getByRole("button", { name: "发送" }).click();
   await expect(page.getByText("RUX_E2E_AGENT_OK", { exact: true })).toBeVisible();
-  await expect(page.getByText("已完成", { exact: true }).last()).toBeVisible();
+  await expect(page.getByLabel("本轮状态：已完成", { exact: true }).last()).toBeVisible();
   const persistedThread = page.getByRole("button", { name: "未命名会话", exact: true });
   await expect(persistedThread).toBeVisible();
 
@@ -200,8 +202,8 @@ test("restores a SQLite project and executes a command through the PTY terminal"
   await expect(page.getByText("project", { exact: true }).first()).toBeVisible();
   await expect(page.getByRole("button", { name: "切换右侧面板" })).toHaveAttribute("aria-pressed", "false");
   await page.getByRole("button", { name: "更多", exact: true }).click();
-  await expect(page.getByRole("button", { name: "复制项目路径" })).toBeVisible();
-  await page.getByRole("button", { name: "复制项目路径" }).click();
+  await expect(page.getByRole("menuitem", { name: "复制项目路径" })).toBeVisible();
+  await page.getByRole("menuitem", { name: "复制项目路径" }).click();
   await expect(page.getByRole("status")).toContainText("项目路径已复制");
   await page.getByRole("button", { name: "切换右侧面板" }).click();
   await page.getByRole("button", { name: "环境", exact: true }).click();
@@ -211,7 +213,7 @@ test("restores a SQLite project and executes a command through the PTY terminal"
   await expect(page.getByRole("button", { name: /比较分支/ })).toBeVisible();
   await page.getByRole("button", { name: /比较分支/ }).click();
   await page.getByRole("menuitem", { name: "main", exact: true }).click();
-  await expect(page.getByRole("button", { name: /^分支比较/ })).toBeVisible();
+  await expect(page.getByRole("tab", { name: /^分支比较/ })).toBeVisible();
   await expect(page.locator(".real-diff")).toContainText("+feature");
   await expect(page.locator(".diff-line.is-added")).toBeInViewport();
   await expect(page.getByRole("complementary", { name: "环境信息" }).getByRole("button", { name: "提交或推送" })).toBeDisabled();
@@ -221,23 +223,23 @@ test("restores a SQLite project and executes a command through the PTY terminal"
   const projectMenuTrigger = page.getByRole("button", { name: "项目操作 project" });
   await projectMenuTrigger.click();
   await expect(page.getByRole("menu")).toBeVisible();
-  const openInFileManager = page.getByRole("button", { name: "在文件管理器中打开", exact: true });
+  const openInFileManager = page.getByRole("menuitem", { name: "在文件管理器中打开", exact: true });
   await expect(openInFileManager).toBeVisible();
   const openItemMetrics = await openInFileManager.evaluate((element) => ({ whiteSpace: getComputedStyle(element).whiteSpace, height: element.getBoundingClientRect().height, clientWidth: element.clientWidth, scrollWidth: element.scrollWidth }));
-  expect(openItemMetrics.whiteSpace).toBe("nowrap"); expect(openItemMetrics.height).toBeGreaterThanOrEqual(33); expect(openItemMetrics.height).toBeLessThanOrEqual(35); expect(openItemMetrics.scrollWidth).toBe(openItemMetrics.clientWidth);
+  expect(openItemMetrics.whiteSpace).toBe("nowrap"); expect(openItemMetrics.height).toBe(32); expect(openItemMetrics.scrollWidth).toBe(openItemMetrics.clientWidth);
   await page.keyboard.press("Escape");
   await expect(page.getByRole("menu")).toBeHidden();
   await expect(projectMenuTrigger).toBeFocused();
   await page.getByRole("button", { name: "切换底部面板" }).click();
   await page.getByRole("button", { name: "关闭右侧面板" }).click();
   await page.getByRole("button", { name: "切换工作区工具" }).click();
-  await page.getByRole("button", { name: /^侧边聊天/ }).click();
+  await page.getByRole("menuitem", { name: /^侧边聊天/ }).click();
   await page.getByRole("textbox", { name: "侧边聊天消息" }).fill("E2E side turn");
   await page.getByRole("button", { name: "发送侧边聊天消息" }).click();
   await expect(page.getByText("Codex 正在回复", { exact: true })).toBeVisible();
   await expect(page.getByText("RUX_E2E_AGENT_OK", { exact: true }).last()).toBeVisible();
   await page.getByRole("button", { name: "切换工作区工具" }).click();
-  await page.getByRole("button", { name: /^终端/ }).click();
+  await page.getByRole("menuitem", { name: /^终端/ }).click();
   const terminalInput = page.locator(".xterm-helper-textarea");
   await terminalInput.focus();
   await terminalInput.pressSequentially("printf RUX_E2E_TERMINAL", { delay: 50 });
@@ -412,20 +414,123 @@ test("commits model effort on release, keeps the picker open, and preserves outs
 
 test("resizes and remembers sidebar width with the measured desktop dimensions", async () => {
   const separator = page.getByRole("separator", { name: "调整侧栏宽度", exact: true });
-  await expect(separator).toHaveAttribute("aria-valuenow", "275");
+  await expect(separator).toHaveAttribute("aria-valuenow", "300");
   const dimensions = await page.evaluate(() => ({ header: document.querySelector(".topbar")!.getBoundingClientRect().height, content: document.querySelector(".aui-thread-root")!.getBoundingClientRect().width }));
   expect(dimensions.header).toBe(46);
-  expect(dimensions.content).toBe(768);
+  expect(dimensions.content).toBe(960);
   await separator.press("ArrowRight");
-  await expect(separator).toHaveAttribute("aria-valuenow", "285");
+  await expect(separator).toHaveAttribute("aria-valuenow", "310");
   const box = await separator.boundingBox();
   if (!box) throw new Error("Missing sidebar handle");
   await page.mouse.move(box.x + box.width / 2, box.y + 180);
   await page.mouse.down();
   await page.mouse.move(box.x + box.width / 2 + 45, box.y + 180, { steps: 4 });
   await page.mouse.up();
-  await expect(separator).toHaveAttribute("aria-valuenow", "330");
+  await expect(separator).toHaveAttribute("aria-valuenow", "355");
   await application.close();
   await launchApplication();
-  await expect(page.getByRole("separator", { name: "调整侧栏宽度", exact: true })).toHaveAttribute("aria-valuenow", "330");
+  await expect(page.getByRole("separator", { name: "调整侧栏宽度", exact: true })).toHaveAttribute("aria-valuenow", "355");
+});
+
+
+test("preserves each turn's model, effort and usage after switching models and restarting", async () => {
+  const message = page.getByRole("textbox", { name: "消息", exact: true });
+  await message.fill("First metadata turn");
+  await page.getByRole("button", { name: "发送", exact: true }).click();
+  const signatures = page.getByLabel("本轮运行信息", { exact: true });
+  await expect(signatures.first()).toContainText("E2E Model");
+  await expect(signatures.first()).toContainText("1,560 tokens");
+  const firstSignature = (await signatures.first().textContent())!;
+  await page.getByRole("button", { name: "切换模型、推理强度和速度", exact: true }).click();
+  await page.getByRole("button", { name: "选择模型", exact: true }).click();
+  await page.getByRole("menuitemradio", { name: "6 Astra", exact: true }).click();
+  await page.keyboard.press("Escape");
+  await message.fill("Second metadata turn");
+  await page.getByRole("button", { name: "发送", exact: true }).click();
+  await expect(signatures.last()).toContainText("GPT-6 Astra");
+  await expect(signatures.last()).toContainText("12,480 tokens");
+  await expect(signatures.first()).toHaveText(firstSignature);
+  await page.getByRole("button", { name: "本轮 Token 明细：12,480", exact: true }).click();
+  const usage = page.getByRole("dialog", { name: "本轮 Token 明细", exact: true });
+  await expect(usage).toContainText("9,860");
+  await expect(usage).toContainText("2,620");
+  await page.keyboard.press("Escape");
+  await expect(usage).toBeHidden();
+  await expect.poll(async () => page.evaluate(async () => {
+    const all = await window.rux.messages.list() as Record<string, Array<{ turnInfo?: { usage?: { totalTokens?: number } } }>>;
+    return Object.values(all).flat().filter(item => item.turnInfo?.usage?.totalTokens !== undefined).length;
+  })).toBe(2);
+  await application.close();
+  await launchApplication();
+  await expect(page.getByLabel("本轮运行信息", { exact: true }).first()).toHaveText(firstSignature);
+  await expect(page.getByLabel("本轮运行信息", { exact: true }).last()).toContainText("GPT-6 Astra");
+  await expect(page.getByLabel("本轮运行信息", { exact: true }).last()).toContainText("12,480 tokens");
+});
+
+
+test("renders the selected signature layout with readable turn metadata", async ({}, testInfo) => {
+  await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1440, 1024));
+  const projectPath = join(testRoot, "rux");
+  mkdirSync(projectPath);
+  execFileSync("git", ["init", "-b", "main"], { cwd: projectPath });
+  await page.evaluate(async (path) => {
+    const project = await window.rux.projects.import({ path, createThread: true }) as { id: string; threads: Array<{ id: string }> };
+    const threadId = project.threads[0].id;
+    await window.rux.threads.update({ type: "project", projectId: project.id, threadId, title: "优化对话界面" });
+    await window.rux.projects.addThread({ projectId: project.id, title: "对话历史设计" });
+    await window.rux.projects.addThread({ projectId: project.id, title: "模型选择体验" });
+    await window.rux.settings.save({ model: "gpt-6-astra", reasoning: "xhigh", conversationSticky: false });
+    await window.rux.messages.save({ [threadId]: [
+      { id: "visual-u1", role: "user", parts: [{ type: "text", text: "优化项目栏和常用组件。" }] },
+      { id: "visual-a1", role: "assistant", agentId: "codex", status: "complete", parts: [{ type: "text", text: "项目与会话的层级已整理，图标、按钮和菜单采用统一规范。\n\n左侧项目栏默认展开，文件明细按需查看。" }, { type: "tool-call", toolName: "fileChange", toolCallId: "visual-files", args: { changes: [{ path: "src/navigation/Sidebar.tsx" }, { path: "src/components/IconButton.tsx" }, { path: "src/workbench-theme.css" }] }, result: { status: "completed" } }], turnInfo: { agentId: "codex", model: "gpt-5.6-sol", reasoning: "high", elapsedMs: 18400, usage: { inputTokens: 4980, outputTokens: 1340, totalTokens: 6320 } } },
+      { id: "visual-u2", role: "user", parts: [{ type: "text", text: "每轮显示模型和实际消耗，但不要影响阅读。" }] },
+      { id: "visual-a2", role: "assistant", agentId: "codex", status: "complete", parts: [{ type: "text", text: "已将运行信息压缩为一行，保留在每轮回复末尾。\n\n需要核对时可展开明细，其余时间保持简洁。" }], turnInfo: { agentId: "codex", model: "gpt-6-astra", reasoning: "xhigh", elapsedMs: 42600, usage: { inputTokens: 9860, outputTokens: 2620, cachedInputTokens: 6144, reasoningOutputTokens: 1820, totalTokens: 12480 } } },
+    ] });
+  }, projectPath);
+  await application.close();
+  await launchApplication();
+  await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1440, 1024));
+  await page.setViewportSize({ width: 1440, height: 1024 });
+  expect(await page.evaluate(() => innerHeight)).toBe(1024);
+  await expect(page.getByLabel("本轮运行信息", { exact: true })).toHaveCount(2);
+  await expect(page.getByRole("button", { name: "本轮 Token 明细：12,480", exact: true })).toBeVisible();
+  const footerHeights = await page.locator(".turn-signature").evaluateAll(elements => elements.map(element => element.getBoundingClientRect().height));
+  expect(footerHeights.every(height => height <= 28)).toBe(true);
+  await expect(page.locator(".turn-file-changes")).not.toHaveAttribute("open", "");
+  await expect.poll(async () => page.evaluate(() => document.getAnimations().filter(animation => animation.playState === "running" && animation.effect?.getTiming().iterations !== Infinity).length)).toBe(0);
+  await page.screenshot({ path: testInfo.outputPath("signature-desktop.png") });
+  await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(900, 650));
+  await page.setViewportSize({ width: 900, height: 650 });
+  await page.getByRole("button", { name: "本轮 Token 明细：12,480", exact: true }).scrollIntoViewIfNeeded();
+  const overflow = await page.locator(".assistant-turn-footer").evaluateAll(elements => elements.some(element => element.scrollWidth > element.clientWidth + 1));
+  expect(overflow).toBe(false);
+  await page.screenshot({ path: testInfo.outputPath("signature-narrow.png") });
+});
+
+
+test("shares keyboard and focus behavior across context menus, dialogs and selects", async () => {
+  await page.getByRole("textbox", { name: "消息", exact: true }).fill("UI foundation test");
+  await page.getByRole("button", { name: "发送", exact: true }).click();
+  await expect(page.getByLabel("本轮状态：已完成", { exact: true })).toBeVisible();
+  const row = page.getByRole("button", { name: "未命名会话", exact: true });
+  await row.click({ button: "right" });
+  const context = page.getByRole("menu", { name: "会话操作 未命名会话", exact: true });
+  await expect(context).toBeVisible();
+  await context.getByRole("menuitem", { name: "重命名会话", exact: true }).click();
+  const input = page.getByRole("textbox", { name: "会话名称", exact: true });
+  await expect(input).toBeFocused();
+  await input.press("Escape");
+  await expect(page.getByRole("dialog", { name: "重命名会话", exact: true })).toBeHidden();
+  await expect(row).toBeFocused();
+  await page.getByRole("button", { name: "设置", exact: true }).click();
+  const model = page.getByRole("combobox", { name: "默认模型", exact: true });
+  await model.press("ArrowDown");
+  await page.getByRole("option", { name: "GPT-6 Astra", exact: true }).click();
+  await expect(model).toBeFocused();
+  await expect(model).toContainText("GPT-6 Astra");
+  await page.getByRole("button", { name: "保存默认设置", exact: true }).click();
+  await expect(page.locator(".settings-status")).toContainText("已保存");
+  await page.getByRole("button", { name: "返回 Rux", exact: true }).click();
+  await expect(page.getByRole("button", { name: "切换模型、推理强度和速度", exact: true })).toContainText("GPT-6 Astra");
+  await expect(page.getByLabel("本轮运行信息", { exact: true })).toContainText("E2E Model");
 });

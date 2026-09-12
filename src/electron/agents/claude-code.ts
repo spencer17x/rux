@@ -1,6 +1,7 @@
 import { getSessionMessages, query, type ModelInfo, type PermissionMode, type Query, type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { randomUUID } from "node:crypto";
 import type { CodexStreamEvent } from "./codex-app-server";
+import { claudeUsage, sumUsage, type TokenUsage } from "../../shared/turn-info";
 
 export type ClaudeStreamInput = {
   runId: string;
@@ -26,6 +27,7 @@ type ActiveClaudeRun = {
   messageId?: string;
   blocks: Map<number, { id: string; type: string; name?: string; inputText: string; input?: Record<string, unknown> }>;
   toolItems: Map<string, Record<string, any>>;
+  usageByMessage: Map<string, TokenUsage>;
 };
 
 export class ClaudeCodeClient {
@@ -133,8 +135,10 @@ export class ClaudeCodeClient {
       abortController,
       blocks: new Map(),
       toolItems: new Map(),
+      usageByMessage: new Map(),
     };
     this.runs.set(input.runId, run);
+    this.emit({ runId: input.runId, type: "turn-metadata", turnInfo: { reasoning: input.reasoning === "none" ? "none" : this.effort(input.reasoning), mode: input.mode } });
     void this.consume(run);
     return { runId: input.runId, sessionId: input.sessionId || "", turnId: input.runId };
   }
@@ -202,6 +206,8 @@ export class ClaudeCodeClient {
     }
     if (message.type === "result") {
       const failed = message.subtype !== "success" || message.is_error;
+      const reported = Object.values(message.modelUsage || {}).map(claudeUsage);
+      const usage = sumUsage(reported.length ? reported : [...run.usageByMessage.values()]);
       this.emit({
         runId: run.input.runId,
         type: "turn-completed",
@@ -209,8 +215,12 @@ export class ClaudeCodeClient {
         turnId: run.input.runId,
         status: failed ? "failed" : "completed",
         error: failed ? ("errors" in message ? message.errors.join("\n") : message.result) : undefined,
+        turnInfo: { usage, elapsedMs: message.duration_ms },
       });
       return;
+    }
+    if (message.type === "system" && message.subtype === "init") {
+      this.emit({ runId: run.input.runId, type: "turn-metadata", turnInfo: { model: message.model } });
     }
     if ((message as any).type === "system" && (message as any).subtype === "permission_denied") {
       const denied = message as any;
@@ -256,6 +266,11 @@ export class ClaudeCodeClient {
 
   private handleAssistant(run: ActiveClaudeRun, message: Record<string, any>): void {
     const messageId = String(message.message?.id || run.messageId || randomUUID());
+    if (!message.parent_tool_use_id) {
+      const usage = claudeUsage(message.message?.usage);
+      if (usage) run.usageByMessage.set(messageId, usage);
+      this.emit({ runId: run.input.runId, type: "turn-metadata", threadId: run.sessionId, turnInfo: { model: message.message?.model, nativeMessageIds: [message.uuid, message.message?.id].filter(Boolean), usage: sumUsage([...run.usageByMessage.values()]) } });
+    }
     for (const [index, block] of (message.message?.content || []).entries()) {
       const id = String(block.id || `${messageId}:${index}`);
       if (block.type === "text") this.emitItem(run, "item-completed", id, { type: "agentMessage", id, text: block.text || "" });

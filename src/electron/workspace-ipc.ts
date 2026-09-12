@@ -22,11 +22,12 @@ export function registerWorkspaceIpc(ipc: IpcRegistrar, deps: Dependencies): voi
   ipc.handle("projects:list", deps.loadWorkspace);
   ipc.handle("messages:list", async () => {
     const fallback = deps.stateDatabase().loadMessages();
-    return deps.nativeHistory ? await deps.nativeHistory.load(await deps.loadWorkspace(), fallback) : fallback;
+    return deps.nativeHistory ? await deps.nativeHistory.load(await deps.loadWorkspace(), fallback, deps.stateDatabase().loadTurnInfo()) : fallback;
   });
   ipc.handle("messages:save", async (_event, value) => {
     if (Buffer.byteLength(JSON.stringify(value ?? {}), "utf8") > 20 * 1024 * 1024) throw new Error("会话数据超过 20 MB 上限");
     const messages = parseInput(messagesStoreSchema, value ?? {});
+    deps.stateDatabase().saveTurnInfo(messages);
     const filtered = deps.nativeHistory ? deps.nativeHistory.filterFallback(await deps.loadWorkspace(), messages, deps.stateDatabase().messageThreadIds()) : messages;
     deps.stateDatabase().saveMessages(filtered);
     return { saved: true };

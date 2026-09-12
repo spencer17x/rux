@@ -2,9 +2,10 @@ import type { ClaudeCodeClient } from "./agents/claude-code";
 import type { CodexAppServerClient } from "./agents/codex-app-server";
 import type { PiRuntimeClient } from "./agents/pi-runtime";
 import type { StoredThread, StoredWorkspace } from "./state-database";
+import { claudeUsage, mergeTurnInfo, nonnegativeNumber, piUsage, sumUsage, turnInfoMatches, type TurnInfo } from "../shared/turn-info";
 
 type RuxPart = Record<string, any> & { type: string };
-type RuxMessage = { id: string; role: "user" | "assistant"; parts: RuxPart[]; text?: string; attachments?: string[]; status?: string; error?: string; agentId?: string };
+type RuxMessage = { id: string; role: "user" | "assistant"; parts: RuxPart[]; text?: string; attachments?: string[]; status?: string; error?: string; agentId?: string; turnInfo?: TurnInfo };
 type HistoryStatus = "complete" | "error" | "incomplete";
 
 function nativeId(thread: StoredThread): string {
@@ -80,7 +81,7 @@ function codexMessages(thread: Record<string, any>, agentId: string): RuxMessage
     }
     const status = historyStatus(turn.status);
     const error = String(turn.error?.message || turn.error || "");
-    if (assistantParts.length || (userItems.length && status !== "complete")) result.push({ id: `${turn.id || turnIndex}:assistant`, role: "assistant", parts: error && !assistantParts.length ? [{ type: "text", text: error, status: { type: "incomplete", reason: "error" } }] : assistantParts, status, ...(error ? { error } : {}), agentId });
+    if (assistantParts.length || (userItems.length && status !== "complete")) result.push({ id: `${turn.id || turnIndex}:assistant`, role: "assistant", parts: error && !assistantParts.length ? [{ type: "text", text: error, status: { type: "incomplete", reason: "error" } }] : assistantParts, status, ...(error ? { error } : {}), agentId, turnInfo: { agentId, nativeTurnId: turn.id, elapsedMs: nonnegativeNumber(turn.durationMs), ...(typeof turn.startedAt === "number" ? { startedAt: turn.startedAt * 1000 } : {}), ...(typeof turn.completedAt === "number" ? { completedAt: turn.completedAt * 1000 } : {}) } });
     return result;
   });
 }
@@ -106,6 +107,7 @@ function claudeMessages(entries: any[], agentId: string): RuxMessage[] {
         assistant = { id: entry.uuid || `${entry.session_id || "claude"}:${index}:assistant`, role: "assistant", parts: [], status: "incomplete", agentId };
         result.push(assistant);
       }
+      assistant.turnInfo = mergeTurnInfo(assistant.turnInfo, { agentId, model: message.model, nativeMessageIds: [entry.uuid, message.id].filter(Boolean), usage: sumUsage([assistant.turnInfo?.usage, claudeUsage(message.usage)]) });
       blocks.forEach((block: any, blockIndex: number) => {
         if (block.type === "text" && block.text) assistant!.parts.push({ type: "text", text: block.text, status: { type: "complete" } });
         else if (block.type === "thinking") assistant!.parts.push({ type: "reasoning", text: block.thinking || "", status: { type: "complete" } });
@@ -118,6 +120,8 @@ function claudeMessages(entries: any[], agentId: string): RuxMessage[] {
     if (entry.type === "result" && assistant) {
       const failed = entry.subtype !== "success" || entry.is_error;
       assistant.status = failed ? "error" : "complete";
+      const usages = Object.values(entry.modelUsage || {}).map(claudeUsage);
+      assistant.turnInfo = mergeTurnInfo(assistant.turnInfo, { elapsedMs: nonnegativeNumber(entry.duration_ms), ...(usages.length ? { usage: sumUsage(usages) } : {}) });
       if (failed) assistant.error = Array.isArray(entry.errors) ? entry.errors.join("\n") : entry.result || "Claude Code 执行失败";
     }
   }
@@ -150,6 +154,7 @@ function piMessages(entries: any[], agentId: string): RuxMessage[] {
         assistant = { id: String(entry.id || message.id || `pi:${index}:assistant`), role: "assistant", parts: [], status: "incomplete", agentId };
         result.push(assistant);
       }
+      assistant.turnInfo = mergeTurnInfo(assistant.turnInfo, { agentId, model: typeof message.model === "string" ? `${message.provider ? `${message.provider}/` : ""}${message.model}` : undefined, nativeMessageIds: [entry.id, ...(typeof message.timestamp === "number" ? [`pi:${message.timestamp}`] : [])].filter(Boolean), usage: sumUsage([assistant.turnInfo?.usage, piUsage(message.usage)]) });
       const blocks = Array.isArray(message.content) ? message.content : [{ type: "text", text: contentText(message.content ?? message.text) }];
       blocks.forEach((block: any, blockIndex: number) => {
         if (block.type === "text" && block.text) assistant!.parts.push({ type: "text", text: block.text, status: { type: "complete" } });
@@ -181,7 +186,7 @@ export class NativeHistoryService {
     if (threadId) this.authoritative.add(threadId);
   }
 
-  async load(workspace: StoredWorkspace, fallback: Record<string, unknown[]>): Promise<Record<string, unknown[]>> {
+  async load(workspace: StoredWorkspace, fallback: Record<string, unknown[]>, turnInfo: Record<string, TurnInfo[]> = {}): Promise<Record<string, unknown[]>> {
     const result: Record<string, unknown[]> = {};
     const projectByThread = new Map(workspace.projects.flatMap((project) => project.threads.map((thread) => [thread.id, project.path] as const)));
     const threads = [...workspace.projects.flatMap((project) => project.threads), ...workspace.standaloneThreads];
@@ -193,7 +198,12 @@ export class NativeHistoryService {
         const messages = agentId === "claude-code" ? claudeMessages(await this.claude.readSession(id, projectByThread.get(thread.id)), agentId)
           : agentId === "pi" ? piMessages(await this.pi.readSession(id), agentId)
             : codexMessages(await this.codex.readThread(id) || {}, agentId);
-        result[thread.id] = messages;
+        const saved = turnInfo[thread.id] || [];
+        result[thread.id] = messages.map((message) => {
+          if (message.role !== "assistant") return message;
+          const info = saved.find((info) => turnInfoMatches(info, message.turnInfo));
+          return info ? { ...message, turnInfo: mergeTurnInfo(message.turnInfo, info) } : message;
+        });
         this.authoritative.add(thread.id);
       } catch {
         if (fallback[thread.id]) result[thread.id] = fallback[thread.id];

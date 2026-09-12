@@ -2,6 +2,7 @@ import { app } from "electron";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface } from "node:readline";
 import { codexApprovalPolicy, codexSandboxPolicy, type CodexSandboxMode } from "./codex-permissions";
+import { nonnegativeNumber, subtractUsage, sumUsage, tokenUsage, type TokenUsage, type TurnInfo } from "../../shared/turn-info";
 
 export type CodexStreamInput = {
   runId: string;
@@ -28,6 +29,7 @@ export type CodexStreamEvent = {
   status?: string;
   error?: string;
   approval?: Record<string, unknown>;
+  turnInfo?: TurnInfo;
 };
 
 type JsonRpcMessage = {
@@ -48,6 +50,7 @@ type ActiveRun = {
   runId: string;
   threadId: string;
   turnId?: string;
+  usage?: TokenUsage;
 };
 
 type PendingApproval = {
@@ -64,6 +67,7 @@ export class CodexAppServerClient {
   private readonly runsByThread = new Map<string, ActiveRun>();
   private readonly runsByTurn = new Map<string, ActiveRun>();
   private readonly approvals = new Map<string, PendingApproval>();
+  private readonly threadUsage = new Map<string, TokenUsage>();
 
   constructor(
     private readonly executable: () => string,
@@ -97,7 +101,7 @@ export class CodexAppServerClient {
 
     const run: ActiveRun = { runId: input.runId, threadId };
     this.runsByThread.set(threadId, run);
-    this.emit({ runId: input.runId, type: "thread-started", threadId });
+    this.emit({ runId: input.runId, type: "thread-started", threadId, turnInfo: { model: threadResponse.model || input.model, reasoning: input.reasoning || threadResponse.reasoningEffort || undefined } });
 
     const userInput: Array<Record<string, unknown>> = [
       { type: "text", text: input.prompt, text_elements: [] },
@@ -129,7 +133,7 @@ export class CodexAppServerClient {
     const turnId = String(turnResponse?.turn?.id || "");
     if (!turnId) throw new Error("Codex 未返回 turn id");
     run.turnId = turnId;
-    this.runsByTurn.set(turnId, run);
+    if (this.runsByThread.get(threadId) === run) this.runsByTurn.set(turnId, run);
     return { threadId, turnId };
   }
 
@@ -155,6 +159,7 @@ export class CodexAppServerClient {
     this.runsByThread.clear();
     this.runsByTurn.clear();
     this.approvals.clear();
+    this.threadUsage.clear();
   }
 
   private threadParams(input: CodexStreamInput): Record<string, unknown> {
@@ -274,15 +279,35 @@ export class CodexAppServerClient {
 
   private handleNotification(method: string, params: Record<string, any>): void {
     const run = this.findRun(params);
+    if (method === "thread/tokenUsage/updated") {
+      const active = this.runsByThread.get(String(params.threadId));
+      if (active?.turnId && params.turnId && active.turnId !== params.turnId) return;
+      const total = tokenUsage(params.tokenUsage?.total);
+      const last = tokenUsage(params.tokenUsage?.last);
+      const previous = this.threadUsage.get(String(params.threadId));
+      if (total) this.threadUsage.set(String(params.threadId), total);
+      if (!run || !total) return;
+      // `last` is one provider call; `total` is cumulative across the thread.
+      // Differences count all calls in a turn without double-counting repeats.
+      const delta = previous && (total.totalTokens ?? 0) >= (previous.totalTokens ?? 0) ? subtractUsage(total, previous) : last;
+      run.usage = sumUsage([run.usage, delta]);
+      if (run.usage) this.emit({ runId: run.runId, type: "turn-metadata", threadId: run.threadId, turnId: params.turnId, turnInfo: { usage: run.usage } });
+      return;
+    }
     if (!run) return;
     const base = { runId: run.runId, threadId: run.threadId, turnId: String(params.turnId || run.turnId || "") || undefined };
+    if (method === "model/rerouted") {
+      this.emit({ ...base, type: "turn-metadata", turnInfo: { model: params.toModel } });
+      return;
+    }
     if (method === "turn/started") {
       const turnId = String(params.turn?.id || params.turnId || "");
       if (turnId) {
         run.turnId = turnId;
         this.runsByTurn.set(turnId, run);
       }
-      this.emit({ ...base, type: "turn-started", turnId });
+      const startedAt = nonnegativeNumber(params.turn?.startedAt);
+      this.emit({ ...base, type: "turn-started", turnId, turnInfo: { ...(startedAt === undefined ? {} : { startedAt: startedAt * 1000 }) } });
       return;
     }
     if (method === "item/started") {
@@ -307,7 +332,8 @@ export class CodexAppServerClient {
     }
     if (method === "turn/completed") {
       const status = String(params.turn?.status || "completed");
-      this.emit({ ...base, type: "turn-completed", status, error: params.turn?.error?.message });
+      const completedAt = nonnegativeNumber(params.turn?.completedAt);
+      this.emit({ ...base, type: "turn-completed", status, error: params.turn?.error?.message, turnInfo: { usage: run.usage, elapsedMs: nonnegativeNumber(params.turn?.durationMs), ...(completedAt === undefined ? {} : { completedAt: completedAt * 1000 }) } });
       this.runsByThread.delete(run.threadId);
       if (run.turnId) this.runsByTurn.delete(run.turnId);
       return;
@@ -320,8 +346,8 @@ export class CodexAppServerClient {
   private findRun(params: Record<string, any>): ActiveRun | undefined {
     const turnId = String(params.turnId || params.turn?.id || "");
     const threadId = String(params.threadId || params.thread?.id || "");
-    return (turnId ? this.runsByTurn.get(turnId) : undefined)
-      ?? (threadId ? this.runsByThread.get(threadId) : undefined);
+    const run = (turnId ? this.runsByTurn.get(turnId) : undefined) ?? (threadId ? this.runsByThread.get(threadId) : undefined);
+    return run && turnId && run.turnId && turnId !== run.turnId ? undefined : run;
   }
 
   private handleExit(error: Error): void {

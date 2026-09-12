@@ -1,0 +1,10 @@
+{
+  "removedRules": 91,
+  "removedDeclarations": 340,
+  "files": [
+    "src/styles.css",
+    "src/workbench-theme.css"
+  ],
+  "removedLegacyPrimitiveRules": 14,
+  "removedLegacyPrimitiveDeclarations": 44
+}

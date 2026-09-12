@@ -6,6 +6,7 @@ import type { CodexStreamEvent } from "./codex-app-server";
 import type { RuntimeCommand } from "../runtime-manager";
 import type { CodexSandboxMode } from "./codex-permissions";
 import { piPermissionArgs } from "./pi-permissions";
+import { piUsage, subtractUsage, sumUsage, type TokenUsage } from "../../shared/turn-info";
 
 type PiRun = {
   runId: string;
@@ -18,6 +19,12 @@ type PiRun = {
   thinkingItems: Map<number, string>;
   toolItems: Map<string, Record<string, any>>;
   toolOutput: Map<string, string>;
+  usageByMessage: Map<string, TokenUsage>;
+  messageKey: string;
+  messageSequence: number;
+  usageBaseline?: TokenUsage;
+  startedAt: number;
+  settling?: boolean;
 };
 
 export type PiRuntimeInput = {
@@ -66,7 +73,10 @@ export class PiRuntimeClient {
     if (input.reasoning) await this.request(run, { type: "set_thinking_level", level: input.reasoning === "none" ? "off" : input.reasoning });
     const state = await this.request(run, { type: "get_state" });
     run.sessionFile = state?.sessionFile || input.sessionFile;
+    const stats = await this.request(run, { type: "get_session_stats" }).catch(() => null);
+    run.usageBaseline = piUsage(stats?.tokens);
     if (run.sessionFile) this.emit({ runId: input.runId, type: "thread-started", threadId: run.sessionFile, turnId: input.runId });
+    this.emit({ runId: input.runId, type: "turn-metadata", turnInfo: { model: state?.model?.id ? `${state.model.provider}/${state.model.id}` : input.model, reasoning: state?.thinkingLevel || input.reasoning } });
     const imagePayloads: Array<{ type: "image"; data: string; mimeType: string }> = [];
     const contextFiles: string[] = [];
     for (const path of (input.images || []).slice(0, 8)) {
@@ -99,7 +109,7 @@ export class PiRuntimeClient {
       env: { ...process.env, ...command.env, ...runtime?.env, ...(runtime?.agentDir ? { PI_CODING_AGENT_DIR: runtime.agentDir } : {}), NO_COLOR: "1" },
       stdio: ["pipe", "pipe", "pipe"],
     });
-    const run: PiRun = { runId, process: child, pending: new Map(), buffer: "", decoder: new StringDecoder("utf8"), textItems: new Map(), thinkingItems: new Map(), toolItems: new Map(), toolOutput: new Map() };
+    const run: PiRun = { runId, process: child, pending: new Map(), buffer: "", decoder: new StringDecoder("utf8"), textItems: new Map(), thinkingItems: new Map(), toolItems: new Map(), toolOutput: new Map(), usageByMessage: new Map(), messageKey: `${runId}:0`, messageSequence: 0, startedAt: Date.now() };
     this.runs.set(runId, run);
     child.stdout.on("data", (chunk: Buffer) => this.consume(run, chunk));
     child.on("error", (error) => this.fail(run, error));
@@ -155,20 +165,33 @@ export class PiRuntimeClient {
 
   private handleEvent(run: PiRun, event: Record<string, any>): void {
     const base = { runId: run.runId, threadId: run.sessionFile, turnId: run.runId };
+    if (event.type === "message_start" && event.message?.role === "assistant") {
+      run.messageKey = `${run.runId}:${++run.messageSequence}`;
+      run.textItems.clear(); run.thinkingItems.clear();
+    }
+    if (event.type === "message_end" && event.message?.role === "assistant") {
+      const message = event.message;
+      const usage = piUsage(message.usage);
+      if (usage) run.usageByMessage.set(run.messageKey, usage);
+      this.emit({ ...base, type: "turn-metadata", turnInfo: { model: typeof message.model === "string" ? `${message.provider ? `${message.provider}/` : ""}${message.model}` : undefined, nativeMessageIds: typeof message.timestamp === "number" ? [`pi:${message.timestamp}`] : [], usage: sumUsage([...run.usageByMessage.values()]) } });
+      return;
+    }
     if (event.type === "message_update") {
+      const usage = piUsage(event.usage);
+      if (usage) { run.usageByMessage.set(run.messageKey, usage); this.emit({ ...base, type: "turn-metadata", turnInfo: { usage: sumUsage([...run.usageByMessage.values()]) } }); }
       const update = event.assistantMessageEvent || {};
       const index = Number(update.contentIndex || 0);
       if (update.type === "text_start") {
-        const id = `${run.runId}:text:${index}`; run.textItems.set(index, id);
+        const id = `${run.messageKey}:text:${index}`; run.textItems.set(index, id);
         this.emit({ ...base, type: "item-started", itemId: id, item: { type: "agentMessage", id, text: "" } });
       } else if (update.type === "text_delta") {
-        const id = run.textItems.get(index) || `${run.runId}:text:${index}`; run.textItems.set(index, id);
+        const id = run.textItems.get(index) || `${run.messageKey}:text:${index}`; run.textItems.set(index, id);
         this.emit({ ...base, type: "text-delta", itemId: id, delta: String(update.delta || "") });
       } else if (update.type === "thinking_start") {
-        const id = `${run.runId}:thinking:${index}`; run.thinkingItems.set(index, id);
+        const id = `${run.messageKey}:thinking:${index}`; run.thinkingItems.set(index, id);
         this.emit({ ...base, type: "item-started", itemId: id, item: { type: "reasoning", id, summary: [], content: [] } });
       } else if (update.type === "thinking_delta") {
-        const id = run.thinkingItems.get(index) || `${run.runId}:thinking:${index}`; run.thinkingItems.set(index, id);
+        const id = run.thinkingItems.get(index) || `${run.messageKey}:thinking:${index}`; run.thinkingItems.set(index, id);
         this.emit({ ...base, type: "reasoning-delta", itemId: id, delta: String(update.delta || "") });
       }
       return;
@@ -194,11 +217,23 @@ export class PiRuntimeClient {
       return;
     }
     if (event.type === "agent_settled") {
-      this.emit({ ...base, type: "turn-completed", status: "completed" });
-      this.stopRun(run.runId);
+      void this.completeRun(run);
     } else if (event.type === "extension_error" || (event.type === "auto_retry_end" && !event.success)) {
       this.emit({ ...base, type: "error", error: String(event.error || event.finalError || "Pi 执行失败") });
     }
+  }
+
+  private async completeRun(run: PiRun): Promise<void> {
+    if (run.settling) return;
+    run.settling = true;
+    const elapsedMs = Math.max(0, Date.now() - run.startedAt);
+    // Session statistics also include compaction and tool-reported usage.
+    const stats = await this.request(run, { type: "get_session_stats" }).catch(() => null);
+    if (!this.runs.has(run.runId)) return;
+    const total = piUsage(stats?.tokens);
+    const usage = total && run.usageBaseline ? subtractUsage(total, run.usageBaseline) : sumUsage([...run.usageByMessage.values()]);
+    this.emit({ runId: run.runId, threadId: run.sessionFile, turnId: run.runId, type: "turn-completed", status: "completed", turnInfo: { usage, elapsedMs } });
+    this.stopRun(run.runId);
   }
 
   private toolItem(id: string, name: string, args: Record<string, any>, status: string): Record<string, any> {
