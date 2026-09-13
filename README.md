@@ -18,7 +18,7 @@ Release signing, notarization, and CI matrix details are documented in `docs/rel
 
 The renderer is sandboxed. Codex, filesystem dialogs, Git, terminal, account, model, and system operations are exposed through validated Electron IPC boundaries. Project, thread, and transcript state is stored in SQLite; the terminal uses a native PTY rendered with xterm.
 
-Agent runtimes are pinned and integrity-verified before Rux installs them on first use. Codex uses the active Codex account, Claude Code uses its native account flow, and Pi uses an explicitly configured compatible Provider profile.
+Agent runtimes are pinned and integrity-verified before Rux installs them on first use. Codex uses an independent Rux sign-in, Claude Code uses its native account flow, and Pi uses an explicitly configured compatible Provider profile.
 
 ## Composer capabilities
 
@@ -32,3 +32,11 @@ Agent runtimes are pinned and integrity-verified before Rux installs them on fir
 Building the macOS speech helper requires Xcode Command Line Tools. `pnpm dev` and `pnpm build:desktop` compile it automatically; packaged apps include the binary and do not require developer tools.
 
 Protocol references: [Codex App Server](https://learn.chatgpt.com/docs/app-server), [Responses conversation state](https://developers.openai.com/api/docs/guides/conversation-state), [file inputs](https://developers.openai.com/api/docs/guides/file-inputs), [Apple system speech recognition](https://developer.apple.com/documentation/speech/sfspeechurlrecognitionrequest).
+
+## Codex sign-in and recovery
+
+Rux uses its own `CODEX_HOME` and no longer copies `auth.json` or authentication configuration from another Codex client. Existing installations must complete one independent sign-in after upgrading; project and conversation history are retained. Rux does not repair an invalid refresh token by copying another client's token or repeatedly retrying it.
+
+When sign-in is required, use **重新登录 Codex → 重新登录** in the conversation/settings UI. Follow the displayed device code and **打开设备授权页面** to finish authorization. Failed or cancelled login stays disconnected and can be retried. Successful login resets the old Codex processes and reloads the account and model catalog. Logout affects Rux's managed Codex home. Account changes wait until active Codex work has stopped, and only one Rux process owns a profile at a time.
+
+Expired/reused credentials produce a Chinese recovery message, clear the connected badge, and pause sending while preserving the draft. Login provenance and invalidation survive app restarts; OAuth credentials remain owned by the native Codex runtime and are not sent to the renderer. See [official Codex authentication documentation](https://developers.openai.com/codex/auth/) for credential storage and device authorization details.

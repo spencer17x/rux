@@ -1,3 +1,5 @@
+import { CodexAuthSession } from "./codex-auth-session";
+import { isCodexAuthError } from "../shared/codex-auth";
 import { app, type BrowserWindow, ipcMain as electronIpcMain } from "electron";
 import { join } from "node:path";
 import { AgentSendService } from "./agent-send-service";
@@ -25,6 +27,7 @@ import { VoiceService } from "./voice-service";
 import { parseInput, voiceTranscribeSchema, voiceCancelSchema } from "../shared/ipc";
 
 let codexClient: CodexAppServerClient | null = null;
+let codexCatalog: CodexCatalogClient | null = null;
 let claudeClient: ClaudeCodeClient | null = null;
 let piClient: PiRuntimeClient | null = null;
 let runtimeManager: RuntimeManager | null = null;
@@ -56,6 +59,8 @@ export async function registerBackend(getWindow: () => BrowserWindow | null): Pr
   const dataPaths = agentDataPaths(userData);
   const workspace = await workspaceStore.load();
   if (await prepareAgentData(dataPaths, workspace)) await workspaceStore.save(workspace);
+  const codexAuth = new CodexAuthSession(join(dataPaths.codexHome, "rux-auth-state.json"));
+  await codexAuth.initialize();
   process.env.CLAUDE_CONFIG_DIR = dataPaths.claudeHome;
   const codexEnvironment = () => ({ CODEX_HOME: dataPaths.codexHome });
   const claudeEnvironment = () => ({ CLAUDE_CONFIG_DIR: dataPaths.claudeHome, CLAUDE_AGENT_SDK_CLIENT_APP: `rux/${app.getVersion()}` });
@@ -67,12 +72,21 @@ export async function registerBackend(getWindow: () => BrowserWindow | null): Pr
     : [process.env.GIT_BIN, "/usr/bin/git", "/opt/homebrew/bin/git", "git"].find(Boolean) as string;
   const emitAgentEvent = (event: any) => getWindow()?.webContents.send("agent:event", event);
 
-  codexClient = new CodexAppServerClient(() => executable("codex"), emitAgentEvent, codexEnvironment);
+  const onCodexAuthError = async (error: unknown, revision = codexAuth.revision) => {
+    if (codexAuth.changing || revision !== codexAuth.revision || !isCodexAuthError(error)) return;
+    try { await codexAuth.expire(); }
+    finally { if (codexAuth.required && !codexAuth.changing && revision === codexAuth.revision) getWindow()?.webContents.send("auth:login-event", { type: "auth-required", ...codexAuth.status() }); }
+  };
+  codexClient = new CodexAppServerClient(() => executable("codex"), (event) => {
+    if (event.error) void onCodexAuthError(event.error).catch(() => {});
+    emitAgentEvent(event);
+  }, codexEnvironment);
   claudeClient = new ClaudeCodeClient(() => runtimeManager!.resolveInstalled("claude-code").command, emitAgentEvent, claudeEnvironment);
   piClient = new PiRuntimeClient(() => runtimeManager!.resolveInstalled("pi"), emitAgentEvent);
   const nativeHistory = new NativeHistoryService(codexClient, claudeClient, piClient);
 
   const catalog = new CodexCatalogClient(runtimeManager, () => executable("codex"), runProcess, codexEnvironment);
+  codexCatalog = catalog;
   const sendService = new AgentSendService(settingsStore, workspaceStore, runProcess, () => executable("codex"), () => executable("git"), userData, codexEnvironment);
   settingsAuthModels = new SettingsAuthModelsIpc({
     getWindow,
@@ -85,8 +99,25 @@ export async function registerBackend(getWindow: () => BrowserWindow | null): Pr
     runProcess,
     codexExecutable: () => executable("codex"),
     codexEnvironment,
-    loadCodexModels: () => catalog.models(),
-    loadCodexAccount: () => catalog.account(),
+    authSession: codexAuth,
+    resetCodexClients: () => {
+      if (codexAuth.activeOperations || codexClient!.hasActiveRuns) throw new Error("请先停止正在运行的 Codex 任务，再切换登录账户。");
+      codexClient!.stop(); catalog.stop();
+    },
+    loadCodexModels: async () => {
+      codexAuth.assertReady();
+      const revision = codexAuth.revision;
+      try { return await catalog.models(); } catch (error) { await onCodexAuthError(error, revision); throw error; }
+    },
+    loadCodexAccount: async () => {
+      if (codexAuth.required || codexAuth.changing) return codexAuth.status();
+      const revision = codexAuth.revision;
+      try {
+        const account = await catalog.account();
+        if (!account.connected && revision === codexAuth.revision && !codexAuth.changing) await codexAuth.expire();
+        return codexAuth.required || codexAuth.changing ? codexAuth.status() : account;
+      } catch (error) { await onCodexAuthError(error, revision); if (codexAuth.required) return codexAuth.status(); throw error; }
+    },
     testCustomProvider: async (settings) => { await sendService.custom({ prompt: "Reply with OK", model: settings.model, reasoning: "low" }, settings); },
   });
   settingsAuthModels.register(ipc);
@@ -103,6 +134,8 @@ export async function registerBackend(getWindow: () => BrowserWindow | null): Pr
   });
   registerAgentRuntimeIpc(ipc, {
     getWindow,
+    withCodexAuth: operation => codexAuth.run(operation),
+    onCodexAuthError,
     settingsStore,
     runtimeManager,
     providerStore,
@@ -128,6 +161,7 @@ export function stopBackendProcesses(): void {
   voiceService?.stop(); voiceService = null;
   settingsAuthModels?.stop(); settingsAuthModels = null;
   codexClient?.stop(); codexClient = null;
+  codexCatalog?.stop(); codexCatalog = null;
   claudeClient?.stop(); claudeClient = null;
   piClient?.stop(); piClient = null;
   terminalManager?.stopAll(); terminalManager = null;

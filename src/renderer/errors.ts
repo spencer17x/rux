@@ -1,5 +1,8 @@
+import { CODEX_LOGIN_REQUIRED, isCodexAuthError } from "../shared/codex-auth";
+
 export function userFacingError(error: unknown): string {
   const raw = error instanceof Error ? error.message : String(error);
+  if (isCodexAuthError(raw)) return CODEX_LOGIN_REQUIRED;
   if (/请求参数无效|Too small|expected string/i.test(raw)) return "会话参数无效，请新建会话后重试。";
   if (/未登录|login|authenticat|API Key.*(?:删除|失效)|\b403\b/i.test(raw)) return "Agent 登录或凭据已失效，请前往设置重新登录或检查 Provider。";
   if (/fetch failed|network error|ECONNREFUSED|连接被拒绝/i.test(raw)) return "连接失败，请检查服务地址、网络以及本地服务是否已启动。";

@@ -1,6 +1,6 @@
 import { useEffect, useRef, type PointerEvent } from "react";
 
-export const SIDEBAR_DEFAULT_WIDTH = 300;
+export const SIDEBAR_DEFAULT_WIDTH = 256;
 export const SIDEBAR_MIN_WIDTH = 240;
 export const SIDEBAR_MAX_WIDTH = 520;
 export const SIDEBAR_WIDTH_KEY = "rux.sidebar.width.v1";

@@ -54,9 +54,8 @@ export async function prepareAgentData(paths: AgentDataPaths, workspace: StoredW
   const defaultCodexHome = process.env.CODEX_HOME || join(process.env.HOME || "", ".codex");
   const defaultClaudeHome = process.env.CLAUDE_CONFIG_DIR || join(process.env.HOME || "", ".claude");
 
-  // Credentials and user configuration are copied once so the isolated Rux runtime
-  // keeps the current account without sharing the conversation store.
-  for (const name of ["auth.json", "config.toml"]) await copyIfMissing(join(defaultCodexHome, name), join(paths.codexHome, name));
+  // Rux must obtain its own Codex login. Copying auth.json forks a rotating
+  // refresh token; copying config can also import another credential backend.
   for (const name of [".credentials.json", "settings.json", "settings.local.json"]) await copyIfMissing(join(defaultClaudeHome, name), join(paths.claudeHome, name));
 
   const threads = allThreads(workspace);

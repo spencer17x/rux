@@ -4,6 +4,7 @@
 .ui-button[data-size="sm"], .ui-input[data-size="sm"], .ui-select[data-size="sm"] { --control-height: var(--rux-control-sm); }
 .ui-button[data-size="md"], .ui-input[data-size="md"], .ui-select[data-size="md"] { --control-height: var(--rux-control-md); }
 .ui-button[data-size="lg"], .ui-input[data-size="lg"], .ui-select[data-size="lg"] { --control-height: var(--rux-control-lg); }
+.ui-button[data-size="xl"], .ui-input[data-size="xl"], .ui-select[data-size="xl"] { --control-height: var(--rux-control-xl); }
 .ui-button:not([data-variant="plain"]) { display: inline-flex; align-items: center; justify-content: center; gap: var(--rux-space-2); min-height: var(--control-height); padding: 0 var(--rux-space-3); border: 1px solid transparent; border-radius: var(--rux-radius-control); font-size: var(--ui-small); line-height: 20px; font-weight: 400; transition: background var(--rux-motion-fast), color var(--rux-motion-fast), border-color var(--rux-motion-fast); cursor: pointer; }
 :where(.ui-button[data-variant="plain"]) { padding: 0; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
 .ui-button[data-variant="primary"] { color: var(--surface); background: var(--rux-primary); }

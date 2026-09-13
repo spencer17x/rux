@@ -18,15 +18,16 @@
   --radius-lg: 17px;
   --ui-small: calc(var(--ui-font-size, 14px) - 1px);
   --ui-caption: calc(var(--ui-font-size, 14px) - 2px);
-  --toolbar-height: 46px;
+  --toolbar-height: 52px;
   --pane-toolbar-height: 40px;
   --composer-button-size: 28px;
-  --conversation-width: 960px;
+  --conversation-width: 840px;
   --composer-elevation: 0 0 0 1px #0000000a, 0 2px 8px #0000000a, 0 4px 40px 8px #00000006;
   --signature-muted: #69758b;
   --rux-control-sm: 28px;
   --rux-control-md: 32px;
   --rux-control-lg: 40px;
+  --rux-control-xl: 56px;
   --rux-space-1: 4px;
   --rux-space-2: 8px;
   --rux-space-3: 12px;

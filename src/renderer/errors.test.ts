@@ -15,3 +15,11 @@ describe("userFacingError", () => {
     expect(userFacingError(new Error("Error invoking remote method 'providers:test': TypeError: fetch failed"))).toBe("连接失败，请检查服务地址、网络以及本地服务是否已启动。");
   });
 });
+
+it("translates revoked and reused Codex refresh credentials without treating limits as auth failures", () => {
+  for (const error of [
+    "Your access token could not be refreshed because your refresh token was already used. Please log out and sign in again.",
+    "refresh_token_reused", "token_revoked", "invalid_grant",
+  ]) expect(userFacingError(error)).toBe("Codex 登录已失效，请在 Rux 中重新登录后重试。");
+  expect(userFacingError("429 rate limit reached")).toBe("429 rate limit reached");
+});

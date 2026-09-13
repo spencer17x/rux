@@ -1183,15 +1183,6 @@ textarea:focus-visible {
 .assistant-turn-meta { display: flex; align-items: center; gap: 7px; border-bottom: 1px solid var(--border); }
 .assistant-turn-meta svg { color: #989894; }
 
-.agent-response-loading {
-  display: flex;
-  min-height: 28px;
-  align-items: center;
-  gap: 8px;
-  color: var(--muted);
-  animation: content-reveal 220ms ease-out both;
-}
-
 .agent-turn-status {
   display: inline-flex;
   min-height: 30px;
@@ -1221,50 +1212,6 @@ textarea:focus-visible {
   color: #b23a35;
   background: #fff0ee;
 }
-
-.agent-turn-status > i {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-}
-
-.agent-turn-status > i b {
-  width: 3px;
-  height: 3px;
-  border-radius: 50%;
-  background: currentColor;
-  animation: loading-dot 1.15s ease-in-out infinite;
-}
-
-.agent-turn-status > i b:nth-child(2) { animation-delay: 120ms; }
-.agent-turn-status > i b:nth-child(3) { animation-delay: 240ms; }
-
-.agent-response-loading > span {
-  color: transparent;
-  background: linear-gradient(90deg, #858580 10%, #20201f 45%, #a4a49f 68%, #858580 90%);
-  background-size: 220% 100%;
-  background-clip: text;
-  -webkit-background-clip: text;
-  animation: agent-shimmer 1.7s linear infinite;
-  font-size: 13px;
-}
-
-.agent-response-loading > i {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-}
-
-.agent-response-loading > i b {
-  width: 3px;
-  height: 3px;
-  border-radius: 50%;
-  background: #999994;
-  animation: loading-dot 1.15s ease-in-out infinite;
-}
-
-.agent-response-loading > i b:nth-child(2) { animation-delay: 120ms; }
-.agent-response-loading > i b:nth-child(3) { animation-delay: 240ms; }
 
 .rux-markdown,
 .reasoning-part,
@@ -1307,21 +1254,6 @@ textarea:focus-visible {
 
 .reasoning-part summary::-webkit-details-marker { display: none; }
 .reasoning-copy { padding: 4px 10px 7px; white-space: pre-wrap; font-size: 12px; line-height: 1.55; }
-
-.reasoning-part.is-running summary span,
-.agent-tool-card.is-running .tool-title strong {
-  color: transparent;
-  background: linear-gradient(90deg, #777773 15%, #181818 42%, #aaa9a4 62%, #777773 85%);
-  background-size: 220% 100%;
-  background-clip: text;
-  -webkit-background-clip: text;
-  animation: agent-shimmer 1.7s linear infinite;
-}
-
-@keyframes agent-shimmer {
-  from { background-position: 120% 0; }
-  to { background-position: -120% 0; }
-}
 
 @keyframes content-reveal {
   from { opacity: 0; transform: translateY(5px); }

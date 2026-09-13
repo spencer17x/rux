@@ -23,6 +23,7 @@ describe("prepareAgentData", () => {
     process.env.CLAUDE_CONFIG_DIR = legacyClaude;
     await mkdir(join(legacyCodex, "sessions", "2026", "08", "28"), { recursive: true });
     await writeFile(join(legacyCodex, "auth.json"), "auth");
+    await writeFile(join(legacyCodex, "config.toml"), "external-config");
     await writeFile(join(legacyCodex, "sessions", "2026", "08", "28", "rollout-native-codex.jsonl"), "codex");
     await writeFile(join(legacyCodex, "sessions", "2026", "08", "28", "rollout-unrelated.jsonl"), "other");
     await mkdir(join(legacyClaude, "projects", "project"), { recursive: true });
@@ -34,7 +35,9 @@ describe("prepareAgentData", () => {
       standaloneThreads: [],
     });
 
-    expect(await readFile(join(paths.codexHome, "auth.json"), "utf8")).toBe("auth");
+    await expect(readFile(join(paths.codexHome, "auth.json"), "utf8")).rejects.toThrow();
+    expect(await readFile(join(legacyCodex, "auth.json"), "utf8")).toBe("auth");
+    await expect(readFile(join(paths.codexHome, "config.toml"))).rejects.toThrow();
     expect(await readFile(join(paths.codexHome, "sessions", "2026", "08", "28", "rollout-native-codex.jsonl"), "utf8")).toBe("codex");
     expect(await readFile(join(paths.claudeHome, "projects", "project", "native-claude.jsonl"), "utf8")).toBe("claude");
     expect(await readFile(join(legacyCodex, "sessions", "2026", "08", "28", "rollout-unrelated.jsonl"), "utf8")).toBe("other");

@@ -3,6 +3,13 @@ import { join } from "node:path";
 import { registerBackend, stopBackendProcesses, stopVoiceInput } from "./backend";
 
 let mainWindow: BrowserWindow | null = null;
+let backendReady = false;
+const ownsProfile = app.requestSingleInstanceLock();
+if (!ownsProfile) app.quit();
+app.on("second-instance", () => {
+  if (mainWindow) { if (mainWindow.isMinimized()) mainWindow.restore(); mainWindow.show(); mainWindow.focus(); }
+  else if (backendReady) void createWindow();
+});
 
 async function createWindow(): Promise<void> {
   const window = new BrowserWindow({
@@ -43,8 +50,9 @@ async function createWindow(): Promise<void> {
   }
 }
 
-app.whenReady().then(async () => {
+if (ownsProfile) app.whenReady().then(async () => {
   await registerBackend(() => mainWindow);
+  backendReady = true;
   await createWindow();
 
   app.on("activate", () => {

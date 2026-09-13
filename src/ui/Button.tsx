@@ -1,8 +1,8 @@
 import { forwardRef, type ButtonHTMLAttributes, type ReactElement, type ReactNode } from "react";
 import { Slot, Tooltip as RadixTooltip } from "radix-ui";
-import { AppIcon, type IconName, type IconVariant } from "./icons";
+import { AppIcon, type IconName, type IconVariant, type IconSize } from "./icons";
 
-export type ControlSize = "sm" | "md" | "lg";
+export type ControlSize = "sm" | "md" | "lg" | "xl";
 export type ButtonVariant = "primary" | "secondary" | "ghost" | "danger" | "plain";
 export type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: ButtonVariant;
@@ -25,8 +25,8 @@ export function Tooltip({ content, children, disabled = false }: { content: Reac
   return <RadixTooltip.Provider delayDuration={500}><RadixTooltip.Root><RadixTooltip.Trigger asChild>{children}</RadixTooltip.Trigger><RadixTooltip.Portal><RadixTooltip.Content className="ui-tooltip" sideOffset={6} collisionPadding={8}>{content}</RadixTooltip.Content></RadixTooltip.Portal></RadixTooltip.Root></RadixTooltip.Provider>;
 }
 
-export type IconButtonProps = Omit<ButtonProps, "title"> & { label: string; icon?: IconName; iconVariant?: IconVariant; shape?: "square" | "round"; tooltip?: boolean; children?: ReactNode };
-export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(function IconButton({ label, icon, iconVariant = "outline", shape = "square", tooltip = true, active, size = "sm", className = "", children, ...props }, ref) {
-  const button = <Button ref={ref} aria-label={label} {...props} data-shape={shape} size={size} active={active} className={`ui-icon-button icon-button ${active ? "is-active" : ""} ${className}`}>{icon ? <AppIcon name={icon} size={size === "sm" ? "sm" : "md"} variant={iconVariant} /> : children}</Button>;
+export type IconButtonProps = Omit<ButtonProps, "title"> & { label: string; icon?: IconName; iconSize?: IconSize; iconVariant?: IconVariant; shape?: "square" | "round"; tooltip?: boolean; children?: ReactNode };
+export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(function IconButton({ label, icon, iconSize, iconVariant = "outline", shape = "square", tooltip = true, active, size = "sm", className = "", children, ...props }, ref) {
+  const button = <Button ref={ref} aria-label={label} {...props} data-shape={shape} size={size} active={active} className={`ui-icon-button icon-button ${active ? "is-active" : ""} ${className}`}>{icon ? <AppIcon name={icon} size={iconSize || (size === "sm" ? "sm" : size === "xl" ? "lg" : "md")} variant={iconVariant} /> : children}</Button>;
   return <Tooltip content={label} disabled={!tooltip || props.disabled || Boolean(props["aria-expanded"])}>{button}</Tooltip>;
 });

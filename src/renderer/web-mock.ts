@@ -64,10 +64,14 @@ export function installWebMock(): void {
     agent: {
       send: async () => ({ text: "预览回复" }),
       start: async (input: any) => {
-        const timers = [window.setTimeout(() => emitPreview({ runId: input.runId, type: "text-delta", itemId: `preview-${input.runId}`, delta: "这轮已收到你的调整要求，可以继续补充具体细节。" }), 120), window.setTimeout(() => {
-          emitPreview({ runId: input.runId, type: "turn-completed", status: "completed", turnInfo: { model: input.model, reasoning: input.reasoning, elapsedMs: 720, usage: { inputTokens: 640, outputTokens: 160, totalTokens: 800 } } });
+        const motionPreview = new URLSearchParams(window.location.search).get("motion") === "1";
+        const chunks = motionPreview ? ["先收紧界面的尺寸与层级。", "正文保持易读，运行信息回到辅助位置。", "\n\n生成状态采用单一品牌动效，", "等待响应与持续输出有明确区别。"] : ["这轮已收到你的调整要求，可以继续补充具体细节。"];
+        const duration = motionPreview ? 12_000 : 720;
+        const timers = chunks.map((delta, index) => window.setTimeout(() => emitPreview({ runId: input.runId, type: "text-delta", itemId: `preview-${input.runId}`, delta }), motionPreview ? 3_000 + index * 2_000 : 120));
+        timers.push(window.setTimeout(() => {
+          emitPreview({ runId: input.runId, type: "turn-completed", status: "completed", turnInfo: { model: input.model, reasoning: input.reasoning, elapsedMs: duration, usage: { inputTokens: 640, outputTokens: 160, totalTokens: 800 } } });
           previewRuns.delete(input.runId);
-        }, 720)];
+        }, duration));
         previewRuns.set(input.runId, timers);
         return { runId: input.runId, threadId: "preview", turnId: input.runId };
       },

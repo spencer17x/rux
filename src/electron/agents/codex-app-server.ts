@@ -112,8 +112,9 @@ export class CodexAppServerClient {
     }
 
     const selectedModel = input.model || threadResponse.model;
-    if (!selectedModel) throw new Error("请先选择一个明确的 Codex 模型");
-    const turnResponse = await this.request("turn/start", {
+    if (!selectedModel) { this.runsByThread.delete(threadId); throw new Error("请先选择一个明确的 Codex 模型"); }
+    let turnResponse;
+    try { turnResponse = await this.request("turn/start", {
       threadId,
       input: userInput,
       cwd: input.cwd,
@@ -131,8 +132,13 @@ export class CodexAppServerClient {
         },
       },
     });
+    } catch (error) {
+      this.runsByThread.delete(threadId);
+      if (run.turnId) this.runsByTurn.delete(run.turnId);
+      throw error;
+    }
     const turnId = String(turnResponse?.turn?.id || "");
-    if (!turnId) throw new Error("Codex 未返回 turn id");
+    if (!turnId) { this.runsByThread.delete(threadId); throw new Error("Codex 未返回 turn id"); }
     run.turnId = turnId;
     if (this.runsByThread.get(threadId) === run) this.runsByTurn.set(turnId, run);
     return { threadId, turnId };
@@ -149,6 +155,8 @@ export class CodexAppServerClient {
     this.approvals.delete(approvalId);
     this.write({ id: approval.rpcId, result: { decision } });
   }
+
+  get hasActiveRuns(): boolean { return this.runsByThread.size > 0; }
 
   stop(): void {
     const process = this.process;
@@ -177,11 +185,12 @@ export class CodexAppServerClient {
 
   private async ensureStarted(): Promise<void> {
     if (this.initialized) return this.initialized;
-    this.initialized = this.initialize();
+    const initialization = this.initialize();
+    this.initialized = initialization;
     try {
-      await this.initialized;
+      await initialization;
     } catch (error) {
-      this.initialized = null;
+      if (this.initialized === initialization) this.initialized = null;
       throw error;
     }
   }
@@ -193,13 +202,13 @@ export class CodexAppServerClient {
     });
     this.process = child;
     const lines = createInterface({ input: child.stdout });
-    lines.on("line", (line) => this.handleLine(line));
+    lines.on("line", (line) => { if (this.process === child) this.handleLine(line); });
     child.stderr.setEncoding("utf8");
     child.stderr.on("data", (chunk: string) => {
-      if (/panic|fatal/i.test(chunk)) this.emit({ runId: "system", type: "error", error: chunk.trim() });
+      if (this.process === child && /panic|fatal/i.test(chunk)) this.emit({ runId: "system", type: "error", error: chunk.trim() });
     });
-    child.on("error", (error) => this.handleExit(error));
-    child.on("close", (code) => this.handleExit(new Error(`Codex App Server 已退出（${code ?? 1}）`)));
+    child.on("error", (error) => { if (this.process === child) this.handleExit(error); });
+    child.on("close", (code) => { if (this.process === child) this.handleExit(new Error(`Codex App Server 已退出（${code ?? 1}）`)); });
 
     await this.request("initialize", {
       clientInfo: { name: "rux", title: "Rux", version: app.getVersion() },
@@ -340,6 +349,8 @@ export class CodexAppServerClient {
       return;
     }
     if (method === "error") {
+      this.runsByThread.delete(run.threadId);
+      if (run.turnId) this.runsByTurn.delete(run.turnId);
       this.emit({ ...base, type: "error", error: String(params.error?.message || params.message || "Codex 执行失败") });
     }
   }

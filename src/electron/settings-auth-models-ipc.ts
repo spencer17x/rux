@@ -1,3 +1,4 @@
+import type { CodexAuthSession } from "./codex-auth-session";
 import { app, type BrowserWindow } from "electron";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { mkdir } from "node:fs/promises";
@@ -10,7 +11,7 @@ import type { RuntimeAgentId, RuntimeManager } from "./runtime-manager";
 import type { IpcRegistrar, ResolveProject, RunProcess } from "./ipc-types";
 import type { RuxSettings, SettingsStore } from "./settings-store";
 
-type Dependencies = { getWindow: () => BrowserWindow | null; runtimeManager: RuntimeManager; providerStore: ProviderProfileStore; claudeClient: ClaudeCodeClient; piClient: PiRuntimeClient; resolveProject: ResolveProject; settingsStore: SettingsStore; runProcess: RunProcess; codexExecutable: () => string; codexEnvironment: () => Record<string, string>; loadCodexModels: () => Promise<{ models: any[] }>; loadCodexAccount: () => Promise<any>; testCustomProvider: (settings: RuxSettings) => Promise<void> };
+type Dependencies = { authSession: CodexAuthSession; resetCodexClients: () => void; getWindow: () => BrowserWindow | null; runtimeManager: RuntimeManager; providerStore: ProviderProfileStore; claudeClient: ClaudeCodeClient; piClient: PiRuntimeClient; resolveProject: ResolveProject; settingsStore: SettingsStore; runProcess: RunProcess; codexExecutable: () => string; codexEnvironment: () => Record<string, string>; loadCodexModels: () => Promise<{ models: any[] }>; loadCodexAccount: () => Promise<any>; testCustomProvider: (settings: RuxSettings) => Promise<void> };
 
 export class SettingsAuthModelsIpc {
   private authLoginProcess: ChildProcessWithoutNullStreams | null = null;
@@ -22,20 +23,70 @@ export class SettingsAuthModelsIpc {
     ipc.handle("runtimes:ensure", async (_event, value) => { const id = parseInput(agentIdSchema, value) as RuntimeAgentId; await d.runtimeManager.ensure(id); return await d.runtimeManager.status(id); });
     ipc.handle("settings:get", async () => d.settingsStore.public(await d.settingsStore.load()));
     ipc.handle("settings:save", async (_event, value) => d.settingsStore.public(await d.settingsStore.save(parseInput(settingsInputSchema, value ?? {}))));
-    ipc.handle("settings:test", async (_event, value) => { const candidate = d.settingsStore.merge(await d.settingsStore.load(), parseInput(settingsInputSchema, value ?? {})); if (candidate.provider === "codex") { await d.runtimeManager.ensure("codex"); const result = await d.runProcess(d.codexExecutable(), ["login", "status"], { timeoutMs: 20_000, env: d.codexEnvironment() }); if (result.code !== 0) throw new Error(result.stderr.trim() || "Codex 未登录"); return { ok: true, message: result.stdout.trim() || result.stderr.trim() }; } await d.testCustomProvider(candidate); return { ok: true, message: "连接成功" }; });
+    ipc.handle("settings:test", async (_event, value) => { const candidate = d.settingsStore.merge(await d.settingsStore.load(), parseInput(settingsInputSchema, value ?? {})); if (candidate.provider === "codex") { d.authSession.assertReady(); await d.runtimeManager.ensure("codex"); const result = await d.runProcess(d.codexExecutable(), ["login", "status"], { timeoutMs: 20_000, env: d.codexEnvironment() }); if (result.code !== 0) throw new Error(result.stderr.trim() || "Codex 未登录"); return { ok: true, message: result.stdout.trim() || result.stderr.trim() }; } await d.testCustomProvider(candidate); return { ok: true, message: "连接成功" }; });
     ipc.handle("providers:list", async () => await d.providerStore.list());
     ipc.handle("providers:save", async (_event, value) => await d.providerStore.save(parseInput(providerSaveSchema, value || {})));
     ipc.handle("providers:remove", async (_event, value) => await d.providerStore.remove(parseInput(threadIdSchema, value)));
     ipc.handle("providers:set-active", async (_event, value) => await d.providerStore.setActive(parseInput(threadIdSchema, value)));
     ipc.handle("providers:test", async (_event, value) => await d.providerStore.test(parseInput(threadIdSchema, value)));
-    ipc.handle("auth:status", async () => { if (process.env.RUX_E2E === "1") return { connected: false, account: null, message: "E2E 模式" }; const runtime = await d.runtimeManager.status("codex"); if (!runtime.installed) return { connected: false, runtimeRequired: true, account: null, message: "Codex 将在首次使用时自动下载" }; return await d.loadCodexAccount(); });
-    ipc.handle("auth:login", async () => { await d.runtimeManager.ensure("codex"); if (this.authLoginProcess && !this.authLoginProcess.killed) return { started: true, alreadyRunning: true }; const child = spawn(d.codexExecutable(), ["login", "--device-auth"], { env: { ...process.env, ...d.codexEnvironment(), NO_COLOR: "1" }, stdio: ["pipe", "pipe", "pipe"] }); this.authLoginProcess = child; child.stdin.end(); const emit = (event: Record<string, unknown>) => d.getWindow()?.webContents.send("auth:login-event", event); const output = (chunk: Buffer | string) => { const text = String(chunk).replace(/\u001b\[[0-9;]*m/g, "").trim(); if (text) emit({ type: "output", text }); }; child.stdout.on("data", output); child.stderr.on("data", output); child.on("error", (error) => emit({ type: "error", message: error.message })); child.on("close", (code) => { this.authLoginProcess = null; emit({ type: "complete", code: code ?? 1 }); }); return { started: true }; });
-    ipc.handle("auth:logout", async () => { await d.runtimeManager.ensure("codex"); const result = await d.runProcess(d.codexExecutable(), ["logout"], { timeoutMs: 20_000, env: d.codexEnvironment() }); if (result.code !== 0) throw new Error(result.stderr.trim() || "退出登录失败"); return { connected: false }; });
+    ipc.handle("auth:status", async () => { if (process.env.RUX_E2E === "1") return { connected: false, account: null, message: "E2E 模式" }; const runtime = await d.runtimeManager.status("codex"); if (!runtime.installed) return { connected: false, runtimeRequired: true, account: null, message: "Codex 将在首次使用时自动下载" }; if (d.authSession.required || d.authSession.changing) return d.authSession.status(); return await d.loadCodexAccount(); });
+    ipc.handle("auth:login", async () => this.login());
+    ipc.handle("auth:logout", async () => {
+      if (d.authSession.changing) throw new Error("Codex 登录操作正在进行中。");
+      d.resetCodexClients();
+      d.authSession.begin();
+      try {
+        await d.authSession.expire();
+        await d.runtimeManager.ensure("codex");
+        const result = await d.runProcess(d.codexExecutable(), ["logout"], { timeoutMs: 20_000, env: d.codexEnvironment() });
+        if (result.code !== 0) throw new Error(result.stderr.trim() || "退出登录失败");
+        return { connected: false };
+      } finally {
+        await d.authSession.finish(false);
+        d.getWindow()?.webContents.send("auth:login-event", { type: "auth-required", ...d.authSession.status() });
+      }
+    });
     ipc.handle("models:list", async (_event, value) => await this.models(parseInput(modelListSchema, value)));
     ipc.handle("agents:list", async () => ({ agents: await this.agents() }));
   }
 
-  stop(): void { this.authLoginProcess?.kill("SIGTERM"); this.authLoginProcess = null; }
+
+  private async login(): Promise<{ started: boolean; alreadyRunning?: boolean }> {
+    const d = this.deps;
+    if (d.authSession.changing) return { started: true, alreadyRunning: true };
+    // Check before changing state: an active task must not lose its process.
+    d.resetCodexClients();
+    d.authSession.begin();
+    d.getWindow()?.webContents.send("auth:login-event", { type: "auth-required", ...d.authSession.status() });
+    try {
+      await d.authSession.expire();
+      await d.runtimeManager.ensure("codex");
+      const logout = await d.runProcess(d.codexExecutable(), ["logout"], { timeoutMs: 20_000, env: d.codexEnvironment() });
+      if (logout.code !== 0) throw new Error("无法清理 Rux 的旧登录凭证，请重试登录。");
+      const child = spawn(d.codexExecutable(), ["login", "--device-auth"], { env: { ...process.env, ...d.codexEnvironment(), NO_COLOR: "1" }, stdio: ["pipe", "pipe", "pipe"] });
+      this.authLoginProcess = child;
+      child.stdin.end();
+      const emit = (event: Record<string, unknown>) => d.getWindow()?.webContents.send("auth:login-event", event);
+      emit({ type: "auth-required", ...d.authSession.status() });
+      const output = (chunk: Buffer | string) => { const text = String(chunk).replace(/\u001b\[[0-9;]*m/g, "").trim(); if (text) emit({ type: "output", text }); };
+      child.stdout.on("data", output); child.stderr.on("data", output);
+      child.on("error", (error) => emit({ type: "error", message: error.message }));
+      child.on("close", (code) => {
+        if (this.authLoginProcess !== child) return;
+        this.authLoginProcess = null;
+        void Promise.resolve().then(() => d.resetCodexClients()).then(() => d.authSession.finish(code === 0)).then(() => {
+          emit({ type: "complete", code: code ?? 1 });
+        }).catch(async () => { await d.authSession.finish(false).catch(() => {}); emit({ type: "error", message: "登录状态保存失败，请重新登录。" }); });
+      });
+      return { started: true };
+    } catch (error) {
+      await d.authSession.finish(false);
+      d.getWindow()?.webContents.send("auth:login-event", { type: "auth-required", ...d.authSession.status() });
+      throw error;
+    }
+  }
+
+  stop(): void { this.authLoginProcess?.kill("SIGTERM"); this.authLoginProcess = null; if (this.deps.authSession.changing) void this.deps.authSession.finish(false).catch(() => {}); }
 
   private async agents(): Promise<Array<Record<string, unknown>>> {
     const d = this.deps; const statuses = Object.fromEntries((await d.runtimeManager.list()).map((status) => [status.agentId, status])); let claudeAuth: Record<string, unknown> = { connected: false };

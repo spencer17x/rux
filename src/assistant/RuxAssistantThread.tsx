@@ -1,3 +1,4 @@
+import ruxMark from "../assets/rux-mark.png";
 import { Button, IconButton, ChoiceList, ChoiceItem } from "../ui";
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ComponentPropsWithoutRef, type ReactNode, type RefObject } from "react";
 import {
@@ -51,7 +52,7 @@ type ApprovalResponse = { approvalId: string; approved: boolean; optionId?: stri
 type OverlayId = "agents" | "agent-mode" | "run-settings" | "sandbox";
 type Props = {
   messages: RuxMessage[]; running: boolean; emptyTitle: string; projectId?: string; onNewMessage: (text: string) => Promise<unknown>; onCancel: () => Promise<unknown>; onApproval: (response: ApprovalResponse) => Promise<unknown>;
-  conversationSticky: boolean;
+  conversationSticky: boolean; authNotice?: ReactNode; authRequired?: boolean;
   agents: AgentDefinition[]; runtimeProgress: RuntimeProgress; selectedAgent: AgentId; onSelectAgent: (agentId: AgentId) => void; agentMode: string; onAgentMode: (mode: string) => void;
   modelLabel: string; reasoningLabel: string; permissionLabel: string; permissionMode: "read-only" | "workspace-write" | "danger-full-access"; showPermission?: boolean; modelOpen: boolean; sandboxOpen: boolean;
   permissionDanger?: boolean;
@@ -137,7 +138,7 @@ function AssistantTurnMeta() {
   const agentId = useAuiState((state) => state.message.metadata.custom?.agentId as string | undefined);
   return <div className="assistant-turn-footer" aria-label={`本轮状态：${running ? "进行中" : complete ? "已完成" : "未完成"}`}>
     <TurnSignature info={info} agentId={agentId} createdAt={createdAt} running={running} />
-    <ActionBarPrimitive.Root className="turn-copy-action"><ActionBarPrimitive.Copy asChild><IconButton label="复制回复" icon="copy" /></ActionBarPrimitive.Copy></ActionBarPrimitive.Root>
+    <ActionBarPrimitive.Root className="turn-copy-action"><ActionBarPrimitive.Copy asChild><IconButton label="复制回复" icon="copy" size="sm" iconSize="sm" /></ActionBarPrimitive.Copy></ActionBarPrimitive.Root>
   </div>;
 }
 
@@ -153,7 +154,7 @@ function ReasoningPart({ text, status }: { text?: string; status?: { type?: stri
   const running = status?.type === "running";
   return (
     <details className={`reasoning-part ${running ? "is-running" : ""}`} open={running}>
-      <summary><CircleNotch size="sm" className={running ? "spin" : ""} /><span>{running ? "正在思考" : "思考过程"}</span></summary>
+      <summary><Sparkle size="sm" /><span>{running ? "正在思考" : "思考过程"}</span></summary>
       <div className="reasoning-copy">{text}</div>
     </details>
   );
@@ -172,7 +173,7 @@ function ToolPart({ toolName, args, result, isError, approval, respondToApproval
       <summary>
         <span className="tool-icon"><Icon size="sm" /></span>
         <span className="tool-title"><strong>{definition.label}</strong><small title={String(title)}>{String(title)}</small></span>
-        {running ? <CircleNotch size="sm" className="spin" /> : isError ? <WarningCircle size="sm" /> : <Check size="sm" />}
+        {running ? <span className="tool-running-label">执行中</span> : isError ? <WarningCircle size="sm" /> : <Check size="sm" />}
       </summary>
       {output && <pre>{String(output)}</pre>}
       {timing?.completedAt && timing?.startedAt && <small className="tool-duration">{Math.max(0, timing.completedAt - timing.startedAt)} ms</small>}
@@ -194,9 +195,16 @@ function UserMessage() {
   const messageText = useAuiState((state) => state.message.content.filter((part) => part.type === "text").map((part) => part.text).join("\n"));
   return (
     <MessagePrimitive.Root className="aui-message aui-user-message">
-      <div className="aui-user-stack"><div className="aui-user-bubble"><MessagePrimitive.Parts components={{ Text: UserText }} /></div><AttachmentList paths={attachments || []} /><div className="aui-user-meta"><MessageTimestamp /><ActionBarPrimitive.Root className="aui-user-actions"><ActionBarPrimitive.Copy asChild><IconButton label="复制用户消息" icon="copy" /></ActionBarPrimitive.Copy><IconButton label="编辑用户消息" icon="edit" onClick={() => editMessage(messageText)} /></ActionBarPrimitive.Root></div></div>
+      <div className="aui-user-stack"><div className="aui-user-bubble"><MessagePrimitive.Parts components={{ Text: UserText }} /></div><AttachmentList paths={attachments || []} /><div className="aui-user-meta"><MessageTimestamp /><ActionBarPrimitive.Root className="aui-user-actions"><ActionBarPrimitive.Copy asChild><IconButton label="复制用户消息" icon="copy" /></ActionBarPrimitive.Copy><IconButton label="编辑用户消息" icon="edit" onClick={() => editMessage(messageText)} /></ActionBarPrimitive.Root></div></div><span className="aui-user-avatar" aria-hidden="true">U</span>
     </MessagePrimitive.Root>
   );
+}
+
+function RunActivity({ waiting = false }: { waiting?: boolean }) {
+  return <div className="run-activity" data-stage={waiting ? "waiting" : "streaming"} role="status" aria-label={waiting ? "等待首个响应" : "正在处理"} aria-live="polite">
+    <span className="run-activity-mark" aria-hidden="true"><img src={ruxMark} alt="" /></span>
+    <span className="run-activity-copy"><strong>{waiting ? "正在准备回复" : "正在处理"}</strong>{waiting && <span>等待 Agent 首个响应</span>}</span>
+  </div>;
 }
 
 function AssistantMessage() {
@@ -204,11 +212,11 @@ function AssistantMessage() {
     <MessagePrimitive.Root className="aui-message aui-agent-message">
       <div className="aui-agent-content"><div className="aui-agent-body">
         <AuiIf condition={(state) => state.message.status?.type === "running" && state.message.parts.length === 0}>
-          <div className="agent-response-loading" role="status" aria-live="polite"><CircleNotch size="sm" className="spin" /><span>Rux 正在准备回复</span><i aria-hidden="true"><b /><b /><b /></i></div>
+          <RunActivity waiting />
         </AuiIf>
         <MessagePrimitive.Parts components={{ Text: AssistantText, Reasoning: ReasoningPart, tools: { Fallback: ToolPart } }} />
         <AuiIf condition={(state) => state.message.status?.type === "running" && state.message.parts.length > 0}>
-          <div className="agent-turn-status is-running" role="status" aria-live="polite"><CircleNotch size="sm" className="spin" /><strong>进行中</strong><span>Rux 正在继续处理</span><i aria-hidden="true"><b /><b /><b /></i></div>
+          <RunActivity />
         </AuiIf>
         <AuiIf condition={(state) => state.message.status?.type === "incomplete"}>
           <div className="agent-turn-status is-incomplete" aria-label="本轮状态：未完成"><WarningCircle size="sm" variant="solid" /><span>未完成</span></div>
@@ -343,6 +351,8 @@ export default function RuxAssistantThread({
   showVoice = true,
   onVoice,
   workspaceSummary,
+  authNotice,
+  authRequired = false,
 }: Props) {
   const runtime = useExternalStoreRuntime({
     messages,
@@ -373,8 +383,10 @@ export default function RuxAssistantThread({
   const modelTrigger = useRef<HTMLButtonElement>(null);
   const sandboxTrigger = useRef<HTMLButtonElement>(null);
   const composerDraftRef = useRef({ key: "", text: "" });
+  const composingRef = useRef(false);
   useEffect(() => {
     if (composerDraftRef.current.key === draftKey && composerDraftRef.current.text === draftText) return;
+    composingRef.current = false;
     composerDraftRef.current = { key: draftKey, text: draftText };
     runtime.thread.composer.setText(draftText);
   }, [draftKey, draftText, runtime]);
@@ -412,34 +424,58 @@ export default function RuxAssistantThread({
           }}>
           {importingImages && <div className="runtime-inline-progress" role="status"><CircleNotch size="xs" className="spin" />正在添加图片…</div>}
           <div className="composer">
+            {authNotice}
             {voicePhase !== "idle" && <div className="voice-recording-bar" role="status"><span>{voicePhase === "recording" ? `正在录音 ${voiceSeconds} 秒 · 点击麦克风结束并转写` : voicePhase === "preparing" ? "正在准备麦克风…" : "正在使用系统语音转写…"}</span><Button variant="plain" onClick={onCancelVoice}>取消</Button></div>}
             {runtimeProgress?.[selectedAgent] && !["ready", "error"].includes(runtimeProgress[selectedAgent].state) && <div className="runtime-inline-progress"><CircleNotch size="xs" className="spin" /><span>{runtimeProgress[selectedAgent].state === "downloading" ? `正在下载 ${agents.find((agent) => agent.id === selectedAgent)?.name || selectedAgent} 运行时` : "正在验证并安装运行时"}</span><em>{runtimeProgress[selectedAgent].percent || 0}%</em><i><i style={{ width: `${runtimeProgress[selectedAgent].percent || 4}%` }} /></i></div>}
             {runtimeProgress?.[selectedAgent]?.state === "error" && <div className="runtime-inline-progress is-error"><WarningCircle size="xs" /><span>{runtimeProgress[selectedAgent].message || "运行时下载失败"}</span></div>}
             {showAttachments && <AttachmentList paths={attachments} onRemove={onRemoveAttachment} />}
             {attachmentError && <p className="composer-attachment-error" role="alert">{attachmentError}</p>}
-            <ComposerPrimitive.Input className="aui-composer-input" aria-label="消息" placeholder="继续对话…" rows={2} onKeyDownCapture={(event) => {
-              if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing || event.keyCode === 229) return;
+            <ComposerPrimitive.Input className="aui-composer-input" aria-label="消息" placeholder="继续对话…" rows={2}
+              onCompositionStart={() => { composingRef.current = true; }}
+              onCompositionEnd={(event) => {
+                composingRef.current = false;
+                composerDraftRef.current = { key: draftKey, text: event.currentTarget.value };
+                onDraftTextChange(event.currentTarget.value);
+              }}
+              onKeyDownCapture={(event) => {
+              if (composingRef.current || event.nativeEvent.isComposing || event.keyCode === 229) {
+                // Keep candidate keys away from the primitive's Enter-to-send
+                // handler without preventing the IME's native default action.
+                event.stopPropagation();
+                return;
+              }
+              if (event.key !== "Enter" || event.shiftKey) return;
+              if (authRequired) { event.preventDefault(); event.stopPropagation(); return; }
               if (voicePhase !== "idle" || importingImages || attachments.length) {
                 event.preventDefault(); event.stopPropagation();
                 if (!attachmentError && voicePhase === "idle" && !importingImages && !running) void onNewMessage(draftText);
               }
-            }} onChange={(event) => { composerDraftRef.current = { key: draftKey, text: event.currentTarget.value }; onDraftTextChange(event.currentTarget.value); }} />
+            }} onChange={(event) => {
+              // Updating the parent external-store runtime during composition
+              // can commit the provisional Latin text and discard the IME range.
+              const nativeIsComposing = (event.nativeEvent as InputEvent).isComposing;
+              if (nativeIsComposing || (composingRef.current && nativeIsComposing !== false)) return;
+              // A non-composing input also recovers a dropped compositionend.
+              composingRef.current = false;
+              composerDraftRef.current = { key: draftKey, text: event.currentTarget.value };
+              onDraftTextChange(event.currentTarget.value);
+            }} />
             <div className="composer-controls">
               <div className="composer-left">
-                {showAttachments && <IconButton label="添加文件" icon="attachment" onClick={onAddFiles} />}
-                {showWebSearch && <IconButton label={webSearch ? "关闭网页搜索" : "启用网页搜索"} icon="browser" active={webSearch} onClick={onToggleWebSearch} />}
-                {showPermission && <span className="scope-menu-wrap" data-overlay-scope data-overlay-id="sandbox"><Button variant="plain" ref={sandboxTrigger} type="button" className={`scope-button ${permissionDanger ? "" : "neutral"}`} data-permission-mode={permissionMode} aria-label="操作批准方式" title={permissionLabel} onClick={onToggleSandbox} aria-expanded={sandboxOpen} aria-haspopup="menu"><PermissionModeIcon mode={permissionMode} size="sm" /><span className="permission-label">{permissionLabel}</span><CaretDown size="xs" /></Button>{sandboxOpen && <FloatingPopover anchorRef={sandboxTrigger} scope="sandbox" width="lg" align="start" onDismiss={() => onOverlayChange(null)}>{permissionPopover}</FloatingPopover>}</span>}
+                {showAttachments && <IconButton label="添加文件" icon="attachment" size="md" iconSize="md" onClick={onAddFiles} />}
+                {showWebSearch && <IconButton label={webSearch ? "关闭网页搜索" : "启用网页搜索"} icon="browser" size="md" iconSize="md" active={webSearch} onClick={onToggleWebSearch} />}
+                {showPermission && <span className="scope-menu-wrap" data-overlay-scope data-overlay-id="sandbox"><Button variant="plain" ref={sandboxTrigger} type="button" className={`scope-button ${permissionDanger ? "" : "neutral"}`} data-permission-mode={permissionMode} aria-label="操作批准方式" title={permissionLabel} onClick={onToggleSandbox} aria-expanded={sandboxOpen} aria-haspopup="menu"><PermissionModeIcon mode={permissionMode} size="md" /><span className="permission-label">{permissionLabel}</span><CaretDown size="xs" /></Button>{sandboxOpen && <FloatingPopover anchorRef={sandboxTrigger} scope="sandbox" width="lg" align="start" onDismiss={() => onOverlayChange(null)}>{permissionPopover}</FloatingPopover>}</span>}
               </div>
               <div className="composer-right">
                 <AgentSelector agents={agents} selectedAgent={selectedAgent} onSelectAgent={onSelectAgent} runtimeProgress={runtimeProgress} open={activeOverlay === "agents"} onToggle={() => onOverlayChange(activeOverlay === "agents" ? null : "agents")} onClose={() => onOverlayChange(null)} buttonRef={agentTrigger} />
                 <AgentModeSelector agent={selectedDefinition} mode={agentMode} onMode={onAgentMode} open={activeOverlay === "agent-mode"} onToggle={() => onOverlayChange(activeOverlay === "agent-mode" ? null : "agent-mode")} onClose={() => onOverlayChange(null)} buttonRef={modeTrigger} />
                 <span className="run-settings-wrap" data-overlay-scope data-overlay-id="run-settings"><Button variant="plain" ref={modelTrigger} type="button" aria-label="切换模型、推理强度和速度" className={`composer-menu run-settings-trigger ${modelOpen ? "is-active" : ""}`} onClick={onToggleModel} aria-expanded={modelOpen} aria-haspopup="dialog"><strong>{turnModelName({ modelLabel })}</strong><span>{reasoningLabel}</span><CaretDown size="xs" /></Button>{modelOpen && <FloatingPopover anchorRef={modelTrigger} scope="run-settings" width="lg" onDismiss={() => onOverlayChange(null)}>{modelPopover}</FloatingPopover>}</span>
-                {showVoice && <IconButton label={voicePhase === "recording" ? "结束录音并转写" : voicePhase === "idle" ? "语音输入" : "取消语音输入"} icon={voicePhase === "transcribing" ? "loading" : "microphone"} active={listening} onClick={onVoice} />}
+                {showVoice && <IconButton label={voicePhase === "recording" ? "结束录音并转写" : voicePhase === "idle" ? "语音输入" : "取消语音输入"} icon={voicePhase === "transcribing" ? "loading" : "microphone"} size="md" iconSize="md" active={listening} onClick={onVoice} />}
                 <ThreadPrimitive.If running>
-                  <ComposerPrimitive.Cancel asChild><IconButton label="停止" icon="stop" iconVariant="solid" variant="primary" size="lg" shape="round" className="send-button stop-button" /></ComposerPrimitive.Cancel>
+                  <ComposerPrimitive.Cancel asChild><IconButton label="停止" icon="stop" iconVariant="solid" variant="primary" size="lg" iconSize="md" shape="round" className="send-button stop-button" /></ComposerPrimitive.Cancel>
                 </ThreadPrimitive.If>
                 <ThreadPrimitive.If running={false}>
-                  {attachments.length ? <IconButton label="发送" icon="send" variant="primary" size="lg" shape="round" className="send-button" disabled={Boolean(attachmentError) || importingImages || voicePhase !== "idle"} onClick={() => void onNewMessage(draftText)} /> : <ComposerPrimitive.Send asChild disabled={Boolean(attachmentError) || importingImages || voicePhase !== "idle"}><IconButton label="发送" icon="send" variant="primary" size="lg" shape="round" className="send-button" /></ComposerPrimitive.Send>}
+                  {attachments.length ? <IconButton label="发送" icon="send" variant="primary" size="lg" iconSize="md" shape="round" className="send-button" disabled={authRequired || Boolean(attachmentError) || importingImages || voicePhase !== "idle"} onClick={() => void onNewMessage(draftText)} /> : <ComposerPrimitive.Send asChild disabled={authRequired || Boolean(attachmentError) || importingImages || voicePhase !== "idle"}><IconButton label="发送" icon="send" variant="primary" size="lg" iconSize="md" shape="round" className="send-button" /></ComposerPrimitive.Send>}
                 </ThreadPrimitive.If>
               </div>
             </div>

@@ -1,7 +1,8 @@
 import { _electron as electron, expect, test, type ElectronApplication, type Page } from "@playwright/test";
 import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { writeFileSync } from "node:fs";
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
+import { promisify } from "node:util";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createServer } from "node:http";
@@ -49,7 +50,7 @@ test.afterEach(async () => {
   rmSync(testRoot, { recursive: true, force: true });
 });
 
-test("creates the initial standalone conversation and opens typed settings", async () => {
+test("creates the initial standalone conversation and opens typed settings", async ({}, testInfo) => {
   // Keep this turn running until the permission assertion has completed.
   // A fixed-duration mock races UI actions on a slower CI runner.
   const heldRuns = await application.evaluateHandle(({ ipcMain }) => {
@@ -57,7 +58,6 @@ test("creates the initial standalone conversation and opens typed settings", asy
     ipcMain.removeHandler("agent:start");
     ipcMain.handle("agent:start", (event, input) => {
       runs.set(input.runId, event.sender);
-      event.sender.send("agent:event", { runId: input.runId, type: "text-delta", itemId: `text-${input.runId}`, delta: "RUX_E2E_AGENT_OK" });
       return { runId: input.runId, threadId: "e2e-thread", turnId: "e2e-turn" };
     });
     return runs;
@@ -76,8 +76,23 @@ test("creates the initial standalone conversation and opens typed settings", asy
   await expect(page.getByText("独立会话", { exact: true }).first()).toBeVisible();
   await page.getByRole("textbox", { name: "消息" }).fill("Create standalone draft");
   await page.getByRole("button", { name: "发送" }).click();
-  await expect(page.getByText("进行中", { exact: true })).toBeVisible();
-  await expect(page.getByText("Rux 正在继续处理", { exact: true })).toBeVisible();
+  await expect(page.getByRole("status", { name: "等待首个响应", exact: true })).toBeVisible();
+  await expect(page.locator(".run-activity")).toHaveCount(1);
+  await expect.poll(() => page.locator(".run-activity-mark img").evaluate(image => (image as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await expect(page.locator(".run-activity-mark img")).toHaveCSS("animation-name", "none");
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await expect(page.locator(".run-activity-mark img")).toHaveCSS("animation-name", "run-activity-breathe");
+  await expect(page.locator(".run-activity")).toHaveCSS("opacity", "1");
+  await page.screenshot({ path: testInfo.outputPath("motion-waiting.png") });
+  await heldRuns.evaluate(runs => {
+    for (const [runId, sender] of runs) sender.send("agent:event", { runId, type: "text-delta", itemId: `text-${runId}`, delta: "RUX_E2E_AGENT_OK" });
+  });
+  await expect(page.getByRole("status", { name: "等待首个响应", exact: true })).toBeHidden();
+  await expect(page.getByRole("status", { name: "正在处理", exact: true })).toBeVisible();
+  await expect(page.getByText("RUX_E2E_AGENT_OK", { exact: true }).last()).toBeVisible();
+  await expect(page.locator(".run-activity")).toHaveCSS("opacity", "1");
+  await page.screenshot({ path: testInfo.outputPath("motion-streaming.png") });
   await page.getByRole("button", { name: "操作批准方式" }).click();
   await page.getByRole("button", { name: /^请求批准 / }).click();
   await expect(page.locator(".toast")).toContainText("请先停止当前任务");
@@ -88,8 +103,7 @@ test("creates the initial standalone conversation and opens typed settings", asy
   });
   await heldRuns.dispose();
   await expect(page.getByText("RUX_E2E_AGENT_OK", { exact: true }).last()).toBeVisible();
-  await expect(page.getByText("进行中", { exact: true })).toBeHidden();
-  await expect(page.getByText("Rux 正在继续处理", { exact: true })).toBeHidden();
+  await expect(page.locator(".run-activity")).toBeHidden();
   await expect(page.getByLabel("本轮状态：已完成", { exact: true }).last()).toBeVisible();
   await page.getByRole("button", { name: "更多", exact: true }).click();
   await page.getByRole("menuitem", { name: "复制会话内容" }).click();
@@ -239,6 +253,16 @@ test("restores a SQLite project and executes a command through the PTY terminal"
   await application.close();
   await launchApplication();
   await expect(page.getByText("project", { exact: true }).first()).toBeVisible();
+  const branchPicker = page.getByRole("button", { name: "切换 Git 分支", exact: true });
+  await expect(branchPicker).toBeEnabled();
+  await branchPicker.click();
+  await page.getByRole("menuitemradio", { name: "main", exact: true }).click();
+  await expect(branchPicker).toContainText("main");
+  expect(execFileSync("git", ["branch", "--show-current"], { cwd: projectPath, encoding: "utf8" }).trim()).toBe("main");
+  await branchPicker.click();
+  await page.getByRole("menuitemradio", { name: "feature", exact: true }).click();
+  await expect(branchPicker).toContainText("feature");
+
   await expect(page.getByRole("button", { name: "切换右侧面板" })).toHaveAttribute("aria-pressed", "false");
   await page.getByRole("button", { name: "更多", exact: true }).click();
   await expect(page.getByRole("menuitem", { name: "复制项目路径" })).toBeVisible();
@@ -287,7 +311,7 @@ test("restores a SQLite project and executes a command through the PTY terminal"
   await expect(page.getByLabel("终端输出")).toContainText("RUX_E2E_TERMINAL");
   await expect(page.getByLabel("终端输出")).not.toContainText("正在启动终端");
   await page.getByRole("button", { name: "关闭底部面板" }).click();
-  await page.getByRole("button", { name: "切换底部面板" }).click();
+  await page.getByRole("button", { name: "打开项目终端", exact: true }).click();
   await expect(page.getByLabel("终端输出")).toContainText("RUX_E2E_TERMINAL");
   await page.locator(".xterm-helper-textarea").pressSequentially("printf RUX_TERMINAL_REOPEN");
   await page.locator(".xterm-helper-textarea").press("Enter");
@@ -507,22 +531,22 @@ test("commits model effort on release, keeps the picker open, and preserves outs
 
 test("resizes and remembers sidebar width with the measured desktop dimensions", async () => {
   const separator = page.getByRole("separator", { name: "调整侧栏宽度", exact: true });
-  await expect(separator).toHaveAttribute("aria-valuenow", "300");
+  await expect(separator).toHaveAttribute("aria-valuenow", "256");
   const dimensions = await page.evaluate(() => ({ header: document.querySelector(".topbar")!.getBoundingClientRect().height, content: document.querySelector(".aui-thread-root")!.getBoundingClientRect().width }));
-  expect(dimensions.header).toBe(46);
-  expect(dimensions.content).toBe(960);
+  expect(dimensions.header).toBe(52);
+  expect(dimensions.content).toBe(840);
   await separator.press("ArrowRight");
-  await expect(separator).toHaveAttribute("aria-valuenow", "310");
+  await expect(separator).toHaveAttribute("aria-valuenow", "266");
   const box = await separator.boundingBox();
   if (!box) throw new Error("Missing sidebar handle");
   await page.mouse.move(box.x + box.width / 2, box.y + 180);
   await page.mouse.down();
   await page.mouse.move(box.x + box.width / 2 + 45, box.y + 180, { steps: 4 });
   await page.mouse.up();
-  await expect(separator).toHaveAttribute("aria-valuenow", "355");
+  await expect(separator).toHaveAttribute("aria-valuenow", "311");
   await application.close();
   await launchApplication();
-  await expect(page.getByRole("separator", { name: "调整侧栏宽度", exact: true })).toHaveAttribute("aria-valuenow", "355");
+  await expect(page.getByRole("separator", { name: "调整侧栏宽度", exact: true })).toHaveAttribute("aria-valuenow", "311");
 });
 
 
@@ -671,11 +695,12 @@ test("records synthetic audio, appends transcription, and cancels without replac
   const input = page.getByRole("textbox", { name: "消息", exact: true });
   await input.fill("原有草稿");
   await page.getByRole("button", { name: "语音输入", exact: true }).click();
-  await expect(page.getByRole("status")).toContainText("正在录音 1 秒");
+  // The wall-clock label can reach 1s before a full second of PCM is delivered.
+  await expect(page.getByRole("status")).toContainText(/正在录音 (?:[2-9]|\d{2}) 秒/);
   await expect(page.getByRole("button", { name: "发送", exact: true })).toBeDisabled();
   await page.getByRole("button", { name: "结束录音并转写", exact: true }).click();
   await expect(page.getByRole("status")).toContainText("正在使用系统语音转写");
-  expect(await speech.evaluate(state => state.wavBytes)).toBeGreaterThan(32000);
+  await expect.poll(() => speech.evaluate(state => state.wavBytes)).toBeGreaterThan(32000);
   await speech.evaluate(state => state.complete());
   await expect(input).toHaveValue("原有草稿\n语音追加内容");
   await page.getByRole("button", { name: "语音输入", exact: true }).click();
@@ -732,4 +757,95 @@ test("keeps custom API conversation context and switches plan mode across real H
     expect(requests[2].input).toHaveLength(5);
     expect(requests[2].input[0].content[0].text).toContain("Rux");
   } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); }
+});
+
+
+test("keeps Chinese IME composition and candidate-confirmation Enter in the draft", async () => {
+  const input = page.getByRole("textbox", { name: "消息", exact: true });
+  await input.focus();
+  const cdp = await page.context().newCDPSession(page);
+  try {
+    // Exercise Chromium's actual composition pipeline, not fill() or paste().
+    await cdp.send("Input.imeSetComposition", { text: "ni", selectionStart: 2, selectionEnd: 2 });
+    await expect(input).toHaveValue("ni");
+    await cdp.send("Input.imeSetComposition", { text: "nihao", selectionStart: 5, selectionEnd: 5 });
+    await expect(input).toHaveValue("nihao");
+    expect(await input.evaluate(element => element.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", isComposing: true, bubbles: true, cancelable: true })))).toBe(true);
+    await expect(page.locator(".aui-user-message")).toHaveCount(0);
+    await cdp.send("Input.insertText", { text: "你好" });
+    await expect(input).toHaveValue("你好");
+    await expect.poll(() => page.evaluate(() => Object.values(JSON.parse(localStorage.getItem("rux.composer-drafts.v1") || "{}") as Record<string, { text: string }>).map(draft => draft.text))).toContain("你好");
+    // Some IMEs report the confirmation key as 229 with isComposing=false.
+    // It must not reach the composer's regular Enter-to-send handler.
+    await input.evaluate(element => element.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 229, isComposing: false, bubbles: true, cancelable: true })));
+    await expect(input).toHaveValue("你好");
+    await expect(page.locator(".aui-user-message")).toHaveCount(0);
+    await input.press("Shift+Enter");
+    await cdp.send("Input.imeSetComposition", { text: "zhongwen", selectionStart: 8, selectionEnd: 8 });
+    await cdp.send("Input.insertText", { text: "中文输入" });
+    await expect(input).toHaveValue("你好\n中文输入");
+    await input.press("Enter");
+    await expect(page.locator(".aui-user-bubble")).toHaveText("你好\n中文输入");
+    await expect(page.getByLabel("本轮状态：已完成", { exact: true })).toBeVisible();
+  } finally { await cdp.detach(); }
+});
+
+
+test("recovers from expired Codex credentials without losing the conversation", async ({}, testInfo) => {
+  const mock = await application.evaluateHandle(({ ipcMain }) => {
+    const state = { expired: false, loggedIn: false, loginCalls: 0 };
+    ipcMain.removeHandler("auth:status");
+    ipcMain.handle("auth:status", () => state.expired ? { connected: false, reauthRequired: true, account: null, message: "Codex 登录已失效，请在 Rux 中重新登录后重试。" } : { connected: state.loggedIn, account: state.loggedIn ? { email: "rux-auth-test@example.test" } : null });
+    ipcMain.removeHandler("auth:login");
+    ipcMain.handle("auth:login", event => {
+      state.loginCalls++; state.expired = false; state.loggedIn = true;
+      event.sender.send("auth:login-event", { type: "complete", code: 0 });
+      return { started: true };
+    });
+    ipcMain.removeHandler("agent:start");
+    ipcMain.handle("agent:start", (event, input) => {
+      if (!state.loggedIn) {
+        state.expired = true;
+        event.sender.send("auth:login-event", { type: "auth-required", reauthRequired: true, connected: false, account: null, message: "Codex 登录已失效，请在 Rux 中重新登录后重试。" });
+        event.sender.send("agent:event", { runId: input.runId, type: "error", error: "Your access token could not be refreshed because your refresh token was already used. Please log out and sign in again." });
+      } else {
+        event.sender.send("agent:event", { runId: input.runId, type: "text-delta", itemId: "recovered", delta: "重新登录后已恢复对话" });
+        event.sender.send("agent:event", { runId: input.runId, type: "turn-completed", status: "completed" });
+      }
+      return { runId: input.runId, threadId: "auth-thread", turnId: input.runId };
+    });
+    return state;
+  });
+  const input = page.getByRole("textbox", { name: "消息", exact: true });
+  await input.fill("保留这条消息并恢复登录"); await page.getByRole("button", { name: "发送", exact: true }).click();
+  await expect(page.getByText("Codex 登录已失效，请在 Rux 中重新登录后重试。", { exact: true })).toBeVisible();
+  await expect(page.getByText(/Your access token could not/)).toHaveCount(0);
+  await input.fill("登录恢复后保留这份草稿");
+  await expect(page.getByRole("button", { name: "发送", exact: true })).toBeDisabled();
+  await input.press("Enter");
+  await expect(input).toHaveValue("登录恢复后保留这份草稿");
+  await expect(page.locator(".aui-user-message")).toHaveCount(1);
+  await page.getByRole("button", { name: "重新登录 Codex", exact: true }).click();
+  await expect(page.getByRole("button", { name: "重新登录", exact: true })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("codex-reauth-settings.png") });
+  await page.getByRole("button", { name: "重新登录", exact: true }).click();
+  await expect(page.getByText("rux-auth-test@example.test", { exact: true })).toBeVisible();
+  expect(await mock.evaluate(state => state.loginCalls)).toBe(1);
+  await page.getByRole("button", { name: "返回 Rux", exact: true }).click();
+  await expect(page.getByRole("button", { name: "重新登录 Codex", exact: true })).toBeHidden();
+  await expect(page.locator(".aui-user-bubble").first()).toHaveText("保留这条消息并恢复登录");
+  await expect(input).toHaveValue("登录恢复后保留这份草稿");
+  await input.fill("继续原会话"); await page.getByRole("button", { name: "发送", exact: true }).click();
+  await expect(page.getByText("重新登录后已恢复对话", { exact: true })).toBeVisible();
+  await mock.dispose();
+});
+
+
+test("keeps one Rux process per profile to avoid competing credential refreshes", async () => {
+  const input = page.getByRole("textbox", { name: "消息", exact: true });
+  await input.fill("保留主窗口草稿");
+  const executable = await application.evaluate(({ app }) => app.getPath("exe"));
+  await promisify(execFile)(executable, [resolve("out/main/main.js"), `--user-data-dir=${join(testRoot, "user-data")}`], { timeout: 10_000, env: { ...process.env, RUX_E2E: "1" } });
+  await expect(input).toHaveValue("保留主窗口草稿");
+  expect(application.windows()).toHaveLength(1);
 });
