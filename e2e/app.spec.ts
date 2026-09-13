@@ -4,15 +4,16 @@ import { writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { createServer } from "node:http";
 import { StateDatabase } from "../src/electron/state-database";
 
 let application: ElectronApplication;
 let page: Page;
 let testRoot: string;
 
-async function launchApplication() {
+async function launchApplication(extraArgs: string[] = []) {
   application = await electron.launch({
-    args: [resolve("out/main/main.js"), `--user-data-dir=${join(testRoot, "user-data")}`],
+    args: [resolve("out/main/main.js"), `--user-data-dir=${join(testRoot, "user-data")}`, ...extraArgs],
     env: { ...process.env, RUX_E2E: "1" },
   });
   page = await application.firstWindow();
@@ -622,4 +623,113 @@ test("shares keyboard and focus behavior across context menus, dialogs and selec
   await page.getByRole("button", { name: "返回 Rux", exact: true }).click();
   await expect(page.getByRole("button", { name: "切换模型、推理强度和速度", exact: true })).toContainText("GPT-6 Astra");
   await expect(page.getByLabel("本轮运行信息", { exact: true })).toContainText("E2E Model");
+});
+
+test("blocks image input for text-only models and preserves the attachment when changing models", async () => {
+  const path = join(testRoot, "capability.png");
+  writeFileSync(path, Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=", "base64"));
+  await application.evaluate(({ dialog }, path) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [path] }); }, path);
+  await page.getByRole("button", { name: "添加文件", exact: true }).click();
+  await expect(page.getByRole("button", { name: "移除附件 capability.png" })).toBeVisible();
+  await page.getByRole("button", { name: "切换模型、推理强度和速度", exact: true }).click();
+  await page.getByRole("button", { name: "选择模型", exact: true }).click();
+  await page.getByRole("menuitemradio", { name: "E2E Text", exact: true }).click();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("alert")).toContainText("当前模型不支持图片");
+  await expect(page.getByRole("button", { name: "发送", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "移除附件 capability.png" })).toBeVisible();
+  await page.getByRole("button", { name: "切换模型、推理强度和速度", exact: true }).click();
+  await page.getByRole("button", { name: "选择模型", exact: true }).click();
+  await page.getByRole("menuitemradio", { name: /^E2E Model/ }).click();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("button", { name: "发送", exact: true })).toBeEnabled();
+});
+
+test("records synthetic audio, appends transcription, and cancels without replacing the draft", async ({}, testInfo) => {
+  await application.close();
+  await launchApplication(["--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream"]);
+  const speech = await application.evaluateHandle(({ ipcMain, BrowserWindow }) => {
+    let resolveText: ((result: { text: string }) => void) | undefined;
+    let rejectText: ((error: Error) => void) | undefined;
+    const state = { wavBytes: 0, cancelled: 0, complete() { resolveText?.({ text: "语音追加内容" }); } };
+    for (const method of ["status", "prepare", "transcribe", "cancel"]) ipcMain.removeHandler(`voice:${method}`);
+    ipcMain.handle("voice:status", () => ({ available: true, permission: "authorized", onDevice: true }));
+    ipcMain.handle("voice:prepare", () => {});
+    ipcMain.handle("voice:transcribe", (_event, input) => {
+      const bytes = Buffer.from(input.base64, "base64");
+      if (bytes.toString("ascii", 0, 4) !== "RIFF" || bytes.length <= 44) throw new Error("Expected captured WAV audio");
+      state.wavBytes = bytes.length;
+      return new Promise<{ text: string }>((resolve, reject) => { resolveText = resolve; rejectText = reject; });
+    });
+    ipcMain.handle("voice:cancel", () => { state.cancelled++; rejectText?.(new Error("cancelled")); });
+    const session = BrowserWindow.getAllWindows()[0].webContents.session;
+    session.setPermissionRequestHandler((_contents, permission, callback) => callback(permission === "media"));
+    session.setPermissionCheckHandler((_contents, permission) => permission === "media");
+    return state;
+  });
+  await page.reload();
+  const input = page.getByRole("textbox", { name: "消息", exact: true });
+  await input.fill("原有草稿");
+  await page.getByRole("button", { name: "语音输入", exact: true }).click();
+  await expect(page.getByRole("status")).toContainText("正在录音 1 秒");
+  await expect(page.getByRole("button", { name: "发送", exact: true })).toBeDisabled();
+  await page.getByRole("button", { name: "结束录音并转写", exact: true }).click();
+  await expect(page.getByRole("status")).toContainText("正在使用系统语音转写");
+  expect(await speech.evaluate(state => state.wavBytes)).toBeGreaterThan(32000);
+  await speech.evaluate(state => state.complete());
+  await expect(input).toHaveValue("原有草稿\n语音追加内容");
+  await page.getByRole("button", { name: "语音输入", exact: true }).click();
+  await expect(page.getByRole("status")).toContainText("正在录音 1 秒");
+  await page.getByRole("button", { name: "结束录音并转写", exact: true }).click();
+  await expect(page.getByRole("status")).toContainText("正在使用系统语音转写");
+  await page.getByRole("button", { name: "取消", exact: true }).click();
+  await expect(input).toHaveValue("原有草稿\n语音追加内容");
+  await expect.poll(() => speech.evaluate(state => state.cancelled)).toBe(1);
+  await expect(page.getByRole("button", { name: "发送", exact: true })).toBeEnabled();
+  await page.screenshot({ path: testInfo.outputPath("voice-composer.png") });
+  await speech.dispose();
+});
+
+
+test("keeps custom API conversation context and switches plan mode across real HTTP requests", async () => {
+  const requests: Array<{ input: Array<{ role: string; content: any }>; instructions: string; store: boolean }> = [];
+  const server = createServer((request, response) => {
+    let raw = ""; request.on("data", chunk => { raw += chunk; });
+    request.on("end", () => { requests.push(JSON.parse(raw)); response.writeHead(200, { "Content-Type": "application/json" }); response.end(JSON.stringify({ model: "custom-test", output_text: `HTTP reply ${requests.length}`, usage: { input_tokens: 20, output_tokens: 10, total_tokens: 30 } })); });
+  });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const port = (server.address() as { port: number }).port;
+  const mockKeyStorage = async () => application.evaluate(({ safeStorage }) => {
+    safeStorage.isEncryptionAvailable = () => true;
+    safeStorage.encryptString = value => Buffer.from(value);
+    safeStorage.decryptString = value => value.toString();
+  });
+  try {
+    await mockKeyStorage();
+    await page.evaluate(async (baseUrl) => { await window.rux.settings.save({ provider: "custom", baseUrl, model: "custom-test", apiKey: "local-test-key", reasoning: "medium" }); }, `http://127.0.0.1:${port}/v1`);
+    await application.close(); await launchApplication(); await mockKeyStorage();
+    await page.getByRole("button", { name: "选择 Agent 模式", exact: true }).click();
+    await page.getByRole("menuitemradio", { name: "计划", exact: true }).click();
+    await page.getByRole("textbox", { name: "消息", exact: true }).fill("项目名称是 Rux，先给我计划");
+    await page.getByRole("button", { name: "发送", exact: true }).click();
+    await expect(page.getByText("HTTP reply 1", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "发送", exact: true })).toBeVisible();
+    expect(requests[0].instructions).toContain("计划模式");
+    await page.getByRole("button", { name: "选择 Agent 模式", exact: true }).click();
+    await page.getByRole("menuitemradio", { name: "默认", exact: true }).click();
+    await page.getByRole("textbox", { name: "消息", exact: true }).fill("刚才的项目叫什么");
+    await page.getByRole("button", { name: "发送", exact: true }).click();
+    await expect(page.getByText("HTTP reply 2", { exact: true })).toBeVisible();
+    expect(requests[1].input.map(item => item.role)).toEqual(["user", "assistant", "user"]);
+    expect(requests[1].input[0].content[0].text).toContain("项目名称是 Rux");
+    expect(requests[1].input[1].content).toBe("HTTP reply 1");
+    expect(requests[1].instructions).toContain("默认模式"); expect(requests[1].store).toBe(false);
+    await expect.poll(async () => page.evaluate(async () => Object.values(await window.rux.messages.list()).flat().filter((item: any) => item.role === "assistant" && item.status === "complete").length)).toBe(2);
+    await application.close(); await launchApplication(); await mockKeyStorage();
+    await page.getByRole("textbox", { name: "消息", exact: true }).fill("重启后继续");
+    await page.getByRole("button", { name: "发送", exact: true }).click();
+    await expect(page.getByText("HTTP reply 3", { exact: true })).toBeVisible();
+    expect(requests[2].input).toHaveLength(5);
+    expect(requests[2].input[0].content[0].text).toContain("Rux");
+  } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); }
 });

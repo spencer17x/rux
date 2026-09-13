@@ -57,9 +57,10 @@ type Props = {
   permissionDanger?: boolean;
   modelPopover: ReactNode; permissionPopover: ReactNode; onToggleModel: () => void; onToggleSandbox: () => void;
   activeOverlay: OverlayId | null; onOverlayChange: (overlay: OverlayId | null) => void;
-  attachments: string[]; showAttachments?: boolean; webSearch?: boolean; showWebSearch?: boolean; onToggleWebSearch: () => void;
+  attachments: string[]; attachmentError?: string; showAttachments?: boolean; webSearch?: boolean; showWebSearch?: boolean; onToggleWebSearch: () => void;
   draftKey: string; draftText: string; onDraftTextChange: (text: string) => void;
   onImportImages?: (files: File[]) => Promise<void>; importingImages?: boolean;
+  voicePhase?: "idle" | "preparing" | "recording" | "transcribing"; voiceSeconds?: number; onCancelVoice?: () => void;
   onAddFiles: () => void; onRemoveAttachment: (path: string) => void; listening: boolean; showVoice?: boolean; onVoice: () => void;
   workspaceSummary?: ReactNode;
 };
@@ -323,6 +324,7 @@ export default function RuxAssistantThread({
   onToggleModel,
   onToggleSandbox,
   attachments,
+  attachmentError = "",
   showAttachments = true,
   webSearch = false,
   showWebSearch = false,
@@ -335,6 +337,9 @@ export default function RuxAssistantThread({
   importingImages = false,
   onRemoveAttachment,
   listening,
+  voicePhase = "idle",
+  voiceSeconds = 0,
+  onCancelVoice,
   showVoice = true,
   onVoice,
   workspaceSummary,
@@ -407,14 +412,16 @@ export default function RuxAssistantThread({
           }}>
           {importingImages && <div className="runtime-inline-progress" role="status"><CircleNotch size="xs" className="spin" />正在添加图片…</div>}
           <div className="composer">
+            {voicePhase !== "idle" && <div className="voice-recording-bar" role="status"><span>{voicePhase === "recording" ? `正在录音 ${voiceSeconds} 秒 · 点击麦克风结束并转写` : voicePhase === "preparing" ? "正在准备麦克风…" : "正在使用系统语音转写…"}</span><Button variant="plain" onClick={onCancelVoice}>取消</Button></div>}
             {runtimeProgress?.[selectedAgent] && !["ready", "error"].includes(runtimeProgress[selectedAgent].state) && <div className="runtime-inline-progress"><CircleNotch size="xs" className="spin" /><span>{runtimeProgress[selectedAgent].state === "downloading" ? `正在下载 ${agents.find((agent) => agent.id === selectedAgent)?.name || selectedAgent} 运行时` : "正在验证并安装运行时"}</span><em>{runtimeProgress[selectedAgent].percent || 0}%</em><i><i style={{ width: `${runtimeProgress[selectedAgent].percent || 4}%` }} /></i></div>}
             {runtimeProgress?.[selectedAgent]?.state === "error" && <div className="runtime-inline-progress is-error"><WarningCircle size="xs" /><span>{runtimeProgress[selectedAgent].message || "运行时下载失败"}</span></div>}
             {showAttachments && <AttachmentList paths={attachments} onRemove={onRemoveAttachment} />}
+            {attachmentError && <p className="composer-attachment-error" role="alert">{attachmentError}</p>}
             <ComposerPrimitive.Input className="aui-composer-input" aria-label="消息" placeholder="继续对话…" rows={2} onKeyDownCapture={(event) => {
               if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing || event.keyCode === 229) return;
-              if (importingImages || attachments.length) {
+              if (voicePhase !== "idle" || importingImages || attachments.length) {
                 event.preventDefault(); event.stopPropagation();
-                if (!importingImages && !running) void onNewMessage(draftText);
+                if (!attachmentError && voicePhase === "idle" && !importingImages && !running) void onNewMessage(draftText);
               }
             }} onChange={(event) => { composerDraftRef.current = { key: draftKey, text: event.currentTarget.value }; onDraftTextChange(event.currentTarget.value); }} />
             <div className="composer-controls">
@@ -427,12 +434,12 @@ export default function RuxAssistantThread({
                 <AgentSelector agents={agents} selectedAgent={selectedAgent} onSelectAgent={onSelectAgent} runtimeProgress={runtimeProgress} open={activeOverlay === "agents"} onToggle={() => onOverlayChange(activeOverlay === "agents" ? null : "agents")} onClose={() => onOverlayChange(null)} buttonRef={agentTrigger} />
                 <AgentModeSelector agent={selectedDefinition} mode={agentMode} onMode={onAgentMode} open={activeOverlay === "agent-mode"} onToggle={() => onOverlayChange(activeOverlay === "agent-mode" ? null : "agent-mode")} onClose={() => onOverlayChange(null)} buttonRef={modeTrigger} />
                 <span className="run-settings-wrap" data-overlay-scope data-overlay-id="run-settings"><Button variant="plain" ref={modelTrigger} type="button" aria-label="切换模型、推理强度和速度" className={`composer-menu run-settings-trigger ${modelOpen ? "is-active" : ""}`} onClick={onToggleModel} aria-expanded={modelOpen} aria-haspopup="dialog"><strong>{turnModelName({ modelLabel })}</strong><span>{reasoningLabel}</span><CaretDown size="xs" /></Button>{modelOpen && <FloatingPopover anchorRef={modelTrigger} scope="run-settings" width="lg" onDismiss={() => onOverlayChange(null)}>{modelPopover}</FloatingPopover>}</span>
-                {showVoice && <IconButton label="语音输入" icon="microphone" active={listening} onClick={onVoice} />}
+                {showVoice && <IconButton label={voicePhase === "recording" ? "结束录音并转写" : voicePhase === "idle" ? "语音输入" : "取消语音输入"} icon={voicePhase === "transcribing" ? "loading" : "microphone"} active={listening} onClick={onVoice} />}
                 <ThreadPrimitive.If running>
                   <ComposerPrimitive.Cancel asChild><IconButton label="停止" icon="stop" iconVariant="solid" variant="primary" size="lg" shape="round" className="send-button stop-button" /></ComposerPrimitive.Cancel>
                 </ThreadPrimitive.If>
                 <ThreadPrimitive.If running={false}>
-                  {attachments.length ? <IconButton label="发送" icon="send" variant="primary" size="lg" shape="round" className="send-button" disabled={importingImages} onClick={() => void onNewMessage(draftText)} /> : <ComposerPrimitive.Send asChild disabled={importingImages}><IconButton label="发送" icon="send" variant="primary" size="lg" shape="round" className="send-button" /></ComposerPrimitive.Send>}
+                  {attachments.length ? <IconButton label="发送" icon="send" variant="primary" size="lg" shape="round" className="send-button" disabled={Boolean(attachmentError) || importingImages || voicePhase !== "idle"} onClick={() => void onNewMessage(draftText)} /> : <ComposerPrimitive.Send asChild disabled={Boolean(attachmentError) || importingImages || voicePhase !== "idle"}><IconButton label="发送" icon="send" variant="primary" size="lg" shape="round" className="send-button" /></ComposerPrimitive.Send>}
                 </ThreadPrimitive.If>
               </div>
             </div>

@@ -37,6 +37,8 @@ export const settingsInputSchema = z.object({
   uiFontSize: z.number().min(8).max(32).optional(),
   allowConversationOverride: z.boolean().optional(),
   conversationSticky: z.boolean().optional(),
+  customImageInput: z.boolean().optional(),
+  customFileInput: z.boolean().optional(),
 });
 
 export const providerSaveSchema = z.object({
@@ -47,7 +49,7 @@ export const providerSaveSchema = z.object({
   apiKey: z.string().max(100_000).optional(),
   headers: z.record(z.string().max(200), z.string().max(10_000)).optional(),
   compatibleAgents: z.array(z.literal("pi")).max(1).optional(),
-  models: z.array(z.object({ id: z.string().max(160), name: z.string().max(160), reasoningLevels: z.array(reasoningSchema).max(10) })).max(500).optional(),
+  models: z.array(z.object({ id: z.string().max(160), name: z.string().max(160), reasoningLevels: z.array(reasoningSchema).max(10), inputModalities: z.array(z.enum(["text", "image"])).max(2).optional() })).max(500).optional(),
 });
 
 export const modelListSchema = z.object({ agentId: agentIdSchema.optional(), projectId: projectIdSchema.optional() }).optional();
@@ -66,6 +68,7 @@ export const threadUpdateSchema = z.object({
 
 export const projectThreadUpdateSchema = threadUpdateSchema.omit({ type: true }).extend({ projectId: projectIdSchema });
 
+const conversationMessageSchema = z.object({ role: z.enum(["user", "assistant"]), text: z.string().max(1_000_000), attachments: z.array(relativeProjectPathSchema).max(8).optional() }).strict();
 export const agentStartSchema = z.object({
   runId: threadIdSchema,
   projectId: projectIdSchema.optional(),
@@ -74,12 +77,13 @@ export const agentStartSchema = z.object({
   reasoning: reasoningSchema.optional(),
   serviceTier: z.string().trim().min(1).max(80).nullable().optional(),
   sandboxMode: sandboxModeSchema.optional(),
-  images: z.array(z.string().min(1).max(4096)).max(8).optional(),
+  images: z.array(relativeProjectPathSchema).max(8).optional(),
   webSearch: z.boolean().optional(),
   threadId: threadIdSchema.optional(),
   nativeSessionId: threadIdSchema.optional(),
   mode: z.string().trim().min(1).max(80).optional(),
   agentId: agentIdSchema.optional(),
+  conversation: z.array(conversationMessageSchema).max(200).refine((items) => items.reduce((sum, item) => sum + item.text.length, 0) <= 1_000_000, "历史对话过长，请新建会话").optional(),
 });
 
 export const agentSendSchema = agentStartSchema.omit({ runId: true, agentId: true, nativeSessionId: true, mode: true });
@@ -127,3 +131,6 @@ export const imageImportSchema = z.object({
 export const imagePreviewSchema = z.object({
   path: z.string().min(1).max(4096).refine((value) => !value.includes("\0"), "文件路径包含无效字符"),
 }).strict();
+
+export const voiceTranscribeSchema = z.object({ id: z.string().uuid(), base64: z.string().min(64).max(8_000_000).regex(/^[A-Za-z0-9+/]*={0,2}$/).refine((value) => value.length % 4 === 0) }).strict();
+export const voiceCancelSchema = z.object({ id: z.string().uuid() }).strict();

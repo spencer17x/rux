@@ -8,6 +8,7 @@ directories:
 files:
   - out/**/*
   - package.json
+  - '!out/native/**/*'
   - '!node_modules/@anthropic-ai/claude-agent-sdk-darwin-*/**/*'
   - '!node_modules/@anthropic-ai/claude-agent-sdk-linux-*/**/*'
   - '!node_modules/@anthropic-ai/claude-agent-sdk-win32-*/**/*'
@@ -15,6 +16,12 @@ files:
 asar: true
 
 mac:
+  extraResources:
+    - from: out/native/rux-speech
+      to: rux-speech
+  extendInfo:
+    NSMicrophoneUsageDescription: 将你主动录制的语音转为对话草稿。
+    NSSpeechRecognitionUsageDescription: 使用 macOS 系统语音转写，优先在设备上识别，部分语言可能联网。
   icon: build/icon.icns
   category: public.app-category.developer-tools
   hardenedRuntime: true

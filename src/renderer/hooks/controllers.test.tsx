@@ -71,7 +71,7 @@ function runHook(api: ReturnType<typeof runApi>, attachments: string[] = []) {
   return () => {
     const [activeThread, setActiveThread] = useState<ActiveThread | null>({ id: "draft:standalone", title: "Task", type: "standalone", draft: true });
     const [messages, setMessages] = useState<MessageStore>({});
-    const runs = useAgentRuns({ api: api as unknown as RuxApi, activeThread, selectedAgent: "codex", agentMode: "default", preference: { model: "m", reasoning: "high", serviceTier: null }, settings: { provider: "codex", serviceName: "Codex", model: "m", reasoning: "high", sandboxMode: "read-only" }, attachments, webSearch: false, agents: [{ id: "codex", name: "Codex", integrated: true }], setMessages, setAttachments: vi.fn(), setComposerValue: vi.fn(), setActiveThread, reloadWorkspace, refreshGit, notify });
+    const runs = useAgentRuns({ api: api as unknown as RuxApi, activeThread, selectedAgent: "codex", agentMode: "default", preference: { model: "m", reasoning: "high", serviceTier: null }, settings: { provider: "codex", serviceName: "Codex", model: "m", reasoning: "high", sandboxMode: "read-only" }, imageCapability: "supported", attachments, webSearch: false, agents: [{ id: "codex", name: "Codex", integrated: true }], setMessages, setAttachments: vi.fn(), setComposerValue: vi.fn(), setActiveThread, reloadWorkspace, refreshGit, notify });
     return { ...runs, activeThread, setActiveThread, messages };
   };
 }

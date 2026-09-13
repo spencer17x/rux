@@ -4,7 +4,7 @@ import type { ComposerSettings, ModelInfo, Reasoning } from "../../composer/Comp
 import { normalizedMessages, type MessageStore } from "../messages";
 import type { AgentId, AuthState, WorkspaceState } from "../types";
 
-export type AppSettings = ComposerSettings & { baseUrl: string; hasApiKey: boolean; uiFontSize: number; allowConversationOverride: boolean; conversationSticky: boolean };
+export type AppSettings = ComposerSettings & { baseUrl: string; hasApiKey: boolean; uiFontSize: number; allowConversationOverride: boolean; conversationSticky: boolean; customImageInput?: boolean; customFileInput?: boolean };
 export type AgentDefinition = { id: AgentId; name: string; installed: boolean; managed: boolean; integrated: boolean; version: string; path?: string; auth?: Record<string, any>; modes?: Array<{ id: string; label: string }> };
 export type AgentPreferences = Record<AgentId, { model: string; reasoning: Reasoning; serviceTier: string | null }>;
 export type ProviderStore = { activeProfileId: string; profiles: Array<{ id: string; name: string; protocol: "openai-responses" | "openai-chat" | "anthropic-messages" | "ollama"; baseUrl: string; hasApiKey: boolean; headers: Record<string, string>; compatibleAgents: "pi"[]; models: Array<{ id: string; name: string; reasoningLevels: string[] }> }> };

@@ -1,6 +1,12 @@
 import { contextBridge, ipcRenderer } from "electron";
 
 const api = {
+  voice: {
+    status: (): Promise<import("../shared/voice").VoiceStatus> => ipcRenderer.invoke("voice:status"),
+    prepare: (input: { id: string }): Promise<void> => ipcRenderer.invoke("voice:prepare", input),
+    transcribe: (input: { id: string; base64: string }): Promise<{ text: string; onDevice?: boolean }> => ipcRenderer.invoke("voice:transcribe", input),
+    cancel: (input: { id: string }): Promise<void> => ipcRenderer.invoke("voice:cancel", input),
+  },
   settings: {
     get: () => ipcRenderer.invoke("settings:get"),
     save: (input: unknown) => ipcRenderer.invoke("settings:save", input),

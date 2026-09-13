@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>CFBundleIdentifier</key><string>com.rux.speech</string>
+  <key>CFBundleName</key><string>Rux 语音</string>
+  <key>NSSpeechRecognitionUsageDescription</key><string>将你主动录制的语音转写为对话草稿。优先在设备上识别，部分语言可能使用 Apple 语音服务。</string>
+</dict></plist>

@@ -9,15 +9,25 @@ import type { ProviderProfileStore } from "./provider-profiles";
 import type { RuntimeManager } from "./runtime-manager";
 import type { IpcRegistrar, ResolveProject } from "./ipc-types";
 import type { RuxSettings, SettingsStore } from "./settings-store";
+import { assertImageCapability, imageCapability, isImagePath } from "../shared/model-capabilities";
 
-type Dependencies = { getWindow: () => BrowserWindow | null; settingsStore: SettingsStore; runtimeManager: RuntimeManager; providerStore: ProviderProfileStore; codexClient: CodexAppServerClient; claudeClient: ClaudeCodeClient; piClient: PiRuntimeClient; resolveProject: ResolveProject; sendWithCodex: (input: any) => Promise<any>; sendWithCustomProvider: (input: any, settings?: RuxSettings) => Promise<any> };
+type Dependencies = { getWindow: () => BrowserWindow | null; settingsStore: SettingsStore; runtimeManager: RuntimeManager; providerStore: ProviderProfileStore; codexClient: CodexAppServerClient; claudeClient: ClaudeCodeClient; piClient: PiRuntimeClient; resolveProject: ResolveProject; loadModels: (agentId: string, projectId?: string) => Promise<{ models: Array<{ model: string; isDefault?: boolean; inputModalities?: string[] }> }>; sendWithCodex: (input: any) => Promise<any>; sendWithCustomProvider: (input: any, settings?: RuxSettings) => Promise<any> };
 
 export function registerAgentRuntimeIpc(ipc: IpcRegistrar, deps: Dependencies): void {
   const customRuns = new Map<string, AbortController>();
   ipc.handle("agent:send", async (_event, value) => { const input = parseInput(agentSendSchema, value); if (process.env.RUX_E2E === "1") { await new Promise((resolve) => setTimeout(resolve, 250)); return { text: "RUX_E2E_SIDE_OK", threadId: "e2e-side-thread" }; } const settings = await deps.settingsStore.load(); return settings.provider === "custom" ? await deps.sendWithCustomProvider(input) : await deps.sendWithCodex(input); });
   ipc.handle("agent:start", async (_event, value) => {
     const input = parseInput(agentStartSchema, value); const settings = await deps.settingsStore.load();
-    if (process.env.RUX_E2E === "1") {
+    const custom = settings.provider === "custom" && (!input.agentId || input.agentId === "codex");
+    if ((input.images || []).some(isImagePath)) {
+      if (custom) assertImageCapability(input.images || [], settings.customImageInput ? "supported" : "unsupported");
+      else {
+        const { models } = await deps.loadModels(input.agentId || "codex", input.projectId);
+        const model = models.find((model) => model.model === input.model) || (!input.model ? models.find((model) => model.isDefault) || models[0] : undefined);
+        assertImageCapability(input.images || [], imageCapability(model));
+      }
+    }
+    if (process.env.RUX_E2E === "1" && !custom) {
       const sender = _event.sender;
       const emit = (event: Record<string, unknown>) => { if (!sender.isDestroyed()) sender.send("agent:event", { runId: input.runId, ...event }); };
       queueMicrotask(() => {

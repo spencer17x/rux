@@ -5,6 +5,9 @@ import { reduceStreamEvent, type AgentEvent, type MessageStore, type RuxMessage 
 import type { ActiveThread, AgentId, ThreadRecord, WorkspaceState } from "../types";
 import { userFacingError } from "../errors";
 
+import { apiConversation } from "../../shared/conversation";
+import { assertImageCapability, type ImageCapability } from "../../shared/model-capabilities";
+
 type AgentDefinition = { id: AgentId; name: string; integrated: boolean };
 type RunContext = { runId: string; localThreadId: string; assistantMessageId: string; type: "project" | "standalone"; projectId?: string; prompt: string; shouldRename: boolean; agentId: AgentId; agentMode: string; threadId: string; turnId: string };
 
@@ -13,6 +16,7 @@ type Input = {
   preference: { model: string; reasoning: Reasoning; serviceTier: string | null }; modelLabel?: string; settings: ComposerSettings; attachments: string[]; webSearch: boolean; agents: AgentDefinition[];
   setMessages: Dispatch<SetStateAction<MessageStore>>; setAttachments: Dispatch<SetStateAction<string[]>>; setComposerValue: Dispatch<SetStateAction<string>>;
   setActiveThread: Dispatch<SetStateAction<ActiveThread | null>>; reloadWorkspace: () => Promise<WorkspaceState>; refreshGit: (projectId?: string) => Promise<void>; notify: (message: string) => void;
+  conversation?: RuxMessage[]; imageCapability?: ImageCapability;
   onDraftPersisted?: (draftId: string) => void;
 };
 
@@ -63,6 +67,10 @@ export function useAgentRuns(input: Input) {
   const sending = input.activeThread ? runningThreadIds.has(input.activeThread.id) : false;
   const sendMessage = useCallback(async (nextPrompt = "") => {
     const prompt = nextPrompt.trim() || (input.attachments.length ? "请查看所附文件。" : ""); if (!prompt || !input.activeThread || sending || startingThreads.current.has(input.activeThread.id)) return;
+    const customApi = input.selectedAgent === "codex" && input.settings.provider === "custom";
+    if (customApi && (input.activeThread.nativeSessionId || input.activeThread.codexThreadId)) { input.notify("当前会话已绑定原生 Agent，请新建会话后使用自定义 API"); return; }
+    if (!customApi && input.selectedAgent === "codex" && input.conversation?.some(message => message.turnInfo?.agentId === "api")) { input.notify("当前会话使用自定义 API，请新建会话后使用原生 Codex"); return; }
+    try { assertImageCapability(input.attachments, input.imageCapability || "unknown"); } catch (error) { input.notify(userFacingError(error)); return; }
     const agent = input.agents.find((item) => item.id === input.selectedAgent); if (!agent?.integrated) { input.notify(`${agent?.name || input.selectedAgent} 适配器尚未启用`); return; }
     let targetThread = input.activeThread;
     const originalId = targetThread.id;
@@ -97,7 +105,13 @@ export function useAgentRuns(input: Input) {
     // These setters are bound to the originating draft, even after navigation.
     input.setComposerValue(""); input.setAttachments([]);
     setRunningThreadIds((current) => { const next = new Set(current); next.delete(originalId); next.add(targetThread.id); return next; });
-    try { const result = await input.api.agent.start({ runId, agentId: input.selectedAgent, projectId: targetThread.projectId, prompt, model: input.preference.model, reasoning: input.preference.reasoning, serviceTier: input.preference.serviceTier, sandboxMode: input.settings.sandboxMode, images: input.attachments, webSearch: input.webSearch, ...(nativeSessionId ? { threadId: nativeSessionId, nativeSessionId } : {}), mode: input.agentMode }) as Record<string, string>; context.threadId = result.threadId || result.sessionId || context.threadId; context.turnId = result.turnId || context.turnId; }
+    try {
+      if (customApi) {
+        const updated = await input.api.threads.update({ type: targetThread.type, projectId: targetThread.projectId, threadId: targetThread.id, agentId: input.selectedAgent, agentMode: input.agentMode });
+        input.setActiveThread(current => current?.id === targetThread.id ? { ...current, ...(updated as Partial<ThreadRecord>) } : current);
+      }
+      const result = await input.api.agent.start({ runId, agentId: input.selectedAgent, projectId: targetThread.projectId, prompt, model: input.preference.model, reasoning: input.preference.reasoning, serviceTier: input.preference.serviceTier, sandboxMode: input.settings.sandboxMode, images: input.attachments, webSearch: input.webSearch, ...(customApi ? { conversation: apiConversation(input.conversation || []) } : {}), ...(nativeSessionId ? { threadId: nativeSessionId, nativeSessionId } : {}), mode: input.agentMode }) as Record<string, string>; context.threadId = result.threadId || result.sessionId || context.threadId; context.turnId = result.turnId || context.turnId;
+    }
     catch (error) { contexts.current.delete(runId); input.setMessages((current) => ({ ...current, [targetThread.id]: (current[targetThread.id] || []).map((message) => message.id === assistantMessage.id ? reduceStreamEvent(message, { type: "error", error: userFacingError(error) }) : message) })); setRunningThreadIds((current) => { const next = new Set(current); next.delete(targetThread.id); return next; }); }
     finally { startingThreads.current.delete(originalId); }
   }, [input, sending]);

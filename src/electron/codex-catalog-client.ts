@@ -4,12 +4,12 @@ import type { RunProcess } from "./ipc-types";
 import type { RuntimeManager } from "./runtime-manager";
 import type { ReasoningEffort } from "./settings-store";
 
-type CodexModel = { id: string; model: string; displayName: string; description: string; hidden: boolean; isDefault: boolean; defaultReasoningEffort: ReasoningEffort; supportedReasoningEfforts: Array<{ reasoningEffort: ReasoningEffort; description: string }>; serviceTiers?: Array<{ id: string; name: string; description: string }>; defaultServiceTier?: string | null };
+type CodexModel = { inputModalities?: Array<"text" | "image">; id: string; model: string; displayName: string; description: string; hidden: boolean; isDefault: boolean; defaultReasoningEffort: ReasoningEffort; supportedReasoningEfforts: Array<{ reasoningEffort: ReasoningEffort; description: string }>; serviceTiers?: Array<{ id: string; name: string; description: string }>; defaultServiceTier?: string | null };
 type CodexAccount = { type: string; email?: string | null; planType?: string };
 
 export class CodexCatalogClient {
   constructor(private readonly runtimeManager: RuntimeManager, private readonly executable: () => string, private readonly runProcess: RunProcess, private readonly environment: () => Record<string, string> = () => ({})) {}
-  async models(): Promise<{ models: CodexModel[] }> { const result = await this.request<{ data?: CodexModel[] }>("model/list", { includeHidden: false, limit: 100 }); return { models: (result.data ?? []).filter((model) => !model.hidden) }; }
+  async models(): Promise<{ models: CodexModel[] }> { const result = await this.request<{ data?: CodexModel[] }>("model/list", { includeHidden: false, limit: 100 }); return { models: (result.data ?? []).filter((model) => !model.hidden).map((model) => ({ ...model, inputModalities: model.inputModalities || ["text", "image"] })) }; }
   async account(): Promise<{ connected: boolean; account: CodexAccount | null; message: string }> { try { const result = await this.request<{ account?: CodexAccount | null }>("account/read", { refreshToken: false }); const account = result.account ?? null; return { connected: Boolean(account), account, message: account?.email || account?.type || "" }; } catch (error) { const status = await this.runProcess(this.executable(), ["login", "status"], { timeoutMs: 20_000, env: this.environment() }); return { connected: status.code === 0, account: null, message: (status.stdout || status.stderr || String(error)).trim() }; } }
   async request<T>(method: string, params: unknown): Promise<T> {
     await this.runtimeManager.ensure("codex");

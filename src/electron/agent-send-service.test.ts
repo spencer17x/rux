@@ -48,4 +48,31 @@ describe("AgentSendService", () => {
     expect(args).toContain("read-only");
     expect(args).not.toContain("workspace-write");
   });
+
+  it("sends previous user and assistant messages and resets plan instructions on the next call", async () => {
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => ({ ok: true, json: async () => ({ output_text: "OK" }) })); vi.stubGlobal("fetch", fetchMock);
+    const { instance, settings } = service();
+    await instance.custom({ prompt: "先给计划", mode: "plan" }, settings as any);
+    await instance.custom({ prompt: "继续", mode: "default", conversation: [{ role: "user", text: "项目叫 Rux" }, { role: "assistant", text: "已了解" }] }, settings as any);
+    const first = JSON.parse(String(fetchMock.mock.calls[0][1]?.body)), second = JSON.parse(String(fetchMock.mock.calls[1][1]?.body));
+    expect(first.instructions).toContain("计划模式"); expect(second.instructions).toContain("默认模式");
+    expect(second.input.map((item: any) => item.role)).toEqual(["user", "assistant", "user"]);
+    expect(second.input[0].content[0].text).toBe("项目叫 Rux"); expect(second.input[1].content).toBe("已了解"); expect(second.store).toBe(false);
+  });
+
+  it("fails visibly instead of silently omitting missing or unsupported attachments", async () => {
+    const { instance, settings } = service(); const fetchMock = vi.fn(); vi.stubGlobal("fetch", fetchMock);
+    await expect(instance.custom({ prompt: "读文件", images: [join(tmpdir(), "rux-nonexistent-attachment.txt")] }, settings as any)).rejects.toThrow("无法读取附件");
+    await expect(instance.custom({ prompt: "看图片", images: ["/image.png"] }, settings as any)).rejects.toThrow("未启用图片输入");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("includes enabled document inputs and preserves historical attachments", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "rux-doc-input-")); temporary.push(directory); const path = join(directory, "brief.pdf"); writeFileSync(path, "%PDF-1.4\nfixture");
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => ({ ok: true, json: async () => ({ output_text: "OK" }) })); vi.stubGlobal("fetch", fetchMock);
+    const { instance, settings } = service();
+    await instance.custom({ prompt: "刚才文档的标题是什么", conversation: [{ role: "user", text: "读这份文档", attachments: [path] }, { role: "assistant", text: "收到" }] }, { ...settings, customImageInput: true, customFileInput: true } as any);
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(body.input[0].content[1]).toMatchObject({ type: "input_file", filename: "brief.pdf", file_data: expect.stringContaining("data:application/pdf;base64,") });
+  });
 });

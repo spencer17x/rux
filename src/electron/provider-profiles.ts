@@ -9,6 +9,7 @@ export type ProviderModel = {
   id: string;
   name: string;
   reasoningLevels: string[];
+  inputModalities?: Array<"text" | "image">;
 };
 
 export type ProviderProfile = {
@@ -52,6 +53,7 @@ export class ProviderProfileStore {
     const models = (input.models || current?.models || []).map((model) => ({
       id: String(model.id || "").trim().slice(0, 160),
       name: String(model.name || model.id || "").trim().slice(0, 160),
+      inputModalities: model.inputModalities?.includes("image") ? ["text", "image"] as Array<"text" | "image"> : ["text"] as Array<"text" | "image">,
       reasoningLevels: (model.reasoningLevels || []).filter((level) => ["none", "off", "minimal", "low", "medium", "high", "xhigh", "max"].includes(level)),
     })).filter((model) => model.id);
     if (!models.length) throw new Error("至少配置一个模型 ID");
@@ -146,6 +148,7 @@ export class ProviderProfileStore {
           models: profile.models.map((model) => ({
             id: model.id,
             name: model.name,
+            input: model.inputModalities || ["text"],
             reasoning: model.reasoningLevels.length > 0,
             thinkingLevelMap: Object.fromEntries(["off", "minimal", "low", "medium", "high", "xhigh", "max"].map((level) => [level, model.reasoningLevels.includes(level) ? level : null])),
           })),

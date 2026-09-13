@@ -29,6 +29,11 @@ import { userFacingError } from "./renderer/errors";
 const TypedSettingsScreen = lazy(() => import("./settings/SettingsScreen"));
 const TypedWorkspaceDock = lazy(() => import("./workspace/WorkspaceDock"));
 
+import { assertImageCapability, imageCapability, imageCapabilityMessage, isImagePath } from "./shared/model-capabilities";
+
+import { useVoiceInput } from "./renderer/hooks/useVoiceInput";
+import { appendDictation } from "./shared/voice";
+
 const api = window.rux;
 type OverlayId = "agents" | "agent-mode" | "run-settings" | "sandbox";
 type ComposerDraft = { text: string; attachments: string[]; webSearch: boolean };
@@ -54,7 +59,6 @@ function App() {
   const modelOpen = activeOverlay === "run-settings";
   const sandboxOpen = activeOverlay === "sandbox";
   const [composerDrafts, setComposerDrafts] = useState<Record<string, ComposerDraft>>(loadComposerDrafts);
-  const [listening, setListening] = useState(false);
   const [imageImports, setImageImports] = useState(0);
   const [fullAccessConfirmOpen, setFullAccessConfirmOpen] = useState(false);
   const handleThreadsRemoved = useCallback((threadIds: string[]) => { setMessages((current) => Object.fromEntries(Object.entries(current).filter(([threadId]) => !threadIds.includes(threadId)))); setComposerDrafts((current) => Object.fromEntries(Object.entries(current).filter(([threadId]) => !threadIds.includes(threadId)))); }, [setMessages]);
@@ -75,6 +79,7 @@ function App() {
   const setComposerValue = useCallback((next: string | ((current: string) => string)) => updateActiveDraft((current) => ({ ...current, text: typeof next === "function" ? next(current.text) : next })), [updateActiveDraft]);
   const setAttachments = useCallback((next: string[] | ((current: string[]) => string[])) => updateActiveDraft((current) => ({ ...current, attachments: typeof next === "function" ? next(current.attachments) : next })), [updateActiveDraft]);
   const setWebSearch = useCallback((next: boolean | ((current: boolean) => boolean)) => updateActiveDraft((current) => ({ ...current, webSearch: typeof next === "function" ? next(current.webSearch) : next })), [updateActiveDraft]);
+  const voice = useVoiceInput(api, draftKey, (text) => updateActiveDraft((current) => ({ ...current, text: appendDictation(current.text, text) })), notify);
   const handleDraftPersisted = useCallback((id: string) => { completeDraft(id); setComposerDrafts((current) => Object.fromEntries(Object.entries(current).filter(([key]) => key !== id))); }, [completeDraft]);
   useEffect(() => {
     const retained = Object.fromEntries(Object.entries(composerDrafts).filter(([, draft]) => draft.text.trim() || draft.attachments.length || draft.webSearch));
@@ -87,18 +92,19 @@ function App() {
   const isStandalone = activeThread?.type === "standalone";
   const activeProject = activeThread?.type === "project" ? workspace.projects.find((project) => project.id === activeThread.projectId) ?? null : null;
   const { settings, setSettings, auth, setAuth, models, modelsByAgent, agents, agentPreferences, setAgentPreferences, providerStore, runtimeProgress, systemInfo, modelsLoading, modelsError, codexModelsLoading, codexModelsError, fatalError, saveSettings, testSettings, saveProvider, removeProvider, setActiveProvider } = useAppBootstrap(api, selectedAgent, activeProject?.id, workspaceReady, setWorkspaceReady, initializeWorkspace, setMessages);
-  const customModels: ModelInfo[] = settings.provider === "custom" && settings.model ? [{ id: `custom:${settings.model}`, model: settings.model, displayName: settings.model, description: settings.serviceName, isDefault: true, defaultReasoningEffort: settings.reasoning, supportedReasoningEfforts: [{ reasoningEffort: settings.reasoning, description: `${settings.serviceName} · ${settings.reasoning}` }] }] : [];
+  const customModels: ModelInfo[] = settings.provider === "custom" && settings.model ? [{ id: `custom:${settings.model}`, model: settings.model, displayName: settings.model, description: settings.serviceName, isDefault: true, inputModalities: settings.customImageInput ? ["text", "image"] : ["text"], defaultReasoningEffort: settings.reasoning, supportedReasoningEfforts: [{ reasoningEffort: settings.reasoning, description: `${settings.serviceName} · ${settings.reasoning}` }] }] : [];
   const activeModels = selectedAgent === "codex" ? settings.provider === "custom" ? customModels : models : modelsByAgent[selectedAgent] || [];
   const activePreference = selectedAgent === "codex"
     ? { model: settings.provider === "custom" ? settings.model : agentPreferences.codex.model || settings.model, reasoning: settings.provider === "custom" ? settings.reasoning : agentPreferences.codex.reasoning, serviceTier: settings.provider === "custom" ? null : agentPreferences.codex.serviceTier }
     : agentPreferences[selectedAgent] || { model: "default", reasoning: "high", serviceTier: null };
+  const activeImageCapability = imageCapability(activeModels.find((model) => model.model === activePreference.model));
   const activeSandboxMode: SandboxMode = selectedAgent === "pi" && settings.sandboxMode === "workspace-write" ? "read-only" : settings.sandboxMode;
   const supportsSandbox = selectedAgent === "pi" || (selectedAgent === "codex" && settings.provider === "codex");
   const activeRunSettings: AppSettings = { ...settings, sandboxMode: activeSandboxMode };
   const activeComposerSettings: AppSettings = { ...activeRunSettings, ...activePreference, provider: selectedAgent === "codex" ? settings.provider : "codex" };
   const { gitState, branches, selectedFile, diff, busy, loading: gitLoading, diffLoading, error: gitError, comparisonBase, selectDiff, refreshGit, switchBranch, stage, discardSelected, commitOrPush, openReview, compareBranch, closeReview } = useGitController(api, activeProject?.id, notify, setView);
   const { bottomPanelOpen, setBottomPanelOpen, rightPanelOpen, setRightPanelOpen, activeTool, projectFiles, remoteUrl, sideMessages, sideValue, setSideValue, sideSending, sideApproval, sideAgentLabel, closeBottomPanel, closeRightPanel, toggleBottomPanel, toggleRightPanel, selectWorkspaceTool, openRemote, sendSideChat, respondToSideApproval, cancelSideChat, terminalStarting, terminalOutput, writeTerminalInput, resizeTerminal } = useWorkspaceTools(api, activeProject?.id, selectedAgent, agentMode, activePreference, activeRunSettings, refreshGit, notify);
-  const { sending, runningThreadIds, sendMessage: sendAgentMessage, cancelCurrentRun, respondToApproval, isThreadRunning, isProjectRunning } = useAgentRuns({ api, activeThread, activeProjectId: activeProject?.id, selectedAgent, agentMode, preference: activePreference, modelLabel: activeModels.find((model) => model.model === activePreference.model)?.displayName, settings: activeRunSettings, attachments, webSearch, agents, setMessages, setAttachments, setComposerValue, setActiveThread, reloadWorkspace, refreshGit, notify, onDraftPersisted: handleDraftPersisted });
+  const { sending, runningThreadIds, sendMessage: sendAgentMessage, cancelCurrentRun, respondToApproval, isThreadRunning, isProjectRunning } = useAgentRuns({ api, conversation: activeMessages, imageCapability: activeImageCapability, activeThread, activeProjectId: activeProject?.id, selectedAgent, agentMode, preference: activePreference, modelLabel: activeModels.find((model) => model.model === activePreference.model)?.displayName, settings: activeRunSettings, attachments, webSearch, agents, setMessages, setAttachments, setComposerValue, setActiveThread, reloadWorkspace, refreshGit, notify, onDraftPersisted: handleDraftPersisted });
   const sendMessage = (prompt: string = composerValue) => sendAgentMessage(prompt);
 
 
@@ -130,11 +136,14 @@ function App() {
   async function addFiles() {
     try {
       const paths = await api.system.chooseFiles();
+      if (activeImageCapability !== "unknown") assertImageCapability(paths, activeImageCapability);
+      if (attachments.length + paths.length > 8) notify("每条消息最多添加 8 个附件");
       setAttachments((current) => [...new Set([...current, ...paths])].slice(0, 8));
     } catch (error) { notify(errorMessage(error)); }
   }
 
   async function importImages(files: File[]) {
+    try { if (activeImageCapability !== "unknown") assertImageCapability(files.filter((file) => file.type.startsWith("image/")).map(() => "image.png"), activeImageCapability); } catch (error) { notify(errorMessage(error)); return; }
     const available = 8 - attachments.length;
     if (files.length > available) notify("每条消息最多添加 8 个附件");
     setImageImports((count) => count + 1);
@@ -166,22 +175,6 @@ function App() {
   async function confirmFullAccess() {
     try { await saveSettings({ sandboxMode: "danger-full-access" }); setFullAccessConfirmOpen(false); notify("完整访问权限已开启"); }
     catch (error) { notify(errorMessage(error)); }
-  }
-
-  function toggleVoice() {
-    if (listening) { window.__ruxSpeechRecognition?.stop(); return; }
-    const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!Recognition) { notify("当前系统不支持语音转写"); return; }
-    const recognition = new Recognition();
-    recognition.lang = "zh-CN";
-    recognition.interimResults = true;
-    recognition.continuous = false;
-    recognition.onstart = () => setListening(true);
-    recognition.onresult = (event: any) => { const text = Array.from(event.results as any[]).map((result: any) => result[0].transcript).join(""); setComposerValue(text); };
-    recognition.onerror = (event: any) => notify(`语音输入失败：${event.error}`);
-    recognition.onend = () => { setListening(false); window.__ruxSpeechRecognition = null; };
-    window.__ruxSpeechRecognition = recognition;
-    recognition.start();
   }
 
   async function selectModel(model: ModelInfo, keepOpen = false, reset = false) {
@@ -278,6 +271,7 @@ function App() {
     onToggleModel: () => toggleOverlay("run-settings"),
     onToggleSandbox: () => toggleOverlay("sandbox"),
     attachments,
+    attachmentError: attachments.some(isImagePath) ? imageCapabilityMessage(activeImageCapability) : "",
     showAttachments: true,
     webSearch,
     showWebSearch: selectedAgent === "codex" && settings.provider === "codex",
@@ -289,9 +283,12 @@ function App() {
     onImportImages: importImages,
     importingImages: imageImports > 0,
     onRemoveAttachment: removeAttachment,
-    listening,
-    showVoice: Boolean(window.SpeechRecognition || window.webkitSpeechRecognition),
-    onVoice: toggleVoice,
+    listening: voice.phase === "recording",
+    showVoice: voice.available,
+    voicePhase: voice.phase,
+    voiceSeconds: voice.seconds,
+    onCancelVoice: voice.cancel,
+    onVoice: voice.toggle,
   };
   return (
     <div className="app-frame" data-native-mac={systemInfo.platform === "darwin" && systemInfo.appVersion !== "preview"}>

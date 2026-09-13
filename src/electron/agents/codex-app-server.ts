@@ -111,7 +111,8 @@ export class CodexAppServerClient {
       else userInput[0].text = `${String(userInput[0].text)}\n\n用户选择的上下文文件：${path}`;
     }
 
-    if (input.mode === "plan" && !input.model) throw new Error("计划模式需要先选择一个明确的 Codex 模型");
+    const selectedModel = input.model || threadResponse.model;
+    if (!selectedModel) throw new Error("请先选择一个明确的 Codex 模型");
     const turnResponse = await this.request("turn/start", {
       threadId,
       input: userInput,
@@ -121,14 +122,14 @@ export class CodexAppServerClient {
       effort: input.reasoning || null,
       approvalPolicy: codexApprovalPolicy(input.sandboxMode),
       sandboxPolicy: codexSandboxPolicy(input),
-      collaborationMode: input.mode === "plan" ? {
-        mode: "plan",
+      collaborationMode: {
+        mode: input.mode === "plan" ? "plan" : "default",
         settings: {
-          model: input.model,
+          model: selectedModel,
           reasoning_effort: input.reasoning || null,
           developer_instructions: null,
         },
-      } : null,
+      },
     });
     const turnId = String(turnResponse?.turn?.id || "");
     if (!turnId) throw new Error("Codex 未返回 turn id");
@@ -170,7 +171,7 @@ export class CodexAppServerClient {
       approvalPolicy: codexApprovalPolicy(input.sandboxMode),
       sandbox: input.sandboxMode,
       serviceName: "rux",
-      config: input.webSearch ? { web_search: "live" } : null,
+      config: { web_search: input.webSearch ? "live" : "disabled" },
     };
   }
 

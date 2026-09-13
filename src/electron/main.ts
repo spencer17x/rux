@@ -1,6 +1,6 @@
-import { app, BrowserWindow } from "electron";
+import { app, BrowserWindow, systemPreferences } from "electron";
 import { join } from "node:path";
-import { registerBackend, stopBackendProcesses } from "./backend";
+import { registerBackend, stopBackendProcesses, stopVoiceInput } from "./backend";
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -23,7 +23,12 @@ async function createWindow(): Promise<void> {
   });
 
   mainWindow = window;
+  window.webContents.session.setPermissionRequestHandler((contents, permission, callback, details) => {
+    callback(process.platform === "darwin" && !window.isDestroyed() && contents === window.webContents && permission === "media" && "mediaTypes" in details && details.mediaTypes?.length === 1 && details.mediaTypes[0] === "audio" && systemPreferences.getMediaAccessStatus("microphone") === "granted");
+  });
+  window.webContents.session.setPermissionCheckHandler((contents, permission, _origin, details) => process.platform === "darwin" && !window.isDestroyed() && contents === window.webContents && permission === "media" && details.mediaType === "audio" && systemPreferences.getMediaAccessStatus("microphone") === "granted");
   window.once("ready-to-show", () => window.show());
+  window.on("close", stopVoiceInput);
   window.on("closed", () => {
     if (mainWindow === window) mainWindow = null;
   });

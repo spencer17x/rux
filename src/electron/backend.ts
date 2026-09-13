@@ -21,6 +21,8 @@ import { TerminalManager } from "./terminal-manager";
 import { registerTerminalSystemIpc } from "./terminal-system-ipc";
 import { registerWorkspaceIpc } from "./workspace-ipc";
 import { WorkspaceStore } from "./workspace-store";
+import { VoiceService } from "./voice-service";
+import { parseInput, voiceTranscribeSchema, voiceCancelSchema } from "../shared/ipc";
 
 let codexClient: CodexAppServerClient | null = null;
 let claudeClient: ClaudeCodeClient | null = null;
@@ -30,6 +32,7 @@ let providerStore: ProviderProfileStore | null = null;
 let settingsAuthModels: SettingsAuthModelsIpc | null = null;
 let terminalManager: TerminalManager | null = null;
 let stateDatabase: StateDatabase | null = null;
+let voiceService: VoiceService | null = null;
 
 export async function registerBackend(getWindow: () => BrowserWindow | null): Promise<void> {
   const ipc: IpcRegistrar = {
@@ -43,6 +46,11 @@ export async function registerBackend(getWindow: () => BrowserWindow | null): Pr
   };
 
   const userData = app.getPath("userData");
+  voiceService = new VoiceService();
+  ipc.handle("voice:status", () => voiceService!.status());
+  ipc.handle("voice:prepare", (_event, input) => voiceService!.prepare(parseInput(voiceCancelSchema, input).id));
+  ipc.handle("voice:transcribe", (_event, input) => { const value = parseInput(voiceTranscribeSchema, input); return voiceService!.transcribe(value.id, value.base64); });
+  ipc.handle("voice:cancel", (_event, input) => voiceService!.cancel(parseInput(voiceCancelSchema, input).id));
   stateDatabase = new StateDatabase(join(userData, "rux.sqlite"));
   const workspaceStore = new WorkspaceStore(stateDatabase, join(userData, "workspace.json"));
   const dataPaths = agentDataPaths(userData);
@@ -102,6 +110,7 @@ export async function registerBackend(getWindow: () => BrowserWindow | null): Pr
     claudeClient,
     piClient,
     resolveProject: (id) => workspaceStore.resolve(id),
+    loadModels: (agentId, projectId) => settingsAuthModels!.models({ agentId, projectId }),
     sendWithCodex: (input) => sendService.codex(input),
     sendWithCustomProvider: (input, settings) => sendService.custom(input, settings),
   });
@@ -116,6 +125,7 @@ export async function registerBackend(getWindow: () => BrowserWindow | null): Pr
 }
 
 export function stopBackendProcesses(): void {
+  voiceService?.stop(); voiceService = null;
   settingsAuthModels?.stop(); settingsAuthModels = null;
   codexClient?.stop(); codexClient = null;
   claudeClient?.stop(); claudeClient = null;
@@ -125,3 +135,5 @@ export function stopBackendProcesses(): void {
   providerStore = null;
   runtimeManager = null;
 }
+
+export function stopVoiceInput(): void { voiceService?.stop(); }

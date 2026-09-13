@@ -9,7 +9,7 @@ import PermissionModeIcon, { type PermissionMode } from "../components/Permissio
 export type Reasoning = "none" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
 export type SandboxMode = "read-only" | "workspace-write" | "danger-full-access";
 export type ComposerSettings = { provider: "codex" | "custom"; serviceName: string; model: string; reasoning: Reasoning; sandboxMode: SandboxMode };
-export type ModelInfo = { id: string; model: string; displayName: string; description?: string; isDefault?: boolean; defaultReasoningEffort: Reasoning; supportedReasoningEfforts: Array<{ reasoningEffort: Reasoning; description?: string }>; serviceTiers?: Array<{ id: string; name: string; description: string }>; defaultServiceTier?: string | null };
+export type ModelInfo = { id: string; model: string; displayName: string; description?: string; isDefault?: boolean; inputModalities?: Array<"text" | "image">; defaultReasoningEffort: Reasoning; supportedReasoningEfforts: Array<{ reasoningEffort: Reasoning; description?: string }>; serviceTiers?: Array<{ id: string; name: string; description: string }>; defaultServiceTier?: string | null };
 
 export const reasoningLabels: Record<string, string> = { none: "无", off: "关闭", minimal: "最小", low: "轻度", medium: "中", high: "高", xhigh: "极高", max: "最高", ultra: "Ultra" };
 const permissionOptions = [
