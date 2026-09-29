@@ -3,6 +3,16 @@ import { z } from "zod";
 export const projectIdSchema = z.string().trim().min(1).max(200);
 export const threadIdSchema = z.string().trim().min(1).max(500);
 export const agentIdSchema = z.enum(["codex", "claude-code", "pi"]);
+export const agentConfigStatusSchema = z.object({ agentId: agentIdSchema, includeDismissed: z.boolean().optional() }).strict();
+export const configSyncStatusSchema = z.object({
+  agentId: agentIdSchema,
+  sourceRoot: z.string().min(1).max(4096),
+  files: z.array(z.object({
+    name: z.enum(["config.toml", "settings.json", "settings.local.json"]),
+    sourceHash: z.string().regex(/^[a-f0-9]{64}$/),
+    targetHash: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
+  }).strict()).min(1).max(3),
+}).strict();
 export const sandboxModeSchema = z.enum(["read-only", "workspace-write", "danger-full-access"]);
 export const reasoningSchema = z.enum(["none", "off", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]);
 export const relativeProjectPathSchema = z.string().min(1).max(4096).refine((value) => !value.includes("\0"), "文件路径包含无效字符");
@@ -37,6 +47,8 @@ export const settingsInputSchema = z.object({
   uiFontSize: z.number().min(8).max(32).optional(),
   allowConversationOverride: z.boolean().optional(),
   conversationSticky: z.boolean().optional(),
+  autoSyncAgentConfig: z.boolean().optional(),
+  askBeforeAgentConfigSync: z.boolean().optional(),
   customImageInput: z.boolean().optional(),
   customFileInput: z.boolean().optional(),
 });

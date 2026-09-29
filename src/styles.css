@@ -1381,6 +1381,12 @@ textarea:focus-visible {
 .agent-settings-modes { display: flex; grid-column: 2 / 4; flex-wrap: wrap; gap: 5px; }
 .agent-settings-modes span { padding: 3px 6px; border: 1px solid var(--border); border-radius: 6px; color: #5d5d59; font-size: 10px; }
 .agent-settings-models { grid-column: 2 / 4; color: var(--muted); font-size: 10px; }
+.config-sync-modal { padding: 24px; }
+.config-sync-source { display: grid; gap: 4px; margin-top: 18px; color: var(--muted); font-size: var(--ui-caption); }
+.config-sync-source code { overflow-wrap: anywhere; color: var(--text); font-size: var(--ui-small); }
+.config-sync-files { margin: 14px 0; padding-left: 22px; font-size: var(--ui-small); }
+.config-sync-files li + li { margin-top: 5px; }
+.config-sync-note { color: var(--muted); font-size: var(--ui-caption); }
 
 .provider-settings-section { max-width: 1120px; }
 .provider-settings-layout { display: grid; grid-template-columns: 230px minmax(0, 1fr); gap: 14px; align-items: start; }

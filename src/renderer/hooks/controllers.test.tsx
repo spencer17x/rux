@@ -147,7 +147,7 @@ describe("side-chat scope isolation", () => {
     const api = { ...runs, terminal: { onData: () => () => {}, stop: vi.fn(async () => {}) }, files: { list: vi.fn(async () => []) }, git: { remote: vi.fn(async () => "") } };
     const notify = vi.fn(); const refresh = vi.fn(async () => {});
     const preference = { model: "m", reasoning: "high" as const, serviceTier: null };
-    const settings = { provider: "codex" as const, serviceName: "Codex", model: "m", reasoning: "high" as const, sandboxMode: "read-only" as const, baseUrl: "", hasApiKey: false, uiFontSize: 14, allowConversationOverride: true, conversationSticky: true };
+    const settings = { provider: "codex" as const, serviceName: "Codex", model: "m", reasoning: "high" as const, sandboxMode: "read-only" as const, baseUrl: "", hasApiKey: false, uiFontSize: 14, allowConversationOverride: true, conversationSticky: true, autoSyncAgentConfig: false, askBeforeAgentConfigSync: true };
     return { api, hook: (agent: AgentId) => useWorkspaceTools(api as unknown as RuxApi, "same-project", agent, "default", preference, settings, refresh, notify) };
   }
   it("interrupts a late native startup after changing agents within the same project", async () => {

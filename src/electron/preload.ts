@@ -34,6 +34,9 @@ const api = {
   },
   agents: {
     list: () => ipcRenderer.invoke("agents:list"),
+    configStatus: (agentId: string, includeDismissed = false): Promise<import("./agent-config-sync").ConfigSyncStatus> => ipcRenderer.invoke("agents:config-status", { agentId, includeDismissed }),
+    syncConfig: (status: import("./agent-config-sync").ConfigSyncStatus): Promise<void> => ipcRenderer.invoke("agents:config-sync", status),
+    dismissConfig: (status: import("./agent-config-sync").ConfigSyncStatus): Promise<void> => ipcRenderer.invoke("agents:config-dismiss", status),
   },
   runtimes: {
     list: () => ipcRenderer.invoke("runtimes:list"),

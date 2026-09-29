@@ -1,5 +1,5 @@
 import { _electron as electron, expect, test, type ElectronApplication, type Page } from "@playwright/test";
-import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { writeFileSync } from "node:fs";
 import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
@@ -48,6 +48,70 @@ test.afterEach(async () => {
   if (page && !page.isClosed()) await page.evaluate(() => (window as any).rux.terminal.stop()).catch(() => {});
   await application?.close();
   rmSync(testRoot, { recursive: true, force: true });
+});
+
+test("offers an external agent configuration import when switching agents", async () => {
+  const external = join(testRoot, "user-data", "external-claude");
+  mkdirSync(external, { recursive: true });
+  writeFileSync(join(external, "settings.json"), '{"theme":"dark"}\n');
+  writeFileSync(join(external, ".credentials.json"), "external-secret");
+
+  await page.getByRole("button", { name: "选择 Agent", exact: true }).click();
+  await page.locator(".agent-selector-popover button").filter({ hasText: "Claude Code" }).click();
+  const prompt = page.getByRole("dialog", { name: "同步 Agent 配置" });
+  await expect(prompt).toContainText("settings.json");
+  await prompt.getByRole("button", { name: "导入配置" }).click();
+  await expect(page.getByRole("button", { name: "选择 Agent", exact: true })).toContainText("Claude Code");
+  expect(readFileSync(join(testRoot, "user-data", "agents", "claude-code", "settings.json"), "utf8")).toBe('{"theme":"dark"}\n');
+  expect(() => readFileSync(join(testRoot, "user-data", "agents", "claude-code", ".credentials.json"))).toThrow();
+});
+
+test("can stop asking about configuration changes from the prompt", async () => {
+  const external = join(testRoot, "user-data", "external-claude");
+  mkdirSync(external, { recursive: true });
+  writeFileSync(join(external, "settings.json"), '{"version":1}\n');
+  await page.getByRole("button", { name: "选择 Agent", exact: true }).click();
+  await page.locator(".agent-selector-popover button").filter({ hasText: "Claude Code" }).click();
+  await page.getByRole("dialog", { name: "同步 Agent 配置" }).getByRole("button", { name: "不再询问" }).click();
+  await expect(page.getByRole("dialog", { name: "同步 Agent 配置" })).toHaveCount(0);
+  expect(await page.evaluate(async () => (await window.rux.settings.get()).askBeforeAgentConfigSync)).toBe(false);
+  writeFileSync(join(external, "settings.json"), '{"version":2}\n');
+  await page.getByRole("button", { name: "选择 Agent", exact: true }).click();
+  await page.locator(".agent-selector-popover button").filter({ hasText: "Codex" }).click();
+  await page.getByRole("button", { name: "选择 Agent", exact: true }).click();
+  await page.locator(".agent-selector-popover button").filter({ hasText: "Claude Code" }).click();
+  await expect(page.getByRole("dialog", { name: "同步 Agent 配置" })).toHaveCount(0);
+  expect(() => readFileSync(join(testRoot, "user-data", "agents", "claude-code", "settings.json"))).toThrow();
+  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await page.getByRole("button", { name: "底座 Agent" }).click();
+  await expect(page.getByRole("switch", { name: "配置更新时询问" })).toHaveAttribute("data-state", "unchecked");
+  await page.getByRole("switch", { name: "自动同步 Agent 配置" }).click();
+  await page.getByRole("button", { name: "保存同步设置" }).click();
+  await page.getByRole("button", { name: "返回 Rux" }).click();
+  await page.getByRole("button", { name: "选择 Agent", exact: true }).click();
+  await page.locator(".agent-selector-popover button").filter({ hasText: "Codex" }).click();
+  await page.getByRole("button", { name: "选择 Agent", exact: true }).click();
+  await page.locator(".agent-selector-popover button").filter({ hasText: "Claude Code" }).click();
+  await expect(page.getByRole("dialog", { name: "同步 Agent 配置" })).toHaveCount(0);
+  await expect.poll(() => readFileSync(join(testRoot, "user-data", "agents", "claude-code", "settings.json"), "utf8")).toBe('{"version":2}\n');
+});
+
+test("automatically imports changed agent configuration when enabled in settings", async () => {
+  const external = join(testRoot, "user-data", "external-claude");
+  mkdirSync(external, { recursive: true });
+  writeFileSync(join(external, "settings.json"), '{"automatic":true}\n');
+  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await page.getByRole("button", { name: "底座 Agent" }).click();
+  await expect(page.getByRole("switch", { name: "自动同步 Agent 配置" })).toHaveAttribute("data-state", "unchecked");
+  await expect(page.getByRole("switch", { name: "配置更新时询问" })).toHaveAttribute("data-state", "checked");
+  await page.getByRole("switch", { name: "自动同步 Agent 配置" }).click();
+  await page.getByRole("button", { name: "保存同步设置" }).click();
+  await expect.poll(async () => page.evaluate(async () => (await window.rux.settings.get()).autoSyncAgentConfig)).toBe(true);
+  await page.getByRole("button", { name: "返回 Rux" }).click();
+  await page.getByRole("button", { name: "选择 Agent", exact: true }).click();
+  await page.locator(".agent-selector-popover button").filter({ hasText: "Claude Code" }).click();
+  await expect(page.getByRole("dialog", { name: "同步 Agent 配置" })).toHaveCount(0);
+  await expect.poll(() => readFileSync(join(testRoot, "user-data", "agents", "claude-code", "settings.json"), "utf8")).toBe('{"automatic":true}\n');
 });
 
 test("creates the initial standalone conversation and opens typed settings", async ({}, testInfo) => {

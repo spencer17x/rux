@@ -4,13 +4,13 @@ import type { ComposerSettings, ModelInfo, Reasoning } from "../../composer/Comp
 import { normalizedMessages, type MessageStore } from "../messages";
 import type { AgentId, AuthState, WorkspaceState } from "../types";
 
-export type AppSettings = ComposerSettings & { baseUrl: string; hasApiKey: boolean; uiFontSize: number; allowConversationOverride: boolean; conversationSticky: boolean; customImageInput?: boolean; customFileInput?: boolean };
+export type AppSettings = ComposerSettings & { baseUrl: string; hasApiKey: boolean; uiFontSize: number; allowConversationOverride: boolean; conversationSticky: boolean; autoSyncAgentConfig: boolean; askBeforeAgentConfigSync: boolean; customImageInput?: boolean; customFileInput?: boolean };
 export type AgentDefinition = { id: AgentId; name: string; installed: boolean; managed: boolean; integrated: boolean; version: string; path?: string; auth?: Record<string, any>; modes?: Array<{ id: string; label: string }> };
 export type AgentPreferences = Record<AgentId, { model: string; reasoning: Reasoning; serviceTier: string | null }>;
 export type ProviderStore = { activeProfileId: string; profiles: Array<{ id: string; name: string; protocol: "openai-responses" | "openai-chat" | "anthropic-messages" | "ollama"; baseUrl: string; hasApiKey: boolean; headers: Record<string, string>; compatibleAgents: "pi"[]; models: Array<{ id: string; name: string; reasoningLevels: string[] }> }> };
 export type RuntimeProgress = Record<string, { agentId: string; state: string; percent?: number; message?: string }>;
 
-const fallbackSettings: AppSettings = { provider: "codex", serviceName: "OpenAI Compatible", baseUrl: "https://api.openai.com/v1", hasApiKey: false, model: "", reasoning: "high", sandboxMode: "workspace-write", uiFontSize: 14, allowConversationOverride: true, conversationSticky: true };
+const fallbackSettings: AppSettings = { provider: "codex", serviceName: "OpenAI Compatible", baseUrl: "https://api.openai.com/v1", hasApiKey: false, model: "", reasoning: "high", sandboxMode: "workspace-write", uiFontSize: 14, allowConversationOverride: true, conversationSticky: true, autoSyncAgentConfig: false, askBeforeAgentConfigSync: true };
 const fallbackAgents: AgentDefinition[] = [{ id: "codex", name: "Codex", installed: false, managed: true, integrated: true, version: "0.154.0", modes: [{ id: "default", label: "默认" }, { id: "plan", label: "计划" }] }];
 function loadPreferences(): AgentPreferences { const fallback: AgentPreferences = { codex: { model: "", reasoning: "high", serviceTier: null }, "claude-code": { model: "default", reasoning: "high", serviceTier: null }, pi: { model: "", reasoning: "medium", serviceTier: null } }; try { const stored = JSON.parse(localStorage.getItem("rux.agent-preferences.v1") || "{}") as Partial<Record<AgentId, Partial<AgentPreferences[AgentId]>>>; return { codex: { ...fallback.codex, ...stored.codex }, "claude-code": { ...fallback["claude-code"], ...stored["claude-code"] }, pi: { ...fallback.pi, ...stored.pi } }; } catch { return fallback; } }
 

@@ -18,6 +18,10 @@ Release signing, notarization, and CI matrix details are documented in `docs/rel
 
 The renderer is sandboxed. Codex, filesystem dialogs, Git, terminal, account, model, and system operations are exposed through validated Electron IPC boundaries. Project, thread, and transcript state is stored in SQLite; the terminal uses a native PTY rendered with xterm.
 
+Rux stores its application data under `~/.rux/` (`agents/codex`, `agents/claude-code`, `agents/pi`, `runtimes`, and `rux.sqlite`). On first launch after the path change, it copies existing Electron user data without deleting the old directory. An explicit Electron `--user-data-dir` keeps its supplied location for isolated runs.
+
+When switching agents, Rux checks selected external configuration files (`~/.codex/config.toml`, `~/.claude/settings*.json`, or `~/.pi/agent/settings.json`). The default is to ask before a one-way import into that agent's directory under `~/.rux/`; declining suppresses the prompt until the external file changes again. **设置 → 底座 Agent** can enable automatic import (off by default) or disable import prompts (on by default). Automatic import takes precedence; with both controls off, Rux leaves external changes alone. The prompt's **不再询问** action turns off future prompts. This import does not copy authentication files. Codex keeps its independent Rux login, Claude retains its existing one-time account bootstrap, and Pi Provider credentials stay in Rux's encrypted Provider store.
+
 Agent runtimes are pinned and integrity-verified before Rux installs them on first use. Codex uses an independent Rux sign-in, Claude Code uses its native account flow, and Pi uses an explicitly configured compatible Provider profile.
 
 ## Composer capabilities

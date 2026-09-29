@@ -1,11 +1,19 @@
 import { app, BrowserWindow, systemPreferences } from "electron";
 import { join } from "node:path";
+import { migrateRuxDataRoot, ruxDataRoot } from "./data-root";
 import { registerBackend, stopBackendProcesses, stopVoiceInput } from "./backend";
 
 let mainWindow: BrowserWindow | null = null;
 let backendReady = false;
 const ownsProfile = app.requestSingleInstanceLock();
 if (!ownsProfile) app.quit();
+if (ownsProfile) {
+  const previous = app.getPath("userData");
+  const next = ruxDataRoot(previous);
+  migrateRuxDataRoot(previous, next);
+  app.setPath("userData", next);
+  app.setPath("sessionData", next);
+}
 app.on("second-instance", () => {
   if (mainWindow) { if (mainWindow.isMinimized()) mainWindow.restore(); mainWindow.show(); mainWindow.focus(); }
   else if (backendReady) void createWindow();

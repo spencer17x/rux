@@ -2,6 +2,8 @@ import { CodexAuthSession } from "./codex-auth-session";
 import { isCodexAuthError } from "../shared/codex-auth";
 import { app, type BrowserWindow, ipcMain as electronIpcMain } from "electron";
 import { join } from "node:path";
+import { homedir } from "node:os";
+import { AgentConfigSync } from "./agent-config-sync";
 import { AgentSendService } from "./agent-send-service";
 import { agentDataPaths, prepareAgentData, removeAgentConversation } from "./agent-data";
 import { registerAgentRuntimeIpc } from "./agent-runtime-ipc";
@@ -24,7 +26,7 @@ import { registerTerminalSystemIpc } from "./terminal-system-ipc";
 import { registerWorkspaceIpc } from "./workspace-ipc";
 import { WorkspaceStore } from "./workspace-store";
 import { VoiceService } from "./voice-service";
-import { parseInput, voiceTranscribeSchema, voiceCancelSchema } from "../shared/ipc";
+import { agentConfigStatusSchema, configSyncStatusSchema, parseInput, voiceTranscribeSchema, voiceCancelSchema } from "../shared/ipc";
 
 let codexClient: CodexAppServerClient | null = null;
 let codexCatalog: CodexCatalogClient | null = null;
@@ -57,6 +59,10 @@ export async function registerBackend(getWindow: () => BrowserWindow | null): Pr
   stateDatabase = new StateDatabase(join(userData, "rux.sqlite"));
   const workspaceStore = new WorkspaceStore(stateDatabase, join(userData, "workspace.json"));
   const dataPaths = agentDataPaths(userData);
+  const home = homedir();
+  const configSync = new AgentConfigSync(userData, dataPaths, process.env.RUX_E2E === "1"
+    ? { codex: join(userData, "external-codex"), "claude-code": join(userData, "external-claude"), pi: join(userData, "external-pi") }
+    : { codex: process.env.CODEX_HOME || join(home, ".codex"), "claude-code": process.env.CLAUDE_CONFIG_DIR || join(home, ".claude"), pi: process.env.PI_CODING_AGENT_DIR || join(home, ".pi", "agent") });
   const workspace = await workspaceStore.load();
   if (await prepareAgentData(dataPaths, workspace)) await workspaceStore.save(workspace);
   const codexAuth = new CodexAuthSession(join(dataPaths.codexHome, "rux-auth-state.json"));
@@ -84,6 +90,14 @@ export async function registerBackend(getWindow: () => BrowserWindow | null): Pr
   claudeClient = new ClaudeCodeClient(() => runtimeManager!.resolveInstalled("claude-code").command, emitAgentEvent, claudeEnvironment);
   piClient = new PiRuntimeClient(() => runtimeManager!.resolveInstalled("pi"), emitAgentEvent);
   const nativeHistory = new NativeHistoryService(codexClient, claudeClient, piClient);
+  ipc.handle("agents:config-status", (_event, value) => { const input = parseInput(agentConfigStatusSchema, value); return configSync.check(input.agentId, input.includeDismissed); });
+  ipc.handle("agents:config-sync", async (_event, value) => {
+    const status = parseInput(configSyncStatusSchema, value);
+    if (status.agentId === "codex" && codexClient!.hasActiveRuns) throw new Error("请先停止正在运行的 Codex 任务，再同步配置");
+    await configSync.apply(status);
+    if (status.agentId === "codex") { codexClient!.stop(); codexCatalog?.stop(); }
+  });
+  ipc.handle("agents:config-dismiss", (_event, value) => configSync.dismiss(parseInput(configSyncStatusSchema, value)));
 
   const catalog = new CodexCatalogClient(runtimeManager, () => executable("codex"), runProcess, codexEnvironment);
   codexCatalog = catalog;

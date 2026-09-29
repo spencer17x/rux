@@ -16,6 +16,8 @@ import EnvironmentPanel from "./workspace/EnvironmentPanel";
 import ConversationScreen from "./conversation/ConversationScreen";
 import RenameThreadModal from "./conversation/RenameThreadModal";
 import AddProjectModal from "./projects/AddProjectModal";
+import ConfigSyncModal, { type ConfigSyncDecision } from "./components/ConfigSyncModal";
+import type { ConfigSyncStatus } from "./electron/agent-config-sync";
 import { FullAccessModal, ModelPopover, PermissionPopover, modelDisplayName, reasoningLabels, sandboxLabels, type ModelInfo, type Reasoning, type SandboxMode } from "./composer/ComposerControls";
 import type { AgentId } from "./renderer/types";
 import { usePersistentMessages } from "./renderer/hooks/usePersistentMessages";
@@ -62,8 +64,31 @@ function App() {
   const [composerDrafts, setComposerDrafts] = useState<Record<string, ComposerDraft>>(loadComposerDrafts);
   const [imageImports, setImageImports] = useState(0);
   const [fullAccessConfirmOpen, setFullAccessConfirmOpen] = useState(false);
+  const [configSyncPrompt, setConfigSyncPrompt] = useState<{ agentName: string; status: ConfigSyncStatus; resolve: () => void } | null>(null);
+  const configSettingsRef = useRef({ autoSyncAgentConfig: false, askBeforeAgentConfigSync: true });
+  const saveConfigSettingsRef = useRef<(input: Partial<AppSettings>) => Promise<unknown>>(async () => {});
+  const workspaceReadyRef = useRef(workspaceReady);
+  workspaceReadyRef.current = workspaceReady;
+  const selectedAgentRef = useRef(selectedAgent);
+  selectedAgentRef.current = selectedAgent;
+  const offerConfigSync = useCallback(async (agentId: AgentId, agentName: string) => {
+    const preference = configSettingsRef.current;
+    if (!preference.autoSyncAgentConfig && !preference.askBeforeAgentConfigSync) return;
+    try {
+      const status = await api.agents.configStatus(agentId, preference.autoSyncAgentConfig);
+      if (!status.files.length) return;
+      if (preference.autoSyncAgentConfig) {
+        await api.agents.syncConfig(status);
+        notify(`${agentName} 配置已自动同步到 ~/.rux`);
+      } else await new Promise<void>((resolve) => setConfigSyncPrompt({ agentName, status, resolve }));
+    } catch (error) { notify(errorMessage(error)); }
+  }, [notify]);
   const handleThreadsRemoved = useCallback((threadIds: string[]) => { setMessages((current) => Object.fromEntries(Object.entries(current).filter(([threadId]) => !threadIds.includes(threadId)))); setComposerDrafts((current) => Object.fromEntries(Object.entries(current).filter(([threadId]) => !threadIds.includes(threadId)))); }, [setMessages]);
-  const handleThreadSelected = useCallback((thread: { agentId?: AgentId; agentMode?: string }) => { setSelectedAgent(thread.agentId || "codex"); setAgentMode(thread.agentMode || "default"); setActiveOverlay(null); }, []);
+  const handleThreadSelected = useCallback((thread: { agentId?: AgentId; agentMode?: string }) => {
+    const nextAgent = thread.agentId || "codex";
+    if (workspaceReadyRef.current && thread.agentId && nextAgent !== selectedAgentRef.current) void offerConfigSync(nextAgent, nextAgent === "claude-code" ? "Claude Code" : nextAgent === "pi" ? "Pi" : "Codex");
+    setSelectedAgent(nextAgent); setAgentMode(thread.agentMode || "default"); setActiveOverlay(null);
+  }, [offerConfigSync]);
   const { workspace, setWorkspace, activeThread, setActiveThread, expandedProjects, setExpandedProjects, defaultParent, view, setView, modalStep, setModalStep, renameTarget, setRenameTarget, initializeWorkspace, reloadWorkspace, selectProjectThread, selectStandalone, newProjectThread, newStandalone, completeDraft, renameThread, renameActiveThread, completeRename, removeThread, removeActiveThread: removeWorkspaceThread, removeProject, completeProjectAction } = useWorkspaceController(
     api,
     notify,
@@ -93,6 +118,17 @@ function App() {
   const isStandalone = activeThread?.type === "standalone";
   const activeProject = activeThread?.type === "project" ? workspace.projects.find((project) => project.id === activeThread.projectId) ?? null : null;
   const { settings, setSettings, auth, setAuth, models, modelsByAgent, agents, agentPreferences, setAgentPreferences, providerStore, runtimeProgress, systemInfo, modelsLoading, modelsError, codexModelsLoading, codexModelsError, fatalError, saveSettings, testSettings, saveProvider, removeProvider, setActiveProvider } = useAppBootstrap(api, selectedAgent, activeProject?.id, workspaceReady, setWorkspaceReady, initializeWorkspace, setMessages);
+  configSettingsRef.current = { autoSyncAgentConfig: settings.autoSyncAgentConfig, askBeforeAgentConfigSync: settings.askBeforeAgentConfigSync };
+  saveConfigSettingsRef.current = saveSettings;
+  const decideConfigSync = async (decision: ConfigSyncDecision) => {
+    const prompt = configSyncPrompt;
+    if (!prompt) return;
+    if (decision === "import") { await api.agents.syncConfig(prompt.status); notify(`${prompt.agentName} 配置已同步到 ~/.rux`); }
+    else if (decision === "never-ask") { await saveConfigSettingsRef.current({ askBeforeAgentConfigSync: false }); await api.agents.dismissConfig(prompt.status); notify("已关闭 Agent 配置同步询问"); }
+    else await api.agents.dismissConfig(prompt.status);
+    setConfigSyncPrompt(null);
+    prompt.resolve();
+  };
   const customModels: ModelInfo[] = settings.provider === "custom" && settings.model ? [{ id: `custom:${settings.model}`, model: settings.model, displayName: settings.model, description: settings.serviceName, isDefault: true, inputModalities: settings.customImageInput ? ["text", "image"] : ["text"], defaultReasoningEffort: settings.reasoning, supportedReasoningEfforts: [{ reasoningEffort: settings.reasoning, description: `${settings.serviceName} · ${settings.reasoning}` }] }] : [];
   const activeModels = selectedAgent === "codex" ? settings.provider === "custom" ? customModels : models : modelsByAgent[selectedAgent] || [];
   const activePreference = selectedAgent === "codex"
@@ -247,6 +283,7 @@ function App() {
           newStandalone();
         }
       }
+      await offerConfigSync(agentId, agent.name);
       setSelectedAgent(agentId);
       setAgentMode(agent.modes?.[0]?.id || "default");
       setAttachments([]);
@@ -308,6 +345,7 @@ function App() {
       </main>
       {modalStep && <AddProjectModal step={modalStep} defaultParent={defaultParent} onClose={closeProjectModal} onStep={setModalStep} onComplete={completeProjectAction} onChooseDirectory={() => api.projects.chooseDirectory()} />}
       {renameTarget && <RenameThreadModal currentTitle={renameTarget.title} onClose={() => setRenameTarget(null)} onSubmit={completeRename} />}
+      {configSyncPrompt && <ConfigSyncModal agentName={configSyncPrompt.agentName} status={configSyncPrompt.status} onDecision={decideConfigSync} />}
       {fullAccessConfirmOpen && <FullAccessModal onCancel={() => setFullAccessConfirmOpen(false)} onConfirm={confirmFullAccess} onLearnMore={() => notify("完整访问权限会跳过逐次批准；可随时在权限菜单或设置中关闭")} />}
       {toast && <div className="toast" role="status" aria-live="polite"><CheckCircle size="md" />{toast}</div>}
     </div>

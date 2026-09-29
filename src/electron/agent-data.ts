@@ -1,4 +1,4 @@
-import { cp, mkdir, readdir, rename, rm, stat } from "node:fs/promises";
+import { chmod, cp, mkdir, readdir, rename, rm, stat } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { StoredThread, StoredWorkspace } from "./state-database";
 
@@ -36,6 +36,7 @@ async function copyIfMissing(source: string, destination: string): Promise<void>
   if (!await exists(source) || await exists(destination)) return;
   await mkdir(dirname(destination), { recursive: true, mode: 0o700 });
   await cp(source, destination, { recursive: true, preserveTimestamps: true });
+  await chmod(destination, 0o600);
 }
 
 async function moveFile(source: string, destination: string): Promise<void> {
@@ -54,9 +55,9 @@ export async function prepareAgentData(paths: AgentDataPaths, workspace: StoredW
   const defaultCodexHome = process.env.CODEX_HOME || join(process.env.HOME || "", ".codex");
   const defaultClaudeHome = process.env.CLAUDE_CONFIG_DIR || join(process.env.HOME || "", ".claude");
 
-  // Rux must obtain its own Codex login. Copying auth.json forks a rotating
-  // refresh token; copying config can also import another credential backend.
-  for (const name of [".credentials.json", "settings.json", "settings.local.json"]) await copyIfMissing(join(defaultClaudeHome, name), join(paths.claudeHome, name));
+  // Preserve Claude's existing account bootstrap. Settings import is offered
+  // explicitly when the user selects an agent.
+  await copyIfMissing(join(defaultClaudeHome, ".credentials.json"), join(paths.claudeHome, ".credentials.json"));
 
   const threads = allThreads(workspace);
   const codexIds = new Set(threads.filter((thread) => (thread.agentId || (thread.codexThreadId ? "codex" : undefined)) === "codex").map((thread) => thread.nativeSessionId || thread.codexThreadId).filter(Boolean) as string[]);
