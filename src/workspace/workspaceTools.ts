@@ -21,7 +21,7 @@ export const workspaceTools: WorkspaceToolDefinition[] = [
   { id: "environment", label: "环境", Icon: SlidersHorizontal, shortcut: "", projectOnly: false },
   { id: "review", label: "审查", Icon: FileText, shortcut: "⌃⇧G", projectOnly: true },
   { id: "terminal", label: "终端", Icon: TerminalWindow, shortcut: "⌃`", projectOnly: true },
-  { id: "browser", label: "浏览器", Icon: Globe, shortcut: "⌘T", projectOnly: true },
+  { id: "browser", label: "远程仓库", Icon: Globe, shortcut: "⌥⌘R", projectOnly: true },
   { id: "files", label: "文件", Icon: FolderOpen, shortcut: "⌘P", projectOnly: true },
   { id: "chat", label: "侧边聊天", Icon: ChatCircle, shortcut: "⌥⌘S", projectOnly: false },
 ];

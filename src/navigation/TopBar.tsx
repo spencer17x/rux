@@ -19,8 +19,8 @@ export default function TopBar(props: Props) {
     </Menu>
     {isProject && props.branch && <Menu label="Git 分支" trigger={<Button variant="plain" className="topbar-branch" aria-label="切换 Git 分支" title="当前 Git 分支" disabled={props.gitBusy || !props.branches?.length || !props.onSwitchBranch}><GitBranch size="sm" /><span>{props.branch}</span><CaretDown size="sm" /></Button>}><MenuRadioGroup value={props.branch} onValueChange={props.onSwitchBranch}>{props.branches?.map(branch => <MenuRadioItem key={branch} value={branch}>{branch}</MenuRadioItem>)}</MenuRadioGroup></Menu>}
   </div><div className="topbar-actions">
-    <IconButton label="审查项目更改" icon="code" size="sm" iconSize="md" disabled={!isProject || !props.onReview} onClick={props.onReview} />
-    <IconButton label="打开项目终端" icon="terminal" size="sm" iconSize="md" disabled={!isProject || !props.onTerminal} onClick={props.onTerminal} />
+    <IconButton label="审查项目更改" icon="code" size="sm" iconSize="md" disabled={!isProject || !props.onReview} disabledReason={isProject ? "项目变更还在加载" : "独立会话没有可审查的项目变更"} onClick={props.onReview} />
+    <IconButton label="打开项目终端" icon="terminal" size="sm" iconSize="md" disabled={!isProject || !props.onTerminal} disabledReason={isProject ? "终端还在准备中" : "独立会话没有可用的项目终端"} onClick={props.onTerminal} />
     <span className="panel-toggle-group" role="group" aria-label="工作区面板">
       <IconButton label="切换左侧面板" className="panel-toggle-button" size="sm" active={props.leftPanelOpen} aria-pressed={props.leftPanelOpen} onClick={props.onToggleLeftPanel}><SidebarSimple className="panel-layout-icon panel-layout-left" size="md" /></IconButton>
       <IconButton label="切换底部面板" className="panel-toggle-button" size="sm" active={props.bottomPanelOpen} aria-pressed={props.bottomPanelOpen} onClick={props.onToggleBottomPanel}><SidebarSimple className="panel-layout-icon panel-layout-bottom" size="md" /></IconButton>

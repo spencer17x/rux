@@ -53,7 +53,7 @@ type OverlayId = "agents" | "agent-mode" | "run-settings" | "sandbox";
 type Props = {
   messages: RuxMessage[]; running: boolean; emptyTitle: string; projectId?: string; onNewMessage: (text: string) => Promise<unknown>; onCancel: () => Promise<unknown>; onApproval: (response: ApprovalResponse) => Promise<unknown>;
   conversationSticky: boolean; authNotice?: ReactNode; authRequired?: boolean;
-  agents: AgentDefinition[]; runtimeProgress: RuntimeProgress; selectedAgent: AgentId; onSelectAgent: (agentId: AgentId) => void; agentMode: string; onAgentMode: (mode: string) => void;
+  agents: AgentDefinition[]; runtimeProgress: RuntimeProgress; selectedAgent: AgentId; onSelectAgent: (agentId: AgentId) => void; onRetryRuntime?: (agentId: AgentId) => void; agentMode: string; onAgentMode: (mode: string) => void;
   modelLabel: string; reasoningLabel: string; permissionLabel: string; permissionMode: "read-only" | "workspace-write" | "danger-full-access"; showPermission?: boolean; modelOpen: boolean; sandboxOpen: boolean;
   permissionDanger?: boolean;
   modelPopover: ReactNode; permissionPopover: ReactNode; onToggleModel: () => void; onToggleSandbox: () => void;
@@ -315,6 +315,7 @@ export default function RuxAssistantThread({
   runtimeProgress,
   selectedAgent,
   onSelectAgent,
+  onRetryRuntime,
   agentMode,
   onAgentMode,
   modelLabel,
@@ -427,10 +428,10 @@ export default function RuxAssistantThread({
             {authNotice}
             {voicePhase !== "idle" && <div className="voice-recording-bar" role="status"><span>{voicePhase === "recording" ? `正在录音 ${voiceSeconds} 秒 · 点击麦克风结束并转写` : voicePhase === "preparing" ? "正在准备麦克风…" : "正在使用系统语音转写…"}</span><Button variant="plain" onClick={onCancelVoice}>取消</Button></div>}
             {runtimeProgress?.[selectedAgent] && !["ready", "error"].includes(runtimeProgress[selectedAgent].state) && <div className="runtime-inline-progress"><CircleNotch size="xs" className="spin" /><span>{runtimeProgress[selectedAgent].state === "downloading" ? `正在下载 ${agents.find((agent) => agent.id === selectedAgent)?.name || selectedAgent} 运行时` : "正在验证并安装运行时"}</span><em>{runtimeProgress[selectedAgent].percent || 0}%</em><i><i style={{ width: `${runtimeProgress[selectedAgent].percent || 4}%` }} /></i></div>}
-            {runtimeProgress?.[selectedAgent]?.state === "error" && <div className="runtime-inline-progress is-error"><WarningCircle size="xs" /><span>{runtimeProgress[selectedAgent].message || "运行时下载失败"}</span></div>}
+            {runtimeProgress?.[selectedAgent]?.state === "error" && <div className="runtime-inline-progress is-error" role="alert"><WarningCircle size="xs" /><span>{runtimeProgress[selectedAgent].message || "运行时下载失败"}</span>{onRetryRuntime && <Button variant="plain" size="sm" className="runtime-retry" onClick={() => onRetryRuntime(selectedAgent)}>重试下载</Button>}</div>}
             {showAttachments && <AttachmentList paths={attachments} onRemove={onRemoveAttachment} />}
             {attachmentError && <p className="composer-attachment-error" role="alert">{attachmentError}</p>}
-            <ComposerPrimitive.Input className="aui-composer-input" aria-label="消息" placeholder="继续对话…" rows={2}
+            <ComposerPrimitive.Input className="aui-composer-input" aria-label="消息" placeholder={messages.length ? "继续对话…" : "描述你想完成的任务…"} rows={2}
               onCompositionStart={() => { composingRef.current = true; }}
               onCompositionEnd={(event) => {
                 composingRef.current = false;

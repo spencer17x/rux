@@ -83,7 +83,13 @@ export default function Sidebar(props: Props) {
     <Button variant="secondary" size="lg" className="sidebar-new-chat" aria-label="新建独立会话" onClick={props.onNewStandalone}><Plus size="md" /><span>新建会话</span><kbd>⌘ N</kbd></Button>
     <nav className="sidebar-scroll">
       {query && !standaloneThreads.length && !projects.length && <p className="sidebar-empty" role="status">未找到匹配的项目或会话</p>}
-      <section className="sidebar-section project-section"><div className="section-heading"><span>项目</span><IconButton label="添加项目" icon="add" onClick={(event) => props.onAddProject(event.currentTarget)} /></div><div className="project-tree">{projects.map((project) => <ProjectNode key={project.id} project={project} actions={props} query={query} />)}</div></section>
+      <section className="sidebar-section project-section"><div className="section-heading"><span>项目</span><IconButton label="添加项目" icon="add" onClick={(event) => props.onAddProject(event.currentTarget)} /></div><div className="project-tree">{projects.map((project) => <ProjectNode key={project.id} project={project} actions={props} query={query} />)}</div>
+        {!projects.length && !query && <div className="sidebar-empty-state">
+          <p>还没有项目</p>
+          <small>添加本地项目后，就能在侧栏管理会话、终端和 Git 变更。</small>
+          <Button variant="secondary" size="sm" onClick={(event) => props.onAddProject(event.currentTarget)}><Plus size="sm" />添加项目</Button>
+        </div>}
+      </section>
       {standaloneThreads.length > 0 && <><div className="section-divider" /><section className="sidebar-section"><div className="section-heading"><span>独立会话</span></div><div className="sidebar-list">{standaloneThreads.map((thread) => {
         const target: ActiveThread = { type: "standalone", ...thread };
         return <ThreadRow key={thread.id} thread={thread} running={props.runningThreadIds.has(thread.id)} active={props.activeThread?.type === "standalone" && props.activeThread.id === thread.id} onSelect={() => props.onSelectStandalone(thread)} onRename={() => props.onRenameThread(target)} onDelete={() => props.onDeleteThread(target)} />;

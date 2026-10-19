@@ -25,8 +25,11 @@ export function Tooltip({ content, children, disabled = false }: { content: Reac
   return <RadixTooltip.Provider delayDuration={500}><RadixTooltip.Root><RadixTooltip.Trigger asChild>{children}</RadixTooltip.Trigger><RadixTooltip.Portal><RadixTooltip.Content className="ui-tooltip" sideOffset={6} collisionPadding={8}>{content}</RadixTooltip.Content></RadixTooltip.Portal></RadixTooltip.Root></RadixTooltip.Provider>;
 }
 
-export type IconButtonProps = Omit<ButtonProps, "title"> & { label: string; icon?: IconName; iconSize?: IconSize; iconVariant?: IconVariant; shape?: "square" | "round"; tooltip?: boolean; children?: ReactNode };
-export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(function IconButton({ label, icon, iconSize, iconVariant = "outline", shape = "square", tooltip = true, active, size = "sm", className = "", children, ...props }, ref) {
+export type IconButtonProps = Omit<ButtonProps, "title"> & { label: string; icon?: IconName; iconSize?: IconSize; iconVariant?: IconVariant; shape?: "square" | "round"; tooltip?: boolean; disabledReason?: string; children?: ReactNode };
+export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(function IconButton({ label, icon, iconSize, iconVariant = "outline", shape = "square", tooltip = true, disabledReason, active, size = "sm", className = "", children, ...props }, ref) {
   const button = <Button ref={ref} aria-label={label} {...props} data-shape={shape} size={size} active={active} className={`ui-icon-button icon-button ${active ? "is-active" : ""} ${className}`}>{icon ? <AppIcon name={icon} size={iconSize || (size === "sm" ? "sm" : size === "xl" ? "lg" : "md")} variant={iconVariant} /> : children}</Button>;
-  return <Tooltip content={label} disabled={!tooltip || props.disabled || Boolean(props["aria-expanded"])}>{button}</Tooltip>;
+  // Disabled buttons swallow pointer events, so explaining why needs an anchor
+  // that still receives hover while the control itself stays non-interactive.
+  const target = props.disabled && disabledReason ? <span className="ui-disabled-anchor">{button}</span> : button;
+  return <Tooltip content={props.disabled && disabledReason ? disabledReason : label} disabled={!tooltip || Boolean(props["aria-expanded"])}>{target}</Tooltip>;
 });

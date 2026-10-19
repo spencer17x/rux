@@ -2,9 +2,20 @@ import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateA
 import type { RuxApi } from "../../electron/preload";
 import type { GitState } from "../types";
 import { userFacingError } from "../errors";
+import { confirmAction } from "../ConfirmDialog";
 
 type View = "project" | "standalone" | "review" | "settings";
 const emptyGitState = (): GitState => ({ branch: "—", files: [] });
+
+export type CommitRequest = {
+  projectId: string;
+  branch: string;
+  stagedPaths: string[];
+  rules: Array<{ path: string; content: string }>;
+  hasRemote: boolean;
+};
+
+type ProjectInstructions = { files: Array<{ path: string; content: string }>; stagedPaths: string[] };
 
 export function useGitController(api: RuxApi, projectId: string | undefined, notify: (message: string) => void, setView: Dispatch<SetStateAction<View>>) {
   const [gitState, setGitState] = useState<GitState>(emptyGitState);
@@ -16,6 +27,8 @@ export function useGitController(api: RuxApi, projectId: string | undefined, not
   const [diffLoading, setDiffLoading] = useState(false);
   const [error, setError] = useState("");
   const [comparisonBase, setComparisonBase] = useState("");
+  const [commitRequest, setCommitRequest] = useState<CommitRequest | null>(null);
+  const [commitError, setCommitError] = useState("");
   const scope = useRef({ projectId, base: "", generation: 0 });
   const selectedFileRef = useRef("");
   const statusRequest = useRef(0);
@@ -72,6 +85,7 @@ export function useGitController(api: RuxApi, projectId: string | undefined, not
     const current = scope.current;
     setGitState(emptyGitState()); setBranches([]); setSelectedFile(""); selectedFileRef.current = "";
     setDiff(""); setError(""); setComparisonBase(""); setDiffLoading(false); setLoading(false);
+    setCommitRequest(null); setCommitError("");
     if (!projectId) return;
     void refreshGit(projectId);
     api.git.branches(projectId).then((value) => { if (scope.current === current) setBranches(value as string[]); }).catch(() => {});
@@ -92,7 +106,15 @@ export function useGitController(api: RuxApi, projectId: string | undefined, not
 
   const switchBranch = useCallback(async (branch: string) => {
     if (!projectId || branch === gitState.branch || mutation.current) return;
-    if (gitState.files.length && !window.confirm(`当前有 ${gitState.files.length} 个变更，仍要切换到 ${branch}？`)) return;
+    if (gitState.files.length) {
+      const confirmed = await confirmAction({
+        title: "切换分支",
+        message: `当前有 ${gitState.files.length} 个未提交的变更，仍要切换到 ${branch}？`,
+        detail: "未提交的修改会跟随工作区保留，但可能与目标分支的内容冲突。",
+        confirmLabel: "切换分支",
+      });
+      if (!confirmed) return;
+    }
     await mutate((id) => api.git.switchBranch({ projectId: id, branch }), `已切换到 ${branch}`);
   }, [api, gitState, mutate, projectId]);
 
@@ -101,28 +123,50 @@ export function useGitController(api: RuxApi, projectId: string | undefined, not
   }, [api, mutate]);
 
   const discardSelected = useCallback(async () => {
-    if (!selectedFile || !window.confirm(`确认放弃 ${selectedFile} 的未暂存修改？已暂存内容会保留，此操作不可撤销。`)) return;
+    if (!selectedFile) return;
+    const confirmed = await confirmAction({
+      title: "放弃修改",
+      message: `放弃 ${selectedFile} 的未暂存修改？`,
+      detail: "已暂存的内容会保留，此操作不可撤销。",
+      confirmLabel: "放弃修改",
+      tone: "danger",
+    });
+    if (!confirmed) return;
     await mutate((id) => api.git.discard({ projectId: id, path: selectedFile }), "未暂存修改已恢复，暂存内容已保留");
   }, [api, mutate, selectedFile]);
 
-  const commitOrPush = useCallback(async () => {
+  const requestCommit = useCallback(async () => {
     const current = scope.current;
     if (!current.projectId || current.base || mutation.current) return;
-    let rulesAcknowledged = false;
     try {
-      const guidance = await api.git.instructions(current.projectId) as { files: Array<{ path: string; content: string }>; stagedPaths: string[] };
+      const [guidance, remote] = await Promise.all([
+        api.git.instructions(current.projectId) as Promise<ProjectInstructions>,
+        api.git.remote(current.projectId) as Promise<string>,
+      ]);
       if (scope.current !== current) return;
-      if (guidance.files.length) {
-        const summary = guidance.files.map((file) => `【${file.path}】\n${file.content.trim()}`).join("\n\n").slice(0, 6000);
-        const staged = guidance.stagedPaths.length ? `\n\n适用的已暂存文件：\n${guidance.stagedPaths.map((path) => `• ${path}`).join("\n")}` : "";
-        if (!window.confirm(`提交前请阅读并遵循以下项目规则：\n\n${summary}${staged}\n\n确认当前已暂存内容、提交信息和推送操作均符合这些规则？`)) return;
-        rulesAcknowledged = true;
-      }
-    } catch (error) { notify(userFacingError(error)); return; }
-    const message = window.prompt("输入提交信息；留空则仅推送当前分支", ""); if (message === null) return;
-    const push = window.confirm(message.trim() ? "提交完成后是否推送到 origin？" : "确认推送当前分支到 origin？"); if (!message.trim() && !push) return;
-    await mutate((id) => api.git.commitPush({ projectId: id, message, push, rulesAcknowledged }), push ? "Git 提交/推送已完成" : "Git 提交已完成");
-  }, [api, mutate, notify]);
+      setCommitError("");
+      setCommitRequest({ projectId: current.projectId, branch: gitState.branch, stagedPaths: guidance.stagedPaths, rules: guidance.files, hasRemote: Boolean(remote) });
+    } catch (error) { notify(userFacingError(error)); }
+  }, [api, gitState.branch, notify]);
+
+  const cancelCommit = useCallback(() => { if (!mutation.current) { setCommitRequest(null); setCommitError(""); } }, []);
+
+  const submitCommit = useCallback(async (input: { message: string; push: boolean; rulesAcknowledged: boolean }) => {
+    const request = commitRequest;
+    if (!request || mutation.current) return;
+    const current = scope.current;
+    if (current.projectId !== request.projectId || current.base) { setCommitRequest(null); return; }
+    mutation.current = true; setBusy(true); setCommitError("");
+    try {
+      await api.git.commitPush({ projectId: request.projectId, message: input.message.trim(), push: input.push, rulesAcknowledged: input.rulesAcknowledged });
+      if (scope.current !== current) return;
+      setCommitRequest(null);
+      notify(input.push ? "Git 提交/推送已完成" : "Git 提交已完成");
+      await refreshGit(request.projectId);
+    } catch (error) {
+      if (scope.current === current) setCommitError(userFacingError(error));
+    } finally { mutation.current = false; setBusy(false); }
+  }, [api, commitRequest, notify, refreshGit]);
 
   const openReview = useCallback(async (path?: string) => {
     if (!scope.current.projectId) { notify("请先选择一个项目会话"); return; }
@@ -140,5 +184,5 @@ export function useGitController(api: RuxApi, projectId: string | undefined, not
     setView(scope.current.projectId ? "project" : "standalone");
     await refreshGit(scope.current.projectId, true);
   }, [refreshGit, setView]);
-  return { gitState, branches, selectedFile, diff, busy, loading, diffLoading, error, comparisonBase, selectDiff, refreshGit, switchBranch, stage, discardSelected, commitOrPush, openReview, compareBranch, closeReview };
+  return { gitState, branches, selectedFile, diff, busy, loading, diffLoading, error, comparisonBase, commitRequest, commitError, selectDiff, refreshGit, switchBranch, stage, discardSelected, requestCommit, submitCommit, cancelCommit, openReview, compareBranch, closeReview };
 }

@@ -5,10 +5,12 @@ import Sidebar from "../navigation/Sidebar";
 import RenameThreadModal from "../conversation/RenameThreadModal";
 import AddProjectModal from "../projects/AddProjectModal";
 import ReviewScreen from "../workspace/ReviewScreen";
+import CommitModal from "../workspace/CommitModal";
 import ToolLauncher from "../workspace/ToolLauncher";
 import { ModelPopover, PermissionPopover } from "../composer/ComposerControls";
 import WorkspaceDock from "../workspace/WorkspaceDock";
 import EnvironmentPanel from "../workspace/EnvironmentPanel";
+import { ConfirmDialog } from "./ConfirmDialog";
 
 describe("typed renderer components", () => {
   it("renders project context in the top bar", () => {
@@ -26,6 +28,13 @@ describe("typed renderer components", () => {
     expect(html).toContain('aria-label="会话操作 项目任务"');
     expect(html).toContain('aria-label="项目任务 正在响应"');
     expect(html).toContain('aria-label="独立任务 正在响应"');
+  });
+
+  it("guides first-time users when the sidebar has no project", () => {
+    const html = renderToStaticMarkup(<Sidebar workspace={{ standaloneThreads: [], projects: [] }} auth={{ connected: false }} expandedProjects={[]} activeThread={null} runningThreadIds={new Set()} onToggleProject={() => {}} onSelectProjectThread={() => {}} onSelectStandalone={() => {}} onAddProject={() => {}} onRemoveProject={() => {}} onOpenProjectPath={() => {}} onCopyProjectPath={() => {}} onNewProjectThread={() => {}} onNewStandalone={() => {}} onRenameThread={() => {}} onDeleteThread={() => {}} onOpenSettings={() => {}} />);
+    expect(html).toContain("还没有项目");
+    expect(html).toContain("添加本地项目后");
+    expect(html).not.toContain("未找到匹配的项目或会话");
   });
 
   it("keeps project-only tools disabled without a project", () => {
@@ -73,5 +82,40 @@ describe("typed renderer components", () => {
     const html = renderToStaticMarkup(<PermissionPopover agentId="pi" selectedValue="read-only" onSelect={() => {}} onLearnMore={() => {}} />);
     expect(html).toContain("Pi RPC 暂不支持逐次审批");
     expect(html).toMatch(/disabled=""[^>]*aria-disabled="true"|aria-disabled="true"[^>]*disabled=""/);
+  });
+
+  it("renders the commit dialog with rules, staged files and a blocked submit", () => {
+    const html = renderToStaticMarkup(<CommitModal request={{ projectId: "project", branch: "main", stagedPaths: ["src/a.ts"], rules: [{ path: "AGENTS.md", content: "Use conventional commit messages." }], hasRemote: false }} busy={false} error="" onCancel={() => {}} onSubmit={async () => {}} />);
+    expect(html).toContain("提交或推送");
+    expect(html).toContain("src/a.ts");
+    expect(html).toContain("AGENTS.md");
+    expect(html).toContain("Use conventional commit messages.");
+    expect(html).toContain("我已阅读并遵循以上项目规则");
+    expect(html).toContain("当前项目没有 origin 远程仓库");
+    expect(html).toContain('disabled=""');
+  });
+
+  it("surfaces a rejected commit inside the commit dialog", () => {
+    const html = renderToStaticMarkup(<CommitModal request={{ projectId: "project", branch: "main", stagedPaths: [], rules: [], hasRemote: true }} busy={false} error="没有已暂存的变更，请先在审查页暂存文件" onCancel={() => {}} onSubmit={async () => {}} />);
+    expect(html).toContain("没有已暂存的文件");
+    expect(html).toContain('role="alert"');
+    expect(html).toContain("没有已暂存的变更");
+  });
+
+  it("renders destructive confirmations as alert dialogs with cancel focused", () => {
+    const html = renderToStaticMarkup(<ConfirmDialog title="删除会话" message="“Task”将从 Rux 中删除。" detail="这会删除会话记录及其底层 Agent 数据，此操作不可撤销。" confirmLabel="删除会话" tone="danger" onCancel={() => {}} onConfirm={() => {}} />);
+    expect(html).toContain('role="alertdialog"');
+    expect(html).toContain("删除会话");
+    expect(html).toContain("此操作不可撤销");
+    expect(html).toMatch(/data-autofocus[^>]*>取消</);
+    expect(html).not.toMatch(/data-autofocus[^>]*>删除会话</);
+  });
+
+  it("keeps the safe action secondary in non-destructive confirmations", () => {
+    const html = renderToStaticMarkup(<ConfirmDialog title="切换分支" message="当前有 2 个未提交的变更。" confirmLabel="切换分支" onCancel={() => {}} onConfirm={() => {}} />);
+    expect(html).toContain('role="dialog"');
+    expect(html).toContain("切换分支");
+    expect(html).not.toContain("此操作不可撤销");
+    expect(html).toMatch(/data-autofocus[^>]*>切换分支</);
   });
 });

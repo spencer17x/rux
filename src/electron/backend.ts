@@ -158,7 +158,6 @@ export async function registerBackend(getWindow: () => BrowserWindow | null): Pr
     piClient,
     resolveProject: (id) => workspaceStore.resolve(id),
     loadModels: (agentId, projectId) => settingsAuthModels!.models({ agentId, projectId }),
-    sendWithCodex: (input) => sendService.codex(input),
     sendWithCustomProvider: (input, settings) => sendService.custom(input, settings),
   });
   const runGit = async (path: string, args: string[]) => {

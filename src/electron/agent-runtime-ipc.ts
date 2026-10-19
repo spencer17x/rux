@@ -1,7 +1,7 @@
 import { app, type BrowserWindow } from "electron";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { agentInterruptSchema, agentSendSchema, agentStartSchema, approvalSchema, parseInput } from "../shared/ipc";
+import { agentInterruptSchema, agentStartSchema, approvalSchema, parseInput } from "../shared/ipc";
 import type { ClaudeCodeClient } from "./agents/claude-code";
 import type { CodexAppServerClient } from "./agents/codex-app-server";
 import type { PiRuntimeClient } from "./agents/pi-runtime";
@@ -11,13 +11,11 @@ import type { IpcRegistrar, ResolveProject } from "./ipc-types";
 import type { RuxSettings, SettingsStore } from "./settings-store";
 import { assertImageCapability, imageCapability, isImagePath } from "../shared/model-capabilities";
 
-type Dependencies = { withCodexAuth?: <T>(operation: () => Promise<T>) => Promise<T>; onCodexAuthError?: (error: unknown) => Promise<void>; getWindow: () => BrowserWindow | null; settingsStore: SettingsStore; runtimeManager: RuntimeManager; providerStore: ProviderProfileStore; codexClient: CodexAppServerClient; claudeClient: ClaudeCodeClient; piClient: PiRuntimeClient; resolveProject: ResolveProject; loadModels: (agentId: string, projectId?: string) => Promise<{ models: Array<{ model: string; isDefault?: boolean; inputModalities?: string[] }> }>; sendWithCodex: (input: any) => Promise<any>; sendWithCustomProvider: (input: any, settings?: RuxSettings) => Promise<any> };
+type Dependencies = { withCodexAuth?: <T>(operation: () => Promise<T>) => Promise<T>; onCodexAuthError?: (error: unknown) => Promise<void>; getWindow: () => BrowserWindow | null; settingsStore: SettingsStore; runtimeManager: RuntimeManager; providerStore: ProviderProfileStore; codexClient: CodexAppServerClient; claudeClient: ClaudeCodeClient; piClient: PiRuntimeClient; resolveProject: ResolveProject; loadModels: (agentId: string, projectId?: string) => Promise<{ models: Array<{ model: string; isDefault?: boolean; inputModalities?: string[] }> }>; sendWithCustomProvider: (input: any, settings?: RuxSettings) => Promise<any> };
 
 export function registerAgentRuntimeIpc(ipc: IpcRegistrar, deps: Dependencies): void {
   const withCodexAuth = deps.withCodexAuth || (<T>(operation: () => Promise<T>) => operation());
   const customRuns = new Map<string, AbortController>();
-  ipc.handle("agent:send", async (_event, value) => { const input = parseInput(agentSendSchema, value); if (process.env.RUX_E2E === "1") { await new Promise((resolve) => setTimeout(resolve, 250)); return { text: "RUX_E2E_SIDE_OK", threadId: "e2e-side-thread" }; } const settings = await deps.settingsStore.load(); if (settings.provider === "custom") return await deps.sendWithCustomProvider(input);
-    try { return await withCodexAuth(() => deps.sendWithCodex(input)); } catch (error) { await deps.onCodexAuthError?.(error); throw error; } });
   ipc.handle("agent:start", async (_event, value) => {
     const input = parseInput(agentStartSchema, value); const settings = await deps.settingsStore.load();
     const custom = settings.provider === "custom" && (!input.agentId || input.agentId === "codex");

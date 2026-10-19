@@ -68,7 +68,6 @@ const api = {
     save: (input: unknown) => ipcRenderer.invoke("messages:save", input),
   },
   agent: {
-    send: (input: unknown) => ipcRenderer.invoke("agent:send", input),
     start: (input: unknown) => ipcRenderer.invoke("agent:start", input),
     interrupt: (input: unknown) => ipcRenderer.invoke("agent:interrupt", input),
     respondToApproval: (input: unknown) => ipcRenderer.invoke("agent:approval", input),

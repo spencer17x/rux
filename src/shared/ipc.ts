@@ -98,8 +98,6 @@ export const agentStartSchema = z.object({
   conversation: z.array(conversationMessageSchema).max(200).refine((items) => items.reduce((sum, item) => sum + item.text.length, 0) <= 1_000_000, "历史对话过长，请新建会话").optional(),
 });
 
-export const agentSendSchema = agentStartSchema.omit({ runId: true, agentId: true, nativeSessionId: true, mode: true });
-
 export const agentInterruptSchema = z.object({
   agentId: agentIdSchema.optional(),
   runId: threadIdSchema.optional(),

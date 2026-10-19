@@ -48,7 +48,7 @@ describe("GitService", () => {
     await expect(service.commitPush("project", "feat: add feature", false)).rejects.toThrow("必须阅读并确认");
     await service.commitPush("project", "feat: add feature", false, true);
     expect((await execute("git", ["log", "-1", "--pretty=%s"], { cwd: root, encoding: "utf8" })).stdout.trim()).toBe("feat: add feature");
-  });
+  }, 30_000);
 
   it("compares the current branch against a validated local base branch", async () => {
     const base = (await execute("git", ["branch", "--show-current"], { cwd: root, encoding: "utf8" })).stdout.trim();

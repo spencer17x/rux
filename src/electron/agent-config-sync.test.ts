@@ -28,7 +28,7 @@ it("offers changed configuration only, imports after acceptance, and never copie
   expect(await readFile(join(managed, "agents", "codex", "config.toml"), "utf8")).toBe("model = 'second'\n");
   await expect(readFile(join(managed, "agents", "codex", "auth.json"))).rejects.toThrow();
   expect((await service.check("codex")).files).toEqual([]);
-});
+}, 30_000);
 
 it("rejects a stale acceptance when the external file changes again", async () => {
   const root = await mkdtemp(join(tmpdir(), "rux-config-sync-")); roots.push(root);

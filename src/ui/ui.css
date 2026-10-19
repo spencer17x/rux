@@ -108,3 +108,4 @@
 .ui-tab[data-state="active"] { color: var(--text); border-bottom-color: var(--text); }
 .ui-tab-panel { outline: none; }
 @media (prefers-reduced-motion: reduce) { .ui-button, .ui-switch-thumb { transition: none; } }
+.ui-disabled-anchor { display: inline-flex; align-items: center; }

@@ -1350,14 +1350,15 @@ textarea:focus-visible {
 .agent-selector-popover > button:disabled { opacity: .58; }
 .agent-selector-popover > button span { display: flex; min-width: 0; flex-direction: column; }
 .agent-selector-popover b { font-size: 12px; }
-.agent-selector-popover small { overflow: hidden; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.agent-selector-popover small { overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .runtime-download-track { display: block; width: 100%; height: 2px; margin-top: 4px; overflow: hidden; border-radius: 99px; background: #dededb; }
 .runtime-download-track > i { display: block; height: 100%; border-radius: inherit; background: #2e8cff; transition: width 160ms ease; }
 .runtime-inline-progress { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 7px; margin: -2px 0 8px; padding: 6px 8px; border-radius: 8px; color: #4f5f72; background: #f1f6fc; font-size: 11px; }
 .runtime-inline-progress > em { font-style: normal; }
 .runtime-inline-progress > i { grid-column: 1 / 4; height: 2px; overflow: hidden; border-radius: 99px; background: #d9e5f2; }
 .runtime-inline-progress > i > i { display: block; height: 100%; border-radius: inherit; background: #2e8cff; transition: width 160ms ease; }
-.runtime-inline-progress.is-error { grid-template-columns: auto minmax(0, 1fr); color: var(--red); background: #fff2f0; }
+.runtime-inline-progress.is-error { grid-template-columns: auto minmax(0, 1fr) auto; color: var(--red); background: #fff2f0; }
+.runtime-retry { flex: none; padding: 2px 4px; color: inherit; font-size: 11px; text-decoration: underline; }
 .agent-mode-popover { width: 150px; }
 .agent-mode-popover > button { min-height: 34px; font-size: 12px; }
 
@@ -1376,11 +1377,11 @@ textarea:focus-visible {
 .agent-settings-copy strong { font-size: 13px; }
 .agent-settings-copy small { overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .agent-settings-copy em { color: #5f5f5c; font-size: 11px; font-style: normal; }
-.agent-settings-status { align-self: start; padding: 4px 7px; border-radius: 999px; color: var(--muted); background: #efefed; font-size: 10px; }
+.agent-settings-status { align-self: start; padding: 4px 7px; border-radius: 999px; color: var(--muted); background: #efefed; font-size: 11px; }
 .agent-settings-status.is-ready { color: #167a42; background: #e8f6ed; }
 .agent-settings-modes { display: flex; grid-column: 2 / 4; flex-wrap: wrap; gap: 5px; }
-.agent-settings-modes span { padding: 3px 6px; border: 1px solid var(--border); border-radius: 6px; color: #5d5d59; font-size: 10px; }
-.agent-settings-models { grid-column: 2 / 4; color: var(--muted); font-size: 10px; }
+.agent-settings-modes span { padding: 3px 6px; border: 1px solid var(--border); border-radius: 6px; color: #5d5d59; font-size: 11px; }
+.agent-settings-models { grid-column: 2 / 4; color: var(--muted); font-size: 11px; }
 .config-sync-modal { padding: 24px; }
 .config-sync-source { display: grid; gap: 4px; margin-top: 18px; color: var(--muted); font-size: var(--ui-caption); }
 .config-sync-source code { overflow-wrap: anywhere; color: var(--text); font-size: var(--ui-small); }
@@ -1396,14 +1397,14 @@ textarea:focus-visible {
 .provider-profile-list > button.is-selected { background: white; box-shadow: 0 1px 4px rgba(0,0,0,.05); }
 .provider-profile-list > button span { display: flex; min-width: 0; flex-direction: column; }
 .provider-profile-list strong { font-size: 12px; }
-.provider-profile-list small { overflow: hidden; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-.provider-profile-list em { padding: 2px 5px; border-radius: 999px; color: #167a42; background: #e8f6ed; font-size: 9px; font-style: normal; }
+.provider-profile-list small { overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.provider-profile-list em { padding: 2px 5px; border-radius: 999px; color: #167a42; background: #e8f6ed; font-size: 11px; font-style: normal; }
 .provider-profile-list p { padding: 16px 6px; color: var(--muted); font-size: 11px; text-align: center; }
 .provider-add { width: 100%; justify-content: center; }
 .provider-profile-editor { min-width: 0; }
 .provider-multiline { align-items: flex-start !important; }
 .provider-multiline > span { display: flex; flex: 0 0 190px; flex-direction: column; }
-.provider-multiline > span small { color: var(--muted); font-size: 10px; font-weight: 400; }
+.provider-multiline > span small { color: var(--muted); font-size: 11px; font-weight: 400; }
 .provider-multiline textarea { width: auto; min-width: 0; min-height: 76px; flex: 1; resize: vertical; font-family: "SFMono-Regular", Consolas, monospace; font-size: 11px; line-height: 1.45; }
 .provider-agent-checks { display: flex; flex-wrap: wrap; gap: 12px; }
 .provider-agent-checks label { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; }
@@ -1483,7 +1484,7 @@ textarea:focus-visible {
   border-radius: 999px;
   color: var(--muted);
   background: #e9e9e7;
-  font-size: 10px;
+  font-size: 11px;
   font-style: normal;
 }
 
@@ -1584,7 +1585,7 @@ button.environment-row:hover {
   border-radius: 4px;
   color: var(--muted);
   background: var(--surface-muted);
-  font-size: 9px;
+  font-size: 11px;
   font-style: normal;
   font-weight: 500;
 }
@@ -3093,7 +3094,7 @@ button {
   color: #868681;
   background: #efefed;
   font-family: inherit;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 500;
   text-align: center;
 }
@@ -3187,3 +3188,59 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   .settings-sidebar { width: 160px; flex-basis: 160px; }
   .settings-content { padding: 24px 20px; }
 }
+
+/* Commit dialog: replaces the former window.confirm/prompt chain. */
+.commit-modal { width: min(620px, calc(100vw - 54px)); }
+.commit-modal .modal-header p { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.commit-modal .modal-header p strong { color: var(--text); font-weight: 500; }
+
+.commit-staged { display: flex; flex-wrap: wrap; gap: 6px; max-height: 92px; margin-bottom: 16px; overflow: auto; }
+.commit-staged span { display: inline-flex; max-width: 100%; align-items: center; gap: 5px; padding: 3px 8px; border: 1px solid var(--border); border-radius: 7px; color: #5d5d59; background: var(--surface-muted); font-size: 12px; }
+.commit-staged span svg { flex: none; }
+
+.commit-rules { margin-bottom: 16px; padding: 12px 14px; border: 1px solid var(--border-strong); border-radius: 12px; background: #fbfbfa; }
+.commit-rules-heading { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px; }
+.commit-rules-heading strong { font-size: 13px; font-weight: 500; }
+.commit-rules-heading small { color: var(--subtle); font-size: 12px; }
+.commit-rules-body { max-height: 220px; margin: 10px 0 12px; overflow: auto; border-radius: 8px; }
+.commit-rules-body:focus-visible { outline: 2px solid var(--rux-focus); outline-offset: 2px; }
+.commit-rules-body article + article { margin-top: 14px; }
+.commit-rules-body h3 { margin: 0 0 6px; color: var(--muted); font-size: 12px; font-weight: 500; }
+.commit-rules-body pre { margin: 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: #ffffff; color: var(--text); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
+
+.commit-acknowledge { display: flex; align-items: center; gap: 8px; color: var(--text); font-size: 13px; }
+.commit-acknowledge span { line-height: 1.5; }
+
+.commit-message { margin-bottom: 12px; }
+.commit-message .ui-textarea { width: 100%; resize: vertical; }
+
+.commit-push-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 16px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; }
+.commit-push-row span { display: grid; gap: 2px; }
+.commit-push-row strong { font-size: 13px; font-weight: 500; }
+.commit-push-row small { color: var(--muted); font-size: 12px; }
+
+.commit-hint { display: flex; align-items: flex-start; gap: 6px; margin: 0 0 12px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.commit-hint svg { flex: none; margin-top: 2px; }
+.commit-hint.is-warning { color: #8a5a00; }
+.commit-hint.is-error { color: var(--red); }
+
+/* Shared confirmation dialog: replaces native window.confirm for destructive and
+   irreversible actions, so the wording, tone and focus order stay under our control. */
+.confirm-modal { width: min(480px, calc(100vw - 54px)); }
+.confirm-modal .modal-header { margin-bottom: 0; }
+.confirm-modal .modal-footer { justify-content: flex-end; }
+.confirm-detail { margin: 16px 0 0; padding: 11px 13px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-muted); color: var(--muted); font-size: 13px; line-height: 1.6; }
+.confirm-detail[data-tone="danger"] { border-color: rgba(168, 55, 45, 0.22); background: #fdf7f6; color: #7d3b34; }
+
+/* Zero-project guidance: the sidebar used to be a blank pane with a single "+". */
+.sidebar-empty-state { margin: 2px 12px 4px; padding: 14px; border: 1px dashed var(--border-strong); border-radius: 12px; }
+.sidebar-empty-state p { margin: 0 0 4px; color: var(--text); font-size: 13px; font-weight: 500; }
+.sidebar-empty-state small { display: block; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.sidebar-empty-state .ui-button { margin-top: 10px; }
+
+/* Settings search results show the matching setting names, not just the section. */
+.settings-nav-copy { display: grid; gap: 1px; min-width: 0; }
+.settings-nav-copy small { overflow: hidden; color: var(--muted); font-size: 11px; font-weight: 400; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.settings-sidebar nav button.has-hint { height: auto; padding: 7px 10px; align-items: flex-start; }
+.settings-sidebar nav button.has-hint > svg { margin-top: 2px; }
+.settings-search-empty { margin: 8px 10px; color: var(--muted); font-size: 12px; line-height: 1.5; }

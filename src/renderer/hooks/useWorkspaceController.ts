@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from "react";
 import type { RuxApi } from "../../electron/preload";
 import type { ActiveThread, ProjectAction, ProjectRecord, ThreadRecord, WorkspaceState } from "../types";
+import { confirmAction } from "../ConfirmDialog";
 
 type View = "project" | "standalone" | "review" | "settings";
 type ModalStep = "choose" | "import" | "create";
@@ -72,7 +73,14 @@ export function useWorkspaceController(api: RuxApi, notify: (message: string) =>
       else await newStandalone();
       return;
     }
-    if (!window.confirm(`删除会话“${thread.title}”？\n\n这会删除 Rux 中的会话记录及其底层 Agent 会话数据，但不会删除项目文件。此操作不可撤销。`)) return;
+    const confirmed = await confirmAction({
+      title: "删除会话",
+      message: `“${thread.title}”将从 Rux 中删除。`,
+      detail: "这会删除会话记录及其底层 Agent 会话数据，但不会删除项目文件。此操作不可撤销。",
+      confirmLabel: "删除会话",
+      tone: "danger",
+    });
+    if (!confirmed) return;
     try {
       const removed = await api.threads.remove({ type: thread.type, projectId: thread.projectId, threadId: thread.id }) as { workspace: WorkspaceState; cleanupWarning?: string }; const next = removed.workspace;
       setWorkspace(next); onThreadsRemoved([thread.id]);
@@ -88,7 +96,14 @@ export function useWorkspaceController(api: RuxApi, notify: (message: string) =>
   const removeActiveThread = useCallback(async (sending: boolean) => { if (activeThread) await removeThread(activeThread, sending); }, [activeThread, removeThread]);
   const removeProject = useCallback(async (project: ProjectRecord, projectRunning = false) => {
     if (projectRunning) { notify("该项目仍有 Agent 正在运行，请先停止任务"); return; }
-    if (!window.confirm(`从 Rux 中移除“${project.name}”？\n\n仅解除侧栏关联，不会删除磁盘中的项目文件。`)) return;
+    const confirmed = await confirmAction({
+      title: "移除项目",
+      message: `从 Rux 的侧栏中移除“${project.name}”？`,
+      detail: "仅解除侧栏关联，磁盘中的项目文件不会被删除。",
+      confirmLabel: "移除项目",
+      tone: "danger",
+    });
+    if (!confirmed) return;
     try {
       const { workspace: rawWorkspace } = await api.projects.remove(project.id); const next = rawWorkspace as WorkspaceState; setWorkspace(next);
       const draftId = `draft:project:${project.id}`;

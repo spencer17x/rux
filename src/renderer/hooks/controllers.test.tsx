@@ -10,6 +10,9 @@ import { useAgentRuns } from "./useAgentRuns";
 import { useTerminalController } from "./useTerminalController";
 import { useWorkspaceTools } from "./useWorkspaceTools";
 import { useWorkspaceController } from "./useWorkspaceController";
+import { confirmAction } from "../ConfirmDialog";
+
+vi.mock("../ConfirmDialog", () => ({ confirmAction: vi.fn(async () => true) }));
 
 let root: Root;
 let element: HTMLDivElement;
@@ -59,6 +62,39 @@ describe("Git navigation concurrency", () => {
     const h = await mount(() => useGitController(api as unknown as RuxApi, "project", vi.fn(), vi.fn()), undefined);
     expect(h.value.error).toContain("repository unavailable");
     await act(async () => h.value.refreshGit()); expect(h.value.error).toBe(""); expect(h.value.gitState.files).toHaveLength(2);
+  });
+});
+
+describe("Git commit dialog", () => {
+  function commitApi() {
+    const api = gitApi() as any;
+    api.git.instructions = vi.fn(async () => ({ files: [{ path: "AGENTS.md", content: "Use conventional commits." }], stagedPaths: ["a.ts"] }));
+    api.git.remote = vi.fn(async () => "");
+    api.git.commitPush = vi.fn(async () => gitState("main", []));
+    return api;
+  }
+  it("collects project rules and staged files before asking for a message", async () => {
+    const api = commitApi();
+    const h = await mount(() => useGitController(api as unknown as RuxApi, "project", vi.fn(), vi.fn()), undefined);
+    await act(async () => { await h.value.requestCommit(); });
+    expect(h.value.commitRequest).toMatchObject({ stagedPaths: ["a.ts"], hasRemote: false });
+    expect(h.value.commitRequest?.rules.map((rule) => rule.path)).toEqual(["AGENTS.md"]);
+  });
+  it("forwards the trimmed message, push choice and rule acknowledgement", async () => {
+    const api = commitApi();
+    const h = await mount(() => useGitController(api as unknown as RuxApi, "project", vi.fn(), vi.fn()), undefined);
+    await act(async () => { await h.value.requestCommit(); });
+    await act(async () => { await h.value.submitCommit({ message: "  feat: add feature  ", push: false, rulesAcknowledged: true }); });
+    expect(api.git.commitPush).toHaveBeenCalledWith({ projectId: "project", message: "feat: add feature", push: false, rulesAcknowledged: true });
+    expect(h.value.commitRequest).toBeNull();
+  });
+  it("keeps the dialog open and surfaces the failure when the commit is rejected", async () => {
+    const api = commitApi(); api.git.commitPush.mockRejectedValueOnce(new Error("没有已暂存的变更，请先在审查页暂存文件"));
+    const h = await mount(() => useGitController(api as unknown as RuxApi, "project", vi.fn(), vi.fn()), undefined);
+    await act(async () => { await h.value.requestCommit(); });
+    await act(async () => { await h.value.submitCommit({ message: "feat: x", push: false, rulesAcknowledged: true }); });
+    expect(h.value.commitError).toContain("没有已暂存的变更");
+    expect(h.value.commitRequest).not.toBeNull();
   });
 });
 
@@ -132,11 +168,22 @@ describe("workspace removal", () => {
   it("selects a new standalone draft after removing the last project", async () => {
     const project = { id: "project", name: "Demo", path: "/tmp/demo", threads: [{ id: "thread", title: "Task" }] };
     const api = { projects: { remove: vi.fn(async () => ({ workspace: { projects: [], standaloneThreads: [] } })) } };
-    vi.spyOn(window, "confirm").mockReturnValue(true);
+    vi.mocked(confirmAction).mockResolvedValue(true);
     const h = await mount(() => useWorkspaceController(api as unknown as RuxApi, vi.fn(), vi.fn(), vi.fn()), undefined);
     await act(async () => h.value.initializeWorkspace({ projects: [project], standaloneThreads: [] }, "/tmp"));
     await act(async () => h.value.removeProject(project));
     expect(h.value.activeThread?.type).toBe("standalone"); expect(h.value.activeThread?.draft).toBe(true);
+  });
+  it("keeps the project when the confirmation is dismissed", async () => {
+    const project = { id: "project", name: "Demo", path: "/tmp/demo", threads: [{ id: "thread", title: "Task" }] };
+    const api = { projects: { remove: vi.fn(async () => ({ workspace: { projects: [], standaloneThreads: [] } })) } };
+    vi.mocked(confirmAction).mockResolvedValueOnce(false);
+    const h = await mount(() => useWorkspaceController(api as unknown as RuxApi, vi.fn(), vi.fn(), vi.fn()), undefined);
+    await act(async () => h.value.initializeWorkspace({ projects: [project], standaloneThreads: [] }, "/tmp"));
+    await act(async () => h.value.removeProject(project));
+    expect(confirmAction).toHaveBeenCalledWith(expect.objectContaining({ title: "移除项目", tone: "danger" }));
+    expect(api.projects.remove).not.toHaveBeenCalled();
+    expect(h.value.workspace.projects).toHaveLength(1);
   });
 });
 

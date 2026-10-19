@@ -382,6 +382,50 @@ test("restores a SQLite project and executes a command through the PTY terminal"
   await expect(page.getByLabel("终端输出")).toContainText("RUX_TERMINAL_REOPEN");
 });
 
+test("commits staged changes through the in-app commit dialog", async ({}, testInfo) => {
+  test.slow();
+  const projectPath = join(testRoot, "commit-project");
+  mkdirSync(projectPath, { recursive: true });
+  execFileSync("git", ["init", "-b", "main"], { cwd: projectPath });
+  execFileSync("git", ["config", "user.email", "rux@example.test"], { cwd: projectPath });
+  execFileSync("git", ["config", "user.name", "Rux Test"], { cwd: projectPath });
+  writeFileSync(join(projectPath, "AGENTS.md"), "Use conventional commit messages.\n");
+  writeFileSync(join(projectPath, "README.md"), "base\n");
+  execFileSync("git", ["add", "."], { cwd: projectPath });
+  execFileSync("git", ["commit", "-m", "base"], { cwd: projectPath });
+  writeFileSync(join(projectPath, "feature.txt"), "feature\n");
+  execFileSync("git", ["add", "feature.txt"], { cwd: projectPath });
+
+  await page.evaluate(async (path) => { await (window as any).rux.projects.import({ path, createThread: true }); }, projectPath);
+  await application.close();
+  await launchApplication();
+  await expect(page.getByText("commit-project", { exact: true }).first()).toBeVisible();
+
+  await page.getByRole("button", { name: "审查项目更改" }).click();
+  await page.getByRole("button", { name: "提交或推送" }).click();
+
+  const dialog = page.getByRole("dialog", { name: "提交或推送" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole("textbox", { name: "提交信息" })).toBeFocused();
+  await expect(dialog.locator(".commit-staged")).toContainText("feature.txt");
+  await expect(dialog.locator(".commit-rules-body")).toContainText("Use conventional commit messages.");
+
+  const submit = dialog.locator(".modal-footer .ui-button[data-variant='primary']");
+  await expect(submit).toBeDisabled();
+  await dialog.getByRole("textbox", { name: "提交信息" }).fill("feat: add feature");
+  await expect(submit).toBeDisabled();
+  await dialog.getByRole("checkbox", { name: "我已阅读并遵循项目规则" }).click();
+  await expect(submit).toBeEnabled();
+  await expect(dialog.getByRole("switch", { name: "推送到 origin" })).toBeDisabled();
+  await page.screenshot({ path: testInfo.outputPath("commit-dialog.png") });
+
+  await submit.click();
+  await expect(dialog).toBeHidden();
+  await expect(page.locator(".toast")).toContainText("Git 提交已完成");
+  expect(execFileSync("git", ["log", "-1", "--pretty=%s"], { cwd: projectPath, encoding: "utf8" }).trim()).toBe("feat: add feature");
+  expect(execFileSync("git", ["status", "--porcelain"], { cwd: projectPath, encoding: "utf8" }).trim()).toBe("");
+});
+
 
 test("keeps composer controls within a narrow desktop pane and dismisses menus", async () => {
   await page.setViewportSize({ width: 900, height: 650 });
