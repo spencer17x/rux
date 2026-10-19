@@ -4,6 +4,21 @@ import { join } from 'node:path';
 const walk = path => readdirSync(path, { withFileTypes: true }).flatMap(entry => entry.isDirectory() ? walk(join(path, entry.name)) : [join(path, entry.name)]);
 const files = walk('src').filter(path => /\.tsx?$/.test(path) && !path.includes('/ui/') && !path.includes('/prototypes/') && !/\.test\./.test(path));
 const failures = [];
+// Legacy token names predate the --rux-* namespace. Keep them out so styles and
+// components cannot drift back into two parallel naming schemes.
+const legacyTokens = [
+  'sidebar', 'surface', 'surface-muted', 'surface-selected', 'border', 'border-strong',
+  'text', 'muted', 'subtle', 'green', 'red', 'orange', 'blue',
+  'radius-sm', 'radius-md', 'radius-lg', 'ui-small', 'ui-caption',
+  'toolbar-height', 'pane-toolbar-height', 'composer-button-size',
+  'conversation-width', 'composer-elevation', 'signature-muted',
+];
+for (const path of walk('src').filter(file => file.endsWith('.css'))) {
+  const text = readFileSync(path, 'utf8');
+  for (const token of legacyTokens) {
+    if (new RegExp(`var\\(--${token}\\)|^\\s*--${token}\\s*:`, 'm').test(text)) failures.push(`${path}: use the --rux-* namespace instead of --${token}`);
+  }
+}
 for (const path of files) {
   const text = readFileSync(path, 'utf8');
   if (/from ["'](?:@phosphor-icons\/react|radix-ui)["']/.test(text)) failures.push(`${path}: import library primitives only through src/ui`);

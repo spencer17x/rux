@@ -2,7 +2,7 @@
 
 结论：**功能骨架完整、工程质量高于同类项目，但存在 1 个阻断级功能缺陷（Git 提交/推送在桌面端不可用），界面在"一致性"和"首次使用引导"两处明显掉队。**
 
-> 2026-10-19 更新：P1 三项、P2 四项、P3 四项已修复（统一确认对话框、空项目引导、禁用原因、设置搜索、工具改名、小字号、运行时重试、快捷键单一来源、移除 `agent:send`、Toast 队列、首轮占位），见 §4.2–§4.5。原 §2.1 阻断级缺陷已于 2026-10-18 修复。
+> 2026-10-19 更新：P1 三项、P2 四项、P3 五项已修复（统一确认对话框、空项目引导、禁用原因、设置搜索、工具改名、小字号、运行时重试、快捷键单一来源、移除 `agent:send`、Toast 队列、首轮占位、token 命名收敛），见 §4.2–§4.6。原 §2.1 阻断级缺陷已于 2026-10-18 修复。
 
 | 维度 | 结论 |
 | --- | --- |
@@ -112,7 +112,7 @@ PROMPT_RESULT=threw:prompt() is not supported.
 - ~~Toast 单槽 3 秒覆盖式替换~~ 已修复为队列（最多 4 条，逐条 3 秒），连续提示不再吞掉前一条；位置仍压在输入区右下角。
 - ~~快捷键两份真相~~ 已修复：`src/renderer/shortcuts.ts` 同时驱动 keydown 与设置页展示，改键位只改一处。
 - 主题硬编码浅色（`SettingsScreen.tsx:130` 把"浅色"渲染为纯文本），`tokens.css` 只有一套浅色变量。
-- 两套 token 命名并存（`--surface` 与 `--rux-*`）；`styles.css` 3189 行 vs `ui.css` 110 行，设计系统治理只在组件层成立。
+- ~~两套 token 命名并存~~ 已修复：24 个旧 token（`--surface`、`--border`、`--text`、`--ui-small` 等）全部并入 `--rux-*` 命名空间，413 行引用同步替换；`check:ui` 增加守卫，禁止旧名称回流。
 
 ## 4. 测试与构建现状
 
@@ -194,6 +194,23 @@ PROMPT_RESULT=threw:prompt() is not supported.
 
 剩余的全量退出码问题来自 worker 启动超时：本机 load average ≈ 9，单文件 import 最长 26 分钟，`vitest-pool` 等不到 worker 响应。三个受影响文件单独跑均通过，属环境问题。本机需要时用 `npx vitest run --no-file-parallelism`；CI 可保持默认并行。
 
+### 4.6 token 命名收敛（2026-10-19）
+
+| 检查 | 结果 |
+| --- | --- |
+| `pnpm check:ui` | 通过（85 个模块，含新增命名空间守卫） |
+| `pnpm typecheck` | 通过 |
+| CSS 变量定义校验 | 58 个 `var()` 引用全部有定义（Radix 注入变量与运行时 `--composer-height` 除外） |
+| `pnpm build` | 通过（web + desktop） |
+
+做法：24 个旧 token 重命名为 `--rux-*`（`--surface` → `--rux-surface`、`--border-strong` → `--rux-border-strong`、`--ui-caption` → `--rux-ui-caption` 等），7 个 CSS 文件共 413 行引用同步替换。所有值保持不变，渲染结果与改动前一致。
+
+顺带消除两处同值重复：`--rux-danger: var(--rux-red)`、`--rux-focus: var(--rux-blue)`。
+
+防回流：`scripts/check-ui-system.mjs` 新增守卫，任何 CSS 文件再出现 `var(--surface)` 或 `--text:` 这类旧定义都会让 `pnpm check:ui` 失败。已用临时探针文件验证守卫确实会拦截（验证后删除）。
+
+保留的非 `--rux-*` 变量只有三类，不属于命名分裂：`--ui-font-size`（设置页运行时写入）、`--composer-height`（组件测量后写入）、`--radix-*`（Radix 注入）。
+
 ## 5. 建议优先级
 
 | 优先级 | 事项 | 预计改动 |
@@ -211,7 +228,7 @@ PROMPT_RESULT=threw:prompt() is not supported.
 | ~~P3~~ 已完成 | 移除 `agent:send` 死通道、`agentSendSchema` 与 `sendWithCodex` 依赖 | preload / ipc / backend / 测试 |
 | ~~P3~~ 已完成 | Toast 改为队列，连续提示不再互相覆盖 | `useToast.ts` |
 | ~~P3~~ 已完成 | 首轮输入框占位改为「描述你想完成的任务…」 | `RuxAssistantThread.tsx` |
-| P3 | token 命名收敛（`--surface` 与 `--rux-*` 并存） | `styles.css` + `ui.css` |
+| ~~P3~~ 已完成 | token 命名收敛到 `--rux-*`，`check:ui` 阻止旧名称回流 | 7 个 CSS 文件 + `check-ui-system.mjs` |
 
 ## 6. 结论
 
