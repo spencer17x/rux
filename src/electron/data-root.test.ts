@@ -8,7 +8,8 @@ const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 
 it("uses ~/.rux except when an explicit Electron data directory is supplied", () => {
-  expect(ruxDataRoot("/old/rux", [], "/home/user")).toBe("/home/user/.rux");
+  // Expressed with join() so the expectation follows the host separator.
+  expect(ruxDataRoot("/old/rux", [], "/home/user")).toBe(join("/home/user", ".rux"));
   expect(ruxDataRoot("/isolated", ["--user-data-dir=/isolated"], "/home/user")).toBe("/isolated");
 });
 

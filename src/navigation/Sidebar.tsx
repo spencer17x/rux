@@ -87,7 +87,7 @@ export default function Sidebar(props: Props) {
         {!projects.length && !query && <div className="sidebar-empty-state">
           <p>还没有项目</p>
           <small>添加本地项目后，就能在侧栏管理会话、终端和 Git 变更。</small>
-          <Button variant="secondary" size="sm" onClick={(event) => props.onAddProject(event.currentTarget)}><Plus size="sm" />添加项目</Button>
+          <Button variant="secondary" size="sm" onClick={(event) => props.onAddProject(event.currentTarget)}><Plus size="sm" />添加第一个项目</Button>
         </div>}
       </section>
       {standaloneThreads.length > 0 && <><div className="section-divider" /><section className="sidebar-section"><div className="section-heading"><span>独立会话</span></div><div className="sidebar-list">{standaloneThreads.map((thread) => {

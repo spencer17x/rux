@@ -255,9 +255,11 @@ test("deletes a conversation from the sidebar action menu", async () => {
   await page.getByRole("button", { name: "保存", exact: true }).click();
   await expect(page.getByRole("button", { name: "Delete me", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "会话操作 Delete me" }).click();
-  const confirmation = new Promise<void>((resolve) => page.once("dialog", async (dialog) => { expect(dialog.message()).toContain("删除会话"); await dialog.accept(); resolve(); }));
   await page.getByRole("menuitem", { name: "删除会话" }).click();
-  await confirmation;
+  const confirmation = page.getByRole("alertdialog", { name: "删除会话", exact: true });
+  await expect(confirmation).toBeVisible();
+  await confirmation.getByRole("button", { name: "删除会话", exact: true }).click();
+  await expect(confirmation).toBeHidden();
   await expect(page.getByRole("button", { name: "Delete me", exact: true })).toHaveCount(0);
   await expect(page.getByRole("textbox", { name: "消息" })).toBeVisible();
 });
