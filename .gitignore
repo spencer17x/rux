@@ -6,3 +6,4 @@ out/
 release/
 playwright-report/
 test-results/
+.workbuddy-ai/
