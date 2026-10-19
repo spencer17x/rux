@@ -372,12 +372,31 @@ export default function RuxAssistantThread({
   const composerRef = useRef<HTMLFormElement>(null);
   useEffect(() => {
     const composer = composerRef.current;
+    const threadRoot = threadRootRef.current;
     if (!composer) return;
-    const measure = () => threadRootRef.current?.style.setProperty("--composer-height", `${Math.ceil(composer.getBoundingClientRect().height)}px`);
+    // Published on the document root rather than the thread root so fixed
+    // chrome outside the thread (the toast) can clear the composer too.
+    // `--composer-height` is measured from the thread bottom, `--composer-offset`
+    // from the viewport bottom, which also accounts for open docks.
+    const root = document.documentElement;
+    const measure = () => {
+      const rect = composer.getBoundingClientRect();
+      root.style.setProperty("--composer-height", `${Math.ceil(rect.height)}px`);
+      root.style.setProperty("--composer-offset", `${Math.ceil(window.innerHeight - rect.top)}px`);
+    };
     const observer = new ResizeObserver(measure);
     observer.observe(composer);
+    // Toggling a dock moves the composer without resizing it, but it does
+    // resize the thread, so watch both.
+    if (threadRoot) observer.observe(threadRoot);
+    window.addEventListener("resize", measure);
     measure();
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", measure);
+      root.style.removeProperty("--composer-height");
+      root.style.removeProperty("--composer-offset");
+    };
   }, []);
   const agentTrigger = useRef<HTMLButtonElement>(null);
   const modeTrigger = useRef<HTMLButtonElement>(null);

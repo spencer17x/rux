@@ -4,6 +4,7 @@ import type { AppSettings } from "./useAppBootstrap";
 import type { AgentId, WorkspaceToolId } from "../types";
 import { userFacingError } from "../errors";
 import { useTerminalController } from "./useTerminalController";
+import type { Notify } from "./useToast";
 
 type SideMessage = { id: string; role: "user" | "assistant"; text: string };
 type SideApproval = { id: string; label: string };
@@ -11,7 +12,7 @@ type SideRun = { runId: string; assistantId: string; agentId: AgentId; threadId:
 type WorkspacePanelPlacement = "bottom" | "right";
 const projectOnlyTools = new Set<WorkspaceToolId>(["review", "terminal", "browser", "files"]);
 
-export function useWorkspaceTools(api: RuxApi, projectId: string | undefined, selectedAgent: AgentId, agentMode: string, preference: { model: string; reasoning: AppSettings["reasoning"]; serviceTier: string | null }, settings: AppSettings, refreshGit: (projectId?: string) => Promise<void>, notify: (message: string) => void) {
+export function useWorkspaceTools(api: RuxApi, projectId: string | undefined, selectedAgent: AgentId, agentMode: string, preference: { model: string; reasoning: AppSettings["reasoning"]; serviceTier: string | null }, settings: AppSettings, refreshGit: (projectId?: string) => Promise<void>, notify: Notify) {
   const [bottomPanelOpen, setBottomPanelOpen] = useState(false); const [rightPanelOpen, setRightPanelOpen] = useState(false); const [activeTool, setActiveTool] = useState<WorkspaceToolId>("terminal");
   const [projectFiles, setProjectFiles] = useState<string[]>([]); const [remoteUrl, setRemoteUrl] = useState(""); const [sideMessages, setSideMessages] = useState<SideMessage[]>([]); const [sideValue, setSideValue] = useState(""); const [sideSending, setSideSending] = useState(false); const [sideThreadId, setSideThreadId] = useState(""); const [sideApproval, setSideApproval] = useState<SideApproval | null>(null);
   const sideRun = useRef<SideRun | null>(null);
@@ -32,8 +33,8 @@ export function useWorkspaceTools(api: RuxApi, projectId: string | undefined, se
     if (!projectId && projectOnlyTools.has(activeTool)) { setActiveTool("environment"); return; }
     let cancelled = false;
     if (activeTool === "terminal") void terminal.startTerminal();
-    if (projectId && activeTool === "files") api.files.list(projectId).then((files) => { if (!cancelled) setProjectFiles(files as string[]); }).catch((error) => { if (!cancelled) notify(userFacingError(error)); });
-    if (projectId && activeTool === "browser") api.git.remote(projectId).then((url) => { if (!cancelled) setRemoteUrl(String(url)); }).catch((error) => { if (!cancelled) notify(userFacingError(error)); });
+    if (projectId && activeTool === "files") api.files.list(projectId).then((files) => { if (!cancelled) setProjectFiles(files as string[]); }).catch((error) => { if (!cancelled) notify(userFacingError(error), "error"); });
+    if (projectId && activeTool === "browser") api.git.remote(projectId).then((url) => { if (!cancelled) setRemoteUrl(String(url)); }).catch((error) => { if (!cancelled) notify(userFacingError(error), "error"); });
     return () => { cancelled = true; };
   }, [activeTool, api, bottomPanelOpen, notify, projectId, rightPanelOpen, terminal.startTerminal]);
   useEffect(() => api.agent.onEvent((raw) => {
@@ -51,8 +52,8 @@ export function useWorkspaceTools(api: RuxApi, projectId: string | undefined, se
   const closeRightPanel = useCallback(async () => { setRightPanelOpen(false); }, []);
   const toggleBottomPanel = useCallback(async () => { if (bottomPanelOpen) { await closeBottomPanel(); return; } setBottomPanelOpen(true); if (activeTool === "terminal") await terminal.startTerminal(); }, [activeTool, bottomPanelOpen, closeBottomPanel, terminal.startTerminal]);
   const toggleRightPanel = useCallback(async () => { if (rightPanelOpen) { await closeRightPanel(); return; } setRightPanelOpen(true); if (activeTool === "terminal") await terminal.startTerminal(); }, [activeTool, closeRightPanel, rightPanelOpen, terminal.startTerminal]);
-  const selectWorkspaceTool = useCallback(async (tool: WorkspaceToolId, placement: WorkspacePanelPlacement = "bottom") => { if (projectOnlyTools.has(tool) && !projectId) { notify("请先选择一个项目会话"); return; } setActiveTool(tool); placement === "right" ? setRightPanelOpen(true) : setBottomPanelOpen(true); if (tool === "terminal") await terminal.startTerminal(); if (tool === "review") await refreshGit(projectId);  }, [api, notify, projectId, refreshGit, terminal.startTerminal]);
-  const openRemote = useCallback(async () => { if (!projectId) return; try { const remote = String(await api.git.remote(projectId)); if (!remote) { notify("当前项目没有 origin 远程地址"); return; } const url = remote.startsWith("git@") ? `https://${remote.slice(4).replace(":", "/").replace(/\.git$/, "")}` : remote.replace(/\.git$/, ""); await api.system.openExternal(url); } catch (error) { notify(error instanceof Error ? error.message : String(error)); } }, [api, notify, projectId]);
+  const selectWorkspaceTool = useCallback(async (tool: WorkspaceToolId, placement: WorkspacePanelPlacement = "bottom") => { if (projectOnlyTools.has(tool) && !projectId) { notify("请先选择一个项目会话", "info"); return; } setActiveTool(tool); placement === "right" ? setRightPanelOpen(true) : setBottomPanelOpen(true); if (tool === "terminal") await terminal.startTerminal(); if (tool === "review") await refreshGit(projectId);  }, [api, notify, projectId, refreshGit, terminal.startTerminal]);
+  const openRemote = useCallback(async () => { if (!projectId) return; try { const remote = String(await api.git.remote(projectId)); if (!remote) { notify("当前项目没有 origin 远程地址"); return; } const url = remote.startsWith("git@") ? `https://${remote.slice(4).replace(":", "/").replace(/\.git$/, "")}` : remote.replace(/\.git$/, ""); await api.system.openExternal(url); } catch (error) { notify(error instanceof Error ? error.message : String(error), "error"); } }, [api, notify, projectId]);
   const sendSideChat = useCallback(async () => {
     const prompt = sideValue.trim(); if (!prompt || sideSending || sideRun.current) return;
     const runId = crypto.randomUUID(); const assistantId = crypto.randomUUID(); const user: SideMessage = { id: crypto.randomUUID(), role: "user", text: prompt };
@@ -78,8 +79,8 @@ export function useWorkspaceTools(api: RuxApi, projectId: string | undefined, se
     try {
       await api.agent.respondToApproval({ approvalId: sideApproval.id, decision });
       if (sideRun.current === run) setSideApproval((current) => current?.id === sideApproval.id ? null : current);
-    } catch (error) { if (sideRun.current === run) notify(userFacingError(error)); }
+    } catch (error) { if (sideRun.current === run) notify(userFacingError(error), "error"); }
   }, [api, notify, sideApproval]);
-  const cancelSideChat = useCallback(async () => { const run = sideRun.current; if (!run) return; try { await api.agent.interrupt({ agentId: run.agentId, runId: run.runId, threadId: run.threadId || run.runId, turnId: run.turnId || run.runId }); } catch (error) { notify(userFacingError(error)); } }, [api, notify]);
+  const cancelSideChat = useCallback(async () => { const run = sideRun.current; if (!run) return; try { await api.agent.interrupt({ agentId: run.agentId, runId: run.runId, threadId: run.threadId || run.runId, turnId: run.turnId || run.runId }); } catch (error) { notify(userFacingError(error), "error"); } }, [api, notify]);
   return { bottomPanelOpen, setBottomPanelOpen, rightPanelOpen, setRightPanelOpen, activeTool, projectFiles, remoteUrl, sideMessages, sideValue, setSideValue, sideSending, sideApproval, sideAgentLabel: selectedAgent === "claude-code" ? "Claude Code" : selectedAgent === "pi" ? "Pi" : settings.provider === "custom" ? settings.serviceName : "Codex", closeBottomPanel, closeRightPanel, toggleBottomPanel, toggleRightPanel, selectWorkspaceTool, openRemote, sendSideChat, respondToSideApproval, cancelSideChat, ...terminal };
 }

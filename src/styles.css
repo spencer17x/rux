@@ -2832,22 +2832,34 @@ button.environment-row:hover {
 
 .toast {
   position: fixed;
-  z-index: 200;
+  z-index: var(--rux-z-toast);
   right: 24px;
-  bottom: 24px;
+  /* Sits above the composer instead of on top of its model picker and send
+     button. `--composer-offset` is measured from the viewport bottom, so open
+     docks are accounted for too. */
+  bottom: calc(var(--composer-offset, 146px) + 14px);
   display: flex;
   align-items: center;
   gap: 8px;
+  max-width: min(420px, calc(100vw - 48px));
   min-height: 42px;
-  padding: 0 15px;
+  padding: 9px 15px;
   border: 1px solid var(--rux-border-strong);
   border-radius: 11px;
   color: #ffffff;
   background: #202020;
   box-shadow: 0 12px 35px rgba(0, 0, 0, 0.2);
   font-size: 13px;
+  line-height: 18px;
+  /* Informational only: never swallow a click on whatever sits underneath. */
+  pointer-events: none;
   animation: toast-in 180ms ease-out;
 }
+
+.toast > svg { flex: 0 0 auto; }
+.toast.is-success > svg { color: #6ee7a8; }
+.toast.is-info > svg { color: #93c5fd; }
+.toast.is-error > svg { color: #fca5a5; }
 
 @keyframes pop-in {
   from { opacity: 0; transform: translateY(-3px) scale(0.985); }

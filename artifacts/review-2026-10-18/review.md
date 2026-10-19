@@ -2,7 +2,7 @@
 
 结论：**功能骨架完整、工程质量高于同类项目，但存在 1 个阻断级功能缺陷（Git 提交/推送在桌面端不可用），界面在"一致性"和"首次使用引导"两处明显掉队。**
 
-> 2026-10-19 更新：P1 三项、P2 四项、P3 五项已修复（统一确认对话框、空项目引导、禁用原因、设置搜索、工具改名、小字号、运行时重试、快捷键单一来源、移除 `agent:send`、Toast 队列、首轮占位、token 命名收敛），见 §4.2–§4.6。原 §2.1 阻断级缺陷已于 2026-10-18 修复。
+> 2026-10-19 更新：P1 三项、P2 四项、P3 六项已修复（统一确认对话框、空项目引导、禁用原因、设置搜索、工具改名、小字号、运行时重试、快捷键单一来源、移除 `agent:send`、Toast 队列与位置/语义、首轮占位、token 命名收敛），见 §4.2–§4.7。原 §2.1 阻断级缺陷已于 2026-10-18 修复。
 
 | 维度 | 结论 |
 | --- | --- |
@@ -109,7 +109,7 @@ PROMPT_RESULT=threw:prompt() is not supported.
 **P3 · 其他**
 
 - ~~空会话输入框 placeholder 固定为「继续对话…」~~ 已修复：无消息时为「描述你想完成的任务…」，有消息后恢复「继续对话…」。
-- ~~Toast 单槽 3 秒覆盖式替换~~ 已修复为队列（最多 4 条，逐条 3 秒），连续提示不再吞掉前一条；位置仍压在输入区右下角。
+- ~~Toast 单槽 3 秒覆盖式替换~~ 已修复为队列（最多 4 条，逐条 3 秒），连续提示不再吞掉前一条；位置由输入区右下角上移到输入区上方，并按 success / info / error 区分图标与颜色。
 - ~~快捷键两份真相~~ 已修复：`src/renderer/shortcuts.ts` 同时驱动 keydown 与设置页展示，改键位只改一处。
 - 主题硬编码浅色（`SettingsScreen.tsx:130` 把"浅色"渲染为纯文本），`tokens.css` 只有一套浅色变量。
 - ~~两套 token 命名并存~~ 已修复：24 个旧 token（`--surface`、`--border`、`--text`、`--ui-small` 等）全部并入 `--rux-*` 命名空间，413 行引用同步替换；`check:ui` 增加守卫，禁止旧名称回流。
@@ -211,6 +211,26 @@ PROMPT_RESULT=threw:prompt() is not supported.
 
 保留的非 `--rux-*` 变量只有三类，不属于命名分裂：`--ui-font-size`（设置页运行时写入）、`--composer-height`（组件测量后写入）、`--radix-*`（Radix 注入）。
 
+### 4.7 Toast 位置与语义（2026-10-19）
+
+原实现固定 `right: 24px; bottom: 24px`，正好落在输入区右下角的模型选择器与发送按钮上：提示一出现就盖住用户下一秒要点的控件，且所有提示（包括失败）都带一个绿色对勾图标。
+
+| 问题 | 处理 |
+| --- | --- |
+| 遮挡输入区控件 | 位置改为 `bottom: calc(var(--composer-offset) + 14px)`，由输入区实测高度决定；输入区变高（附件、运行时进度）时提示同步上移 |
+| 面板展开后仍会压住工具 | `--composer-offset` 取「视口底部到输入区顶边」的距离，底部工具面板展开时一并计算在内 |
+| 提示会吞掉点击 | `pointer-events: none`，提示纯展示，不拦截下方控件 |
+| 失败提示显示对勾 | 新增 `success / info / error` 三档：成功为绿色对勾、说明性提示为蓝色信息图标、失败为红色警告图标；失败同时用 `role="alert"` + `aria-live="assertive"`，成功/提示仍为 `status` + `polite` |
+| 提示被弹窗盖住 | z-index 从硬编码 `200` 改为 `--rux-z-toast: 800`，高于 dialog（500）与 popup（600） |
+
+实现要点：
+
+- `useToast` 的 `toast` 由字符串变为 `{ id, text, tone }`，队列、3 秒逐条、重复去重三条既有行为不变；`notify(message, tone = "success")` 的第二参数可选，旧的单参数调用无需改动。
+- 全仓 55 处 `notify` / `onNotify` 按语义归档：33 处异常路径标 `error`，22 处「被拒绝的动作 + 说明」标 `info`，其余成功路径保持默认。
+- `--composer-offset` 与 `--composer-height` 都写在 `document.documentElement` 上（原先只写在会话根节点），固定定位的 Toast 才能读到；同时观察输入区与会话根节点，面板开关引起的位移也能捕获。
+
+验证：`pnpm check:ui`（85 模块）、`pnpm typecheck`、`useToast.test.tsx` 5 条、`controllers.test.tsx` 19 条、`components.test.tsx` 15 条均通过。
+
 ## 5. 建议优先级
 
 | 优先级 | 事项 | 预计改动 |
@@ -227,6 +247,7 @@ PROMPT_RESULT=threw:prompt() is not supported.
 | ~~P3~~ 已完成 | 快捷键单一来源（`renderer/shortcuts.ts`，窗口处理器与设置页共用） | `shortcuts.ts` + `App.tsx` + 设置页 |
 | ~~P3~~ 已完成 | 移除 `agent:send` 死通道、`agentSendSchema` 与 `sendWithCodex` 依赖 | preload / ipc / backend / 测试 |
 | ~~P3~~ 已完成 | Toast 改为队列，连续提示不再互相覆盖 | `useToast.ts` |
+| ~~P3~~ 已完成 | Toast 上移到输入区上方，补 success / info / error 三档语义 | `styles.css` + `useToast.ts` + 55 处调用点 |
 | ~~P3~~ 已完成 | 首轮输入框占位改为「描述你想完成的任务…」 | `RuxAssistantThread.tsx` |
 | ~~P3~~ 已完成 | token 命名收敛到 `--rux-*`，`check:ui` 阻止旧名称回流 | 7 个 CSS 文件 + `check-ui-system.mjs` |
 

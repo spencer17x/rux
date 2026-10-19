@@ -3,6 +3,7 @@ import type { RuxApi } from "../../electron/preload";
 import type { GitState } from "../types";
 import { userFacingError } from "../errors";
 import { confirmAction } from "../ConfirmDialog";
+import type { Notify } from "./useToast";
 
 type View = "project" | "standalone" | "review" | "settings";
 const emptyGitState = (): GitState => ({ branch: "—", files: [] });
@@ -17,7 +18,7 @@ export type CommitRequest = {
 
 type ProjectInstructions = { files: Array<{ path: string; content: string }>; stagedPaths: string[] };
 
-export function useGitController(api: RuxApi, projectId: string | undefined, notify: (message: string) => void, setView: Dispatch<SetStateAction<View>>) {
+export function useGitController(api: RuxApi, projectId: string | undefined, notify: Notify, setView: Dispatch<SetStateAction<View>>) {
   const [gitState, setGitState] = useState<GitState>(emptyGitState);
   const [branches, setBranches] = useState<string[]>([]);
   const [selectedFile, setSelectedFile] = useState("");
@@ -100,7 +101,7 @@ export function useGitController(api: RuxApi, projectId: string | undefined, not
       if (scope.current !== current) return;
       notify(message);
       await refreshGit(current.projectId);
-    } catch (error) { if (scope.current === current) notify(userFacingError(error)); }
+    } catch (error) { if (scope.current === current) notify(userFacingError(error), "error"); }
     finally { mutation.current = false; setBusy(false); }
   }, [notify, refreshGit]);
 
@@ -146,7 +147,7 @@ export function useGitController(api: RuxApi, projectId: string | undefined, not
       if (scope.current !== current) return;
       setCommitError("");
       setCommitRequest({ projectId: current.projectId, branch: gitState.branch, stagedPaths: guidance.stagedPaths, rules: guidance.files, hasRemote: Boolean(remote) });
-    } catch (error) { notify(userFacingError(error)); }
+    } catch (error) { notify(userFacingError(error), "error"); }
   }, [api, gitState.branch, notify]);
 
   const cancelCommit = useCallback(() => { if (!mutation.current) { setCommitRequest(null); setCommitError(""); } }, []);
@@ -169,7 +170,7 @@ export function useGitController(api: RuxApi, projectId: string | undefined, not
   }, [api, commitRequest, notify, refreshGit]);
 
   const openReview = useCallback(async (path?: string) => {
-    if (!scope.current.projectId) { notify("请先选择一个项目会话"); return; }
+    if (!scope.current.projectId) { notify("请先选择一个项目会话", "info"); return; }
     if (typeof path === "string") selectedFileRef.current = path;
     setView("review");
     await refreshGit(scope.current.projectId, true);

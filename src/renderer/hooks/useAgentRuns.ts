@@ -7,6 +7,7 @@ import { userFacingError } from "../errors";
 
 import { apiConversation } from "../../shared/conversation";
 import { assertImageCapability, type ImageCapability } from "../../shared/model-capabilities";
+import type { Notify } from "./useToast";
 
 type AgentDefinition = { id: AgentId; name: string; integrated: boolean };
 type RunContext = { runId: string; localThreadId: string; assistantMessageId: string; type: "project" | "standalone"; projectId?: string; prompt: string; shouldRename: boolean; agentId: AgentId; agentMode: string; threadId: string; turnId: string };
@@ -15,7 +16,7 @@ type Input = {
   api: RuxApi; activeThread: ActiveThread | null; activeProjectId?: string; selectedAgent: AgentId; agentMode: string;
   preference: { model: string; reasoning: Reasoning; serviceTier: string | null }; modelLabel?: string; settings: ComposerSettings; attachments: string[]; webSearch: boolean; agents: AgentDefinition[];
   setMessages: Dispatch<SetStateAction<MessageStore>>; setAttachments: Dispatch<SetStateAction<string[]>>; setComposerValue: Dispatch<SetStateAction<string>>;
-  setActiveThread: Dispatch<SetStateAction<ActiveThread | null>>; reloadWorkspace: () => Promise<WorkspaceState>; refreshGit: (projectId?: string) => Promise<void>; notify: (message: string) => void;
+  setActiveThread: Dispatch<SetStateAction<ActiveThread | null>>; reloadWorkspace: () => Promise<WorkspaceState>; refreshGit: (projectId?: string) => Promise<void>; notify: Notify;
   conversation?: RuxMessage[]; imageCapability?: ImageCapability;
   onDraftPersisted?: (draftId: string) => void;
 };
@@ -51,8 +52,8 @@ export function useAgentRuns(input: Input) {
       context.threadId = event.threadId;
       input.api.threads.update({ type: context.type, projectId: context.projectId, threadId: context.localThreadId, agentId: context.agentId, nativeSessionId: event.threadId, agentMode: context.agentMode, codexThreadId: context.agentId === "codex" ? event.threadId : undefined, title: context.shouldRename ? context.prompt.slice(0, 28) : undefined }).then((updated) => {
         input.setActiveThread((current) => current?.id === context.localThreadId ? { ...current, ...(updated as Partial<ThreadRecord>) } : current);
-        void input.reloadWorkspace().catch((error) => input.notify(userFacingError(error)));
-      }).catch((error) => input.notify(error instanceof Error ? error.message : String(error)));
+        void input.reloadWorkspace().catch((error) => input.notify(userFacingError(error), "error"));
+      }).catch((error) => input.notify(error instanceof Error ? error.message : String(error), "error"));
     }
     if (event.turnId) context.turnId = event.turnId;
     streamQueue.current.push({ context, event });
@@ -68,10 +69,10 @@ export function useAgentRuns(input: Input) {
   const sendMessage = useCallback(async (nextPrompt = "") => {
     const prompt = nextPrompt.trim() || (input.attachments.length ? "请查看所附文件。" : ""); if (!prompt || !input.activeThread || sending || startingThreads.current.has(input.activeThread.id)) return;
     const customApi = input.selectedAgent === "codex" && input.settings.provider === "custom";
-    if (customApi && (input.activeThread.nativeSessionId || input.activeThread.codexThreadId)) { input.notify("当前会话已绑定原生 Agent，请新建会话后使用自定义 API"); return; }
-    if (!customApi && input.selectedAgent === "codex" && input.conversation?.some(message => message.turnInfo?.agentId === "api")) { input.notify("当前会话使用自定义 API，请新建会话后使用原生 Codex"); return; }
-    try { assertImageCapability(input.attachments, input.imageCapability || "unknown"); } catch (error) { input.notify(userFacingError(error)); return; }
-    const agent = input.agents.find((item) => item.id === input.selectedAgent); if (!agent?.integrated) { input.notify(`${agent?.name || input.selectedAgent} 适配器尚未启用`); return; }
+    if (customApi && (input.activeThread.nativeSessionId || input.activeThread.codexThreadId)) { input.notify("当前会话已绑定原生 Agent，请新建会话后使用自定义 API", "info"); return; }
+    if (!customApi && input.selectedAgent === "codex" && input.conversation?.some(message => message.turnInfo?.agentId === "api")) { input.notify("当前会话使用自定义 API，请新建会话后使用原生 Codex", "info"); return; }
+    try { assertImageCapability(input.attachments, input.imageCapability || "unknown"); } catch (error) { input.notify(userFacingError(error), "error"); return; }
+    const agent = input.agents.find((item) => item.id === input.selectedAgent); if (!agent?.integrated) { input.notify(`${agent?.name || input.selectedAgent} 适配器尚未启用`, "info"); return; }
     let targetThread = input.activeThread;
     const originalId = targetThread.id;
     startingThreads.current.set(originalId, { projectId: targetThread.projectId });
@@ -86,11 +87,11 @@ export function useAgentRuns(input: Input) {
         targetThread = { ...targetThread, ...persisted, draft: false };
         input.onDraftPersisted?.(draftId);
         input.setActiveThread((current) => current?.id === draftId ? targetThread : current);
-        void input.reloadWorkspace().catch((error) => input.notify(userFacingError(error)));
+        void input.reloadWorkspace().catch((error) => input.notify(userFacingError(error), "error"));
       } catch (error) {
         startingThreads.current.delete(originalId);
         setRunningThreadIds((current) => { const next = new Set(current); next.delete(originalId); return next; });
-        input.notify(userFacingError(error));
+        input.notify(userFacingError(error), "error");
         return;
       }
     }
@@ -115,7 +116,7 @@ export function useAgentRuns(input: Input) {
     catch (error) { contexts.current.delete(runId); input.setMessages((current) => ({ ...current, [targetThread.id]: (current[targetThread.id] || []).map((message) => message.id === assistantMessage.id ? reduceStreamEvent(message, { type: "error", error: userFacingError(error) }) : message) })); setRunningThreadIds((current) => { const next = new Set(current); next.delete(targetThread.id); return next; }); }
     finally { startingThreads.current.delete(originalId); }
   }, [input, sending]);
-  const cancelCurrentRun = useCallback(async () => { const context = [...contexts.current.values()].find((item) => item.localThreadId === input.activeThread?.id); if (!context) return; const canInterruptByRunId = context.agentId !== "codex" || input.settings.provider === "custom"; if ((!context.threadId || !context.turnId) && !canInterruptByRunId) { input.notify("Agent 正在初始化，请稍后再停止"); return; } try { await input.api.agent.interrupt({ agentId: context.agentId, runId: context.runId, threadId: context.threadId || context.runId, turnId: context.turnId || context.runId }); } catch (error) { input.notify(error instanceof Error ? error.message : String(error)); } }, [input]);
+  const cancelCurrentRun = useCallback(async () => { const context = [...contexts.current.values()].find((item) => item.localThreadId === input.activeThread?.id); if (!context) return; const canInterruptByRunId = context.agentId !== "codex" || input.settings.provider === "custom"; if ((!context.threadId || !context.turnId) && !canInterruptByRunId) { input.notify("Agent 正在初始化，请稍后再停止", "info"); return; } try { await input.api.agent.interrupt({ agentId: context.agentId, runId: context.runId, threadId: context.threadId || context.runId, turnId: context.turnId || context.runId }); } catch (error) { input.notify(error instanceof Error ? error.message : String(error), "error"); } }, [input]);
   const respondToApproval = useCallback(async ({ approvalId, approved, optionId }: { approvalId: string; approved: boolean; optionId?: string }) => { const decision = approved ? optionId === "allow-session" ? "acceptForSession" : "accept" : "decline"; await input.api.agent.respondToApproval({ approvalId, decision }); input.setMessages((current) => Object.fromEntries(Object.entries(current).map(([threadId, messages]) => [threadId, messages.map((message) => ({ ...message, parts: message.parts?.map((part) => part.approval?.id === approvalId ? { ...part, approval: { ...part.approval, approved, optionId } } : part) }))]))); }, [input]);
   return { sending, runningThreadIds, sendMessage, cancelCurrentRun, respondToApproval, isThreadRunning: (threadId: string) => startingThreads.current.has(threadId) || [...contexts.current.values()].some((context) => context.localThreadId === threadId), isProjectRunning: (projectId: string) => [...startingThreads.current.values()].some((context) => context.projectId === projectId) || [...contexts.current.values()].some((context) => context.projectId === projectId) };
 }

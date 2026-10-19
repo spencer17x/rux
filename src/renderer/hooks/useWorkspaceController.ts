@@ -2,11 +2,12 @@ import { useCallback, useRef, useState } from "react";
 import type { RuxApi } from "../../electron/preload";
 import type { ActiveThread, ProjectAction, ProjectRecord, ThreadRecord, WorkspaceState } from "../types";
 import { confirmAction } from "../ConfirmDialog";
+import type { Notify } from "./useToast";
 
 type View = "project" | "standalone" | "review" | "settings";
 type ModalStep = "choose" | "import" | "create";
 
-export function useWorkspaceController(api: RuxApi, notify: (message: string) => void, onThreadsRemoved: (threadIds: string[]) => void, onThreadSelected: (thread: ThreadRecord) => void) {
+export function useWorkspaceController(api: RuxApi, notify: Notify, onThreadsRemoved: (threadIds: string[]) => void, onThreadSelected: (thread: ThreadRecord) => void) {
   const [workspace, setWorkspace] = useState<WorkspaceState>({ projects: [], standaloneThreads: [] });
   const [activeThread, setActiveThread] = useState<ActiveThread | null>(null);
   const activeThreadRef = useRef(activeThread);
@@ -60,10 +61,10 @@ export function useWorkspaceController(api: RuxApi, notify: (message: string) =>
     if (nextTitle === thread.title) { setRenameTarget(null); return; }
     if (thread.draft) { const updated = { ...thread, title: nextTitle }; previewDrafts.current.set(thread.id, updated); setActiveThread((current) => current?.id === thread.id ? { ...current, title: nextTitle } : current); setRenameTarget(null); notify("草稿名称已更新"); return; }
     try { const updated = await api.threads.update({ type: thread.type, projectId: thread.projectId, threadId: thread.id, title: nextTitle }); setActiveThread((current) => current?.id === thread.id ? { ...current, ...(updated as Partial<ThreadRecord>) } : current); await reloadWorkspace(); setRenameTarget(null); notify("会话已重命名"); }
-    catch (error) { notify(error instanceof Error ? error.message : String(error)); }
+    catch (error) { notify(error instanceof Error ? error.message : String(error), "error"); }
   }, [activeThread, api, notify, reloadWorkspace, renameTarget]);
   const removeThread = useCallback(async (thread: ActiveThread, running = false) => {
-    if (running) { notify("请先停止该会话，再删除它"); return; }
+    if (running) { notify("请先停止该会话，再删除它", "info"); return; }
     if (thread.draft) {
       previewDrafts.current.delete(thread.id);
       onThreadsRemoved([thread.id]);
@@ -90,12 +91,13 @@ export function useWorkspaceController(api: RuxApi, notify: (message: string) =>
         else if (next.standaloneThreads[0]) selectStandalone(next.standaloneThreads[0]);
         else { const project = next.projects.find((item) => item.threads.length); if (project) selectProjectThread(project, project.threads[0]); else await newStandalone(); }
       }
-      notify(removed.cleanupWarning ? `会话记录已删除，但底层 Agent 数据清理失败：${removed.cleanupWarning}` : "会话及其底层 Agent 数据已删除");
-    } catch (error) { notify(error instanceof Error ? error.message : String(error)); }
+      if (removed.cleanupWarning) notify(`会话记录已删除，但底层 Agent 数据清理失败：${removed.cleanupWarning}`, "error");
+      else notify("会话及其底层 Agent 数据已删除");
+    } catch (error) { notify(error instanceof Error ? error.message : String(error), "error"); }
   }, [activeThread, api, newStandalone, notify, onThreadsRemoved, selectProjectThread, selectStandalone, workspace]);
   const removeActiveThread = useCallback(async (sending: boolean) => { if (activeThread) await removeThread(activeThread, sending); }, [activeThread, removeThread]);
   const removeProject = useCallback(async (project: ProjectRecord, projectRunning = false) => {
-    if (projectRunning) { notify("该项目仍有 Agent 正在运行，请先停止任务"); return; }
+    if (projectRunning) { notify("该项目仍有 Agent 正在运行，请先停止任务", "info"); return; }
     const confirmed = await confirmAction({
       title: "移除项目",
       message: `从 Rux 的侧栏中移除“${project.name}”？`,
@@ -111,7 +113,7 @@ export function useWorkspaceController(api: RuxApi, notify: (message: string) =>
       onThreadsRemoved([...project.threads.map((thread) => thread.id), draftId]); setExpandedProjects((current) => current.filter((id) => id !== project.id));
       if (activeThreadRef.current?.type === "project" && activeThreadRef.current.projectId === project.id) { const nextProject = next.projects.find((item) => item.threads.length); if (nextProject) selectProjectThread(nextProject, nextProject.threads[0]); else if (next.standaloneThreads[0]) selectStandalone(next.standaloneThreads[0]); else newStandalone(); }
       notify(`已移除 ${project.name}，本地文件未删除`);
-    } catch (error) { notify(error instanceof Error ? error.message : String(error)); }
+    } catch (error) { notify(error instanceof Error ? error.message : String(error), "error"); }
   }, [activeThread, api, newStandalone, notify, onThreadsRemoved, selectProjectThread, selectStandalone]);
   const completeProjectAction = useCallback(async (action: ProjectAction) => {
     const diskAction = { ...action, createThread: false } as ProjectAction;

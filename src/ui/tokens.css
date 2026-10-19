@@ -55,6 +55,7 @@
   --rux-z-dialog: 500;
   --rux-z-popup: 600;
   --rux-z-tooltip: 700;
+  --rux-z-toast: 800;
   --rux-motion-fast: 120ms;
   --rux-motion-normal: 180ms;
 }
