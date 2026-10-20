@@ -12,6 +12,13 @@ let application: ElectronApplication;
 let page: Page;
 let testRoot: string;
 
+// expect.poll() evaluates the callback outside its retry guard, so a throw
+// aborts the poll instead of waiting for the next interval. A file that has not
+// been written yet must read as empty rather than as an error.
+function readTextIfPresent(path: string) {
+  try { return readFileSync(path, "utf8"); } catch { return ""; }
+}
+
 async function launchApplication(extraArgs: string[] = []) {
   application = await electron.launch({
     args: [resolve("out/main/main.js"), `--user-data-dir=${join(testRoot, "user-data")}`, ...extraArgs],
@@ -93,7 +100,7 @@ test("can stop asking about configuration changes from the prompt", async () => 
   await page.getByRole("button", { name: "选择 Agent", exact: true }).click();
   await page.locator(".agent-selector-popover button").filter({ hasText: "Claude Code" }).click();
   await expect(page.getByRole("dialog", { name: "同步 Agent 配置" })).toHaveCount(0);
-  await expect.poll(() => readFileSync(join(testRoot, "user-data", "agents", "claude-code", "settings.json"), "utf8")).toBe('{"version":2}\n');
+  await expect.poll(() => readTextIfPresent(join(testRoot, "user-data", "agents", "claude-code", "settings.json"))).toBe('{"version":2}\n');
 });
 
 test("automatically imports changed agent configuration when enabled in settings", async () => {
@@ -111,7 +118,7 @@ test("automatically imports changed agent configuration when enabled in settings
   await page.getByRole("button", { name: "选择 Agent", exact: true }).click();
   await page.locator(".agent-selector-popover button").filter({ hasText: "Claude Code" }).click();
   await expect(page.getByRole("dialog", { name: "同步 Agent 配置" })).toHaveCount(0);
-  await expect.poll(() => readFileSync(join(testRoot, "user-data", "agents", "claude-code", "settings.json"), "utf8")).toBe('{"automatic":true}\n');
+  await expect.poll(() => readTextIfPresent(join(testRoot, "user-data", "agents", "claude-code", "settings.json"))).toBe('{"automatic":true}\n');
 });
 
 test("creates the initial standalone conversation and opens typed settings", async ({}, testInfo) => {
