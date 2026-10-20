@@ -3,6 +3,8 @@
 结论：**功能骨架完整、工程质量高于同类项目，但存在 1 个阻断级功能缺陷（Git 提交/推送在桌面端不可用），界面在"一致性"和"首次使用引导"两处明显掉队。**
 
 > 2026-10-19 更新：P1 三项、P2 四项、P3 六项已修复（统一确认对话框、空项目引导、禁用原因、设置搜索、工具改名、小字号、运行时重试、快捷键单一来源、移除 `agent:send`、Toast 队列与位置/语义、首轮占位、token 命名收敛），见 §4.2–§4.7。原 §2.1 阻断级缺陷已于 2026-10-18 修复。
+>
+> 2026-10-20 更新：CI 已全绿（`verify` + 三平台 `package-matrix`），单测 165 条 / E2E 24 条全部通过，见 §4.8。
 
 | 维度 | 结论 |
 | --- | --- |
@@ -10,7 +12,7 @@
 | Agent 适配器 | Codex / Claude Code / Pi 三条链路均已实现到可发送、可中断、可审批 |
 | 持久化 | SQLite + 草稿 + 侧栏宽度，重启恢复有 E2E 覆盖 |
 | 构建 | `tsc --noEmit` 与 Web/桌面双端构建均通过 |
-| 单测 | 120 通过 / 1 失败（5s 超时，见 §4） |
+| 单测 | 165 条通过 / 0 失败（评审时为 120 通过 / 1 失败，见 §4、§4.8） |
 | 功能缺口 | 提交推送不可用（P0）；交接上下文、能力声明、运行时修复未落地 |
 | 界面友好度 | 组件体系与键盘/焦点处理扎实；确认、空状态、禁用解释三处已补齐 |
 
@@ -230,6 +232,31 @@ PROMPT_RESULT=threw:prompt() is not supported.
 - `--composer-offset` 与 `--composer-height` 都写在 `document.documentElement` 上（原先只写在会话根节点），固定定位的 Toast 才能读到；同时观察输入区与会话根节点，面板开关引起的位移也能捕获。
 
 验证：`pnpm check:ui`（85 模块）、`pnpm typecheck`、`useToast.test.tsx` 5 条、`controllers.test.tsx` 19 条、`components.test.tsx` 15 条均通过。
+
+### 4.8 CI 转绿（2026-10-20）
+
+本轮修复期间 CI 一直是红的，`verify` 与 `package-matrix (windows)` 自 2026-09-29 起未通过。其中两条由本次评审修复直接引入，另外两条是既有问题：
+
+| 失败项 | 根因 | 处理 |
+| --- | --- | --- |
+| Windows 单测 | `data-root.test.ts` 断言 POSIX 路径，Windows 拿到反斜杠 | 期望值改用 `join()`，跟随宿主分隔符 |
+| 侧边栏定位歧义 | 空项目卡片新增了第二个「添加项目」按钮，`getByRole` 命中两个 | 卡片文案改为「添加第一个项目」，同时消除读屏器的同名控件 |
+| 删除会话用例超时 | 确认改为应用内 `alertdialog` 后，用例仍在等原生 `dialog` 事件 | 断言 `alertdialog` 并点其确认按钮 |
+| 焦点归还失败 | 从菜单项打开的对话框关闭后焦点落在 `<body>`：Radix 记住的 menuitem 随菜单卸载 | `Menu` / `ContextActions` 记录开启菜单的元素，`Modal` 在捕获 opener 与解析返回目标时回退到它 |
+| 配置同步用例 ENOENT | `expect.poll` 的回调在重试保护之外求值，`readFileSync` 抛错会让轮询立刻中断而非重试 | 读取封装为缺失即返回空串，让轮询继续；真实失败仍会超时 |
+
+最后一条值得记一下，因为它是一个容易被误判成「偶发」的确定性缺陷。Playwright 1.62.1 的 `invokePollMatcher` 里：
+
+```js
+const value = await actual();          // 在 try 之外
+try { await callMatcherAsStep(...) } catch { return { continuePolling: true } }
+```
+
+只有断言失败才重试，回调抛错直接冒泡。文件由应用异步写入，CI 首次读取常早于写入完成，于是轮询还没开始就失败了。本地机器快，连跑 5 次都过。
+
+最终状态（`39374083004`）：`verify` 与三个 `package-matrix` 全部通过，单测 40 文件 / 165 条，E2E 24 条。
+
+本机跑 E2E 需要 `env -u ELECTRON_RUN_AS_NODE`，否则 Electron 会被当作 Node 启动。另有 3 条需要创建 git 仓库的用例在本机必红，原因是未同意 Xcode 许可导致 `git init -b main` 直接报错，与代码无关，CI 上正常。
 
 ## 5. 建议优先级
 
